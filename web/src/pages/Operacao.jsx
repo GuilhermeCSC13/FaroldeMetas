@@ -1,8 +1,8 @@
 // web/src/pages/Operacao.jsx
-import Layout from "../components/tatico/Layout";
-import ResumoSetor from "../components/tatico/ResumoSetor";
-import FarolMetasSetor from "../components/tatico/FarolMetasSetor";
-import FarolRotinasSetor from "../components/tatico/FarolRotinasSetor";
+import Layout from "../components/tatico/Layout.jsx";
+import ResumoSetor from "../components/tatico/ResumoSetor.jsx";
+import FarolMetasSetor from "../components/tatico/FarolMetasSetor.jsx";
+import FarolRotinasSetor from "../components/tatico/FarolRotinasSetor.jsx";
 
 export default function Operacao() {
   return (
