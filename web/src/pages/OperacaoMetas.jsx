@@ -14,62 +14,73 @@ const OperacaoMetas = () => {
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 1. Carrega Áreas do Setor Operação
+  // Carrega áreas ao iniciar
   useEffect(() => {
     fetchAreas();
   }, []);
 
-  // 2. Carrega Metas e Resultados quando a Área muda
+  // Carrega metas ao mudar aba
   useEffect(() => {
     if (areaSelecionada) fetchMetasData();
   }, [areaSelecionada]);
 
   const fetchAreas = async () => {
-    const { data, error } = await supabase
-      .from('areas')
-      .select('*')
-      .eq('setor', 'Operação') // Filtra só setor Operação
-      .eq('ativa', true)
-      .order('nome');
+    try {
+      const { data, error } = await supabase
+        .from('areas')
+        .select('*')
+        // Tenta buscar de forma flexível caso haja erro de digitação no banco
+        .ilike('setor', '%Operac%') 
+        .eq('ativa', true)
+        .order('nome');
 
-    if (!error && data.length > 0) {
-      setAreas(data);
-      setAreaSelecionada(data[0].id); // Seleciona a primeira por padrão
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        setAreas(data);
+        setAreaSelecionada(data[0].id);
+      } else {
+        setLoading(false); // Para o loading se não achar nada
+      }
+    } catch (err) {
+      console.error("Erro Areas:", err);
+      setLoading(false);
     }
   };
 
   const fetchMetasData = async () => {
     setLoading(true);
     try {
-      // Busca definições das metas
       const { data: metasDef } = await supabase
         .from('metas_farol')
         .select('*')
         .eq('area_id', areaSelecionada)
         .order('id');
 
-      // Busca valores mensais (Alvos)
       const { data: metasMensais } = await supabase
         .from('metas_farol_mensal')
         .select('*')
         .eq('ano', 2026);
 
-      // Busca resultados realizados (Inputs)
       const { data: resultados } = await supabase
         .from('resultados_farol')
         .select('*')
         .eq('ano', 2026);
 
-      // Mescla tudo em uma estrutura única para o Grid
-      const combined = metasDef.map(m => {
+      // Consolidação dos dados
+      const combined = (metasDef || []).map(m => {
         const row = { ...m, meses: {} };
         MESES.forEach(mes => {
-          const alvo = metasMensais?.find(x => x.meta_id === m.id && x.mes === mes.id)?.valor_meta;
-          const real = resultados?.find(x => x.meta_id === m.id && x.mes === mes.id)?.valor_realizado;
+          const alvoObj = metasMensais?.find(x => x.meta_id === m.id && x.mes === mes.id);
+          const realObj = resultados?.find(x => x.meta_id === m.id && x.mes === mes.id);
+          
+          const alvo = alvoObj ? parseFloat(alvoObj.valor_meta) : null;
+          const real = realObj ? parseFloat(realObj.valor_realizado) : '';
+
           row.meses[mes.id] = {
-            alvo: alvo || null,
-            realizado: real || '',
-            score: calculateScore(alvo, real, m.tipo_comparacao, m.peso)
+            alvo: alvo,
+            realizado: real,
+            ...calculateScore(alvo, real, m.tipo_comparacao, parseFloat(m.peso))
           };
         });
         return row;
@@ -77,186 +88,197 @@ const OperacaoMetas = () => {
 
       setMetas(combined);
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+      console.error('Erro Metas:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Lógica Matemática das Faixas
-  const calculateScore = (alvo, realizado, tipo, peso) => {
-    if (!alvo || realizado === '' || realizado === null) return { pts: 0, color: 'bg-gray-50', faixa: 0 };
-    
-    const m = parseFloat(alvo);
+  // --- LÓGICA DE NEGÓCIO (FAIXAS 1 a 5) ---
+  const calculateScore = (meta, realizado, tipo, pesoTotal) => {
+    // Se não tiver meta ou realizado, zera
+    if (meta === null || realizado === '' || realizado === null || isNaN(realizado)) {
+      return { score: 0, faixa: 0, multiplicador: 0, color: 'bg-white' };
+    }
+
     const r = parseFloat(realizado);
-    let diffPercent = 0;
+    const m = parseFloat(meta);
+    let atingimento = 0;
 
-    // Calcula desvio percentual
-    if (tipo === '>=') { // Maior é melhor
-      if (r >= m) diffPercent = 0;
-      else diffPercent = (m - r) / m;
-    } else { // Menor é melhor (<=)
-      if (r <= m) diffPercent = 0;
-      else diffPercent = (r - m) / m;
+    // Cálculo do % de Atingimento Base
+    if (tipo === '>=' || tipo === 'maior') {
+      // Maior é melhor (Ex: KM/L) -> Realizado / Meta
+      atingimento = r / m;
+    } else {
+      // Menor é melhor (Ex: Acidentes) -> Meta / Realizado (Inverso)
+      // Ajuste: Para manter a lógica de 99% = Faixa 2, calculamos quanto "sobra" da meta
+      atingimento = 2 - (r / m); 
+      // Se r for igual a m, dá 1 (100%). Se r for 1% maior que m (ruim), dá 0.99 (99%).
     }
 
-    // Aplica Faixas
     let multiplicador = 0;
-    let cor = 'bg-red-200'; // Faixa 5 (>3%)
+    let faixa = 5;
 
-    if (diffPercent <= 0.0001) { // Faixa 1 (100%) - Margem erro float
-      multiplicador = 1;
-      cor = 'bg-green-300';
-    } else if (diffPercent <= 0.01) { // Faixa 2 (99% - 1% desvio)
+    // Regra das Faixas (Conforme Imagem)
+    if (atingimento >= 1.00) {      // Faixa 1: 100%
+      multiplicador = 1.0;
+      faixa = 1;
+    } else if (atingimento >= 0.99) { // Faixa 2: 99%
       multiplicador = 0.75;
-      cor = 'bg-green-100';
-    } else if (diffPercent <= 0.02) { // Faixa 3 (98% - 2% desvio)
+      faixa = 2;
+    } else if (atingimento >= 0.98) { // Faixa 3: 98%
       multiplicador = 0.50;
-      cor = 'bg-yellow-100';
-    } else if (diffPercent <= 0.03) { // Faixa 4 (97% - 3% desvio)
+      faixa = 3;
+    } else if (atingimento >= 0.97) { // Faixa 4: 97%
       multiplicador = 0.25;
-      cor = 'bg-orange-100';
+      faixa = 4;
+    } else {                          // Faixa 5: <96%
+      multiplicador = 0.0;
+      faixa = 5;
     }
+
+    // Cores (Mapa de Calor Visual)
+    let color = 'bg-red-200';
+    if (faixa === 1) color = 'bg-green-300'; // Meta Batida
+    else if (faixa === 2) color = 'bg-green-100';
+    else if (faixa === 3) color = 'bg-yellow-100';
+    else if (faixa === 4) color = 'bg-orange-100';
 
     return { 
-      pts: peso * multiplicador, 
-      color: cor,
-      faixa: multiplicador 
+      score: pesoTotal * multiplicador, 
+      faixa, 
+      multiplicador,
+      color 
     };
   };
 
-  // Salva no Supabase ao sair do campo (onBlur)
   const handleSave = async (metaId, mesId, valor) => {
-    // Atualiza estado local para feedback rápido
-    const newMetas = [...metas];
-    const metaIndex = newMetas.findIndex(m => m.id === metaId);
-    if (metaIndex >= 0) {
-        newMetas[metaIndex].meses[mesId].realizado = valor;
-        // Recalcula score visualmente
-        const alvo = newMetas[metaIndex].meses[mesId].alvo;
-        const tipo = newMetas[metaIndex].tipo_comparacao;
-        const peso = newMetas[metaIndex].peso;
-        newMetas[metaIndex].meses[mesId].score = calculateScore(alvo, valor, tipo, peso);
-        setMetas(newMetas);
-    }
-
-    // Persiste no Banco
-    const valorNumerico = valor === '' ? null : parseFloat(valor);
+    // Atualiza visualmente instantâneo
+    const valorNum = valor === '' ? null : parseFloat(valor);
     
-    // Procura ID existente para update ou insert
+    setMetas(prev => prev.map(m => {
+      if (m.id !== metaId) return m;
+      const novoMeses = { ...m.meses };
+      novoMeses[mesId] = {
+        ...novoMeses[mesId],
+        realizado: valorNum, // mantem o valor cru
+        ...calculateScore(novoMeses[mesId].alvo, valorNum, m.tipo_comparacao, m.peso)
+      };
+      return { ...m, meses: novoMeses };
+    }));
+
+    // Persiste no banco
     const { error } = await supabase
       .from('resultados_farol')
       .upsert({
         meta_id: metaId,
         ano: 2026,
         mes: mesId,
-        valor_realizado: valorNumerico
+        valor_realizado: valorNum
       }, { onConflict: 'meta_id, ano, mes' });
 
-    if (error) console.error('Erro ao salvar:', error);
+    if (error) console.error("Erro ao salvar:", error);
   };
 
-  // Calcula Total Mensal (Score Global)
-  const getTotalMes = (mesId) => {
-    return metas.reduce((acc, meta) => {
-      return acc + (meta.meses[mesId]?.score?.pts || 0);
-    }, 0).toFixed(1);
+  const getTotalScore = (mesId) => {
+    return metas.reduce((acc, m) => acc + (m.meses[mesId]?.score || 0), 0).toFixed(1);
   };
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen font-sans">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Farol de Metas — Operação</h1>
-        <span className="text-sm text-gray-500 bg-white px-3 py-1 rounded shadow">Ano Base: 2026</span>
-      </div>
-
-      {/* Navegação de Áreas (Tabs) */}
-      <div className="flex space-x-1 border-b border-gray-300 mb-6">
-        {areas.map(area => (
-          <button
-            key={area.id}
-            onClick={() => setAreaSelecionada(area.id)}
-            className={`px-6 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-              areaSelecionada === area.id
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'bg-white text-gray-600 hover:bg-gray-100 border border-transparent'
-            }`}
-          >
-            {area.nome}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Carregando dados...</div>
-      ) : (
-        <div className="overflow-x-auto bg-white rounded-lg shadow border border-gray-200">
-          <table className="w-full text-xs text-left border-collapse">
-            <thead className="bg-gray-100 text-gray-700 font-semibold uppercase sticky top-0 z-10">
-              <tr>
-                <th className="px-3 py-3 w-48 border-b border-r sticky left-0 bg-gray-100 z-20">Indicador</th>
-                <th className="px-2 py-3 w-12 text-center border-b border-r">Peso</th>
-                <th className="px-2 py-3 w-12 text-center border-b border-r">Tipo</th>
-                {MESES.map(mes => (
-                  <th key={mes.id} className="px-2 py-3 w-24 text-center border-b border-r min-w-[90px]">
-                    {mes.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {metas.map((meta) => (
-                <tr key={meta.id} className="hover:bg-gray-50">
-                  {/* Colunas Fixas */}
-                  <td className="px-3 py-2 font-medium text-gray-800 sticky left-0 bg-white border-r z-10 shadow-sm">
-                    {meta.nome_meta || meta.indicador}
-                    <div className="text-[10px] text-gray-400 font-normal">{meta.unidade}</div>
-                  </td>
-                  <td className="px-2 py-2 text-center text-gray-600 border-r">{parseInt(meta.peso)}</td>
-                  <td className="px-2 py-2 text-center text-gray-600 border-r font-mono">{meta.tipo_comparacao}</td>
-
-                  {/* Colunas dos Meses */}
-                  {MESES.map(mes => {
-                    const dados = meta.meses[mes.id];
-                    return (
-                      <td key={mes.id} className={`p-0 border-r relative align-top transition-colors ${dados.realizado ? dados.score.color : ''}`}>
-                        <div className="flex flex-col h-full">
-                          {/* Meta Alvo (Topo) */}
-                          <div className="text-[10px] text-gray-500 text-right px-2 py-0.5 bg-gray-50/50 border-b border-gray-100">
-                            {dados.alvo ? Number(dados.alvo).toFixed(2) : '-'}
-                          </div>
-                          
-                          {/* Input Realizado (Meio) */}
-                          <input
-                            type="number"
-                            step="0.01"
-                            className="w-full h-8 text-center bg-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none text-gray-900 font-medium text-xs"
-                            placeholder="-"
-                            defaultValue={dados.realizado}
-                            onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
-                          />
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              
-              {/* Rodapé - Score Total */}
-              <tr className="bg-gray-800 text-white font-bold">
-                <td className="px-3 py-3 sticky left-0 bg-gray-800 z-10 border-r border-gray-700">SCORE MENSAL</td>
-                <td className="px-2 py-3 text-center border-r border-gray-700">100</td>
-                <td className="px-2 py-3 border-r border-gray-700"></td>
-                {MESES.map(mes => (
-                   <td key={mes.id} className="px-2 py-3 text-center border-r border-gray-700">
-                     {getTotalMes(mes.id)}
-                   </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
+    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden">
+      {/* 1. Header com Abas */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+        <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
+        <div className="flex space-x-2">
+          {areas.length === 0 && !loading && <span className="text-red-500 text-xs">Sem áreas cadastradas.</span>}
+          {areas.map(area => (
+            <button
+              key={area.id}
+              onClick={() => setAreaSelecionada(area.id)}
+              className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                areaSelecionada === area.id
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              {area.nome}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
+
+      {/* 2. Conteúdo da Tabela */}
+      <div className="flex-1 overflow-auto p-4">
+        {loading ? (
+          <div className="flex items-center justify-center h-64 text-gray-500 animate-pulse">
+            Carregando dados... Verifique a conexão.
+          </div>
+        ) : (
+          <div className="border border-gray-300 rounded overflow-hidden">
+            <table className="w-full text-xs border-collapse">
+              {/* Cabeçalho estilo Excel */}
+              <thead>
+                <tr className="bg-[#d9ead3] text-gray-800 border-b border-gray-300 text-center">
+                  <th className="p-2 border-r border-gray-300 w-48 sticky left-0 bg-[#d9ead3] z-10">Indicador</th>
+                  <th className="p-2 border-r border-gray-300 w-12">Peso</th>
+                  <th className="p-2 border-r border-gray-300 w-12">Tipo</th>
+                  {MESES.map(mes => (
+                    <th key={mes.id} className="p-2 border-r border-gray-300 min-w-[80px]">
+                      {mes.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              
+              <tbody className="divide-y divide-gray-200">
+                {metas.map(meta => (
+                  <tr key={meta.id} className="hover:bg-gray-50">
+                    <td className="p-2 border-r border-gray-200 font-medium text-gray-700 sticky left-0 bg-white z-10">
+                      {meta.nome_meta || meta.indicador}
+                    </td>
+                    <td className="p-2 border-r border-gray-200 text-center font-bold bg-gray-50">{parseInt(meta.peso)}</td>
+                    <td className="p-2 border-r border-gray-200 text-center text-gray-500 font-mono">{meta.tipo_comparacao}</td>
+                    
+                    {MESES.map(mes => {
+                      const dados = meta.meses[mes.id];
+                      return (
+                        <td key={mes.id} className={`border-r border-gray-200 p-0 align-top relative ${dados.color} transition-colors duration-300`}>
+                          <div className="flex flex-col h-full min-h-[40px]">
+                            {/* Meta (Alvo) Pequena no Topo */}
+                            <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 leading-none opacity-70">
+                              {dados.alvo ? Number(dados.alvo).toFixed(2) : '-'}
+                            </div>
+                            {/* Input Realizado */}
+                            <input
+                              type="number"
+                              className="w-full h-full bg-transparent text-center text-gray-900 font-semibold focus:outline-none focus:bg-white/50"
+                              placeholder=""
+                              defaultValue={dados.realizado}
+                              onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
+                            />
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+
+                {/* Linha de Totalizador */}
+                <tr className="bg-red-600 text-white font-bold border-t-2 border-gray-400">
+                  <td className="p-3 sticky left-0 bg-red-600 z-10 text-right pr-4">TOTAL SCORE</td>
+                  <td className="p-3 text-center">100</td>
+                  <td className="p-3"></td>
+                  {MESES.map(mes => (
+                    <td key={mes.id} className="p-3 text-center border-l border-red-500">
+                      {getTotalScore(mes.id)}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
