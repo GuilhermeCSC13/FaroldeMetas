@@ -9,18 +9,20 @@ const MESES = [
   { id: 10, label: 'Out' }, { id: 11, label: 'Nov' }, { id: 12, label: 'Dez' }
 ];
 
-// Se não receber áreas, usa PCO/Motoristas como padrão (fallback para Operação)
+// Fallback: Se não receber nada, assume que é a Operação
 const AREAS_PADRAO = [
   { id: 4, nome: 'PCO' },
   { id: 5, nome: 'Gestão de Motoristas' }
 ];
 
 const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
-  // Define quais áreas mostrar no dropdown
-  const areasDisponiveis = areasContexto || AREAS_PADRAO;
+  // LÓGICA DE SELEÇÃO: Usa o que veio por prop, se não tiver, usa padrão
+  const areasDisponiveis = (areasContexto && areasContexto.length > 0) ? areasContexto : AREAS_PADRAO;
   
   const [tipo, setTipo] = useState('metas'); 
+  // Inicializa já com o ID correto da área (Ex: 3 se for Moov)
   const [areaId, setAreaId] = useState(areasDisponiveis[0].id);
+  
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -69,7 +71,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
       await supabase.from('metas_farol').insert({
         area_id: areaId,
         indicador: nome,
-        nome_meta: nome, // Garante preenchimento duplo
+        nome_meta: nome,
         peso: 0,
         unidade: '',
         tipo_comparacao: '>=',
@@ -149,12 +151,12 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           </div>
 
           <div className="flex items-center gap-4">
-             {/* Dropdown de Áreas Dinâmico */}
+             {/* Dropdown de Áreas */}
              <select 
                 value={areaId} 
                 onChange={(e) => setAreaId(Number(e.target.value))}
                 className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 font-semibold"
-                disabled={areasDisponiveis.length === 1} // Trava se só tiver 1 área
+                disabled={areasDisponiveis.length === 1} 
               >
                 {areasDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome || a.label}</option>)}
              </select>
@@ -240,10 +242,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
               </table>
             </div>
           )}
-        </div>
-        <div className="p-4 bg-white border-t rounded-b-xl flex justify-between items-center">
-            <button onClick={handleAdd} className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all font-semibold"><Plus size={18} /> Novo Indicador</button>
-            <p className="text-xs text-gray-400"><span className="font-bold text-gray-600">Nota:</span> Use a coluna amarela para definir a META de cada mês.</p>
         </div>
       </div>
     </div>
