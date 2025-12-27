@@ -1,6 +1,6 @@
 // web/src/components/tatico/Sidebar.jsx
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   FaHome,
   FaClipboardList,
@@ -32,6 +32,9 @@ export default function Sidebar() {
     financeiro: false,
     pessoas: false,
   });
+
+  const location = useLocation();
+  const navigate = useNavigate();
 
   function toggleSetor(key) {
     setOpenSetores((prev) => ({
@@ -117,21 +120,37 @@ export default function Sidebar() {
                   {/* Submenus do setor */}
                   {openSetores[setor.key] && (
                     <div className="mt-1 ml-4 space-y-1">
-                      {subMenus.map((sub) => (
-                        <NavLink
-                          key={sub.key}
-                          to={`${setor.path}${sub.hash}`}
-                          className={({ isActive }) =>
-                            `block text-[11px] px-3 py-1 rounded-md ${
-                              isActive
-                                ? "bg-blue-100 text-blue-700 font-semibold"
-                                : "text-blue-100 hover:text-white hover:bg-blue-600/60"
-                            }`
-                          }
-                        >
-                          {sub.label}
-                        </NavLink>
-                      ))}
+                      {subMenus.map((sub) => {
+                        // se não tiver hash na URL, consideramos "#resumo" como padrão
+                        const currentHash =
+                          location.hash && location.hash !== ""
+                            ? location.hash
+                            : "#resumo";
+
+                        const isActive =
+                          location.pathname === setor.path &&
+                          currentHash === sub.hash;
+
+                        const baseClasses =
+                          "block text-[11px] px-3 py-1 rounded-md text-left";
+                        const activeClasses =
+                          "bg-blue-100 text-blue-700 font-semibold";
+                        const inactiveClasses =
+                          "text-blue-100 hover:text-white hover:bg-blue-600/60";
+
+                        return (
+                          <button
+                            key={sub.key}
+                            type="button"
+                            onClick={() => navigate(`${setor.path}${sub.hash}`)}
+                            className={`${baseClasses} ${
+                              isActive ? activeClasses : inactiveClasses
+                            }`}
+                          >
+                            {sub.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
