@@ -1,43 +1,66 @@
-import { Link, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 
 const menu = [
-  { path: "/", label: "Dashboard" },
-  { path: "/reunioes", label: "Reuniões" },
-  { path: "/config", label: "Configurações" }
+  { path: "/", label: "Início" },
+  { path: "/planejamento-tatico", label: "Planejamento Tático" },
+  { path: "/reunioes-periodicas", label: "Reuniões Periódicas" },
 ];
 
 export default function Layout({ children }) {
-  const location = useLocation();
-
   return (
-    <div className="min-h-screen flex bg-slate-100">
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col">
-        <div className="p-4 text-xl font-bold border-b border-slate-700">
-          Farol Quatai
+    <div className="min-h-screen bg-slate-100 text-slate-800">
+      {/* Conteúdo principal com espaço reservado para a sidebar à direita */}
+      <div className="min-h-screen pr-72">
+        {/* Topbar simples */}
+        <header className="h-16 flex items-center px-8 border-b bg-white/80 backdrop-blur">
+          <div>
+            <p className="text-xs text-slate-500">Farol de Metas e Rotinas</p>
+            <h1 className="text-lg font-semibold">Planejamento Quatai</h1>
+          </div>
+        </header>
+
+        <main className="px-8 py-6">{children}</main>
+      </div>
+
+      {/* Sidebar fixa à direita */}
+      <aside className="fixed right-0 top-0 h-screen w-72 bg-blue-700 text-white flex flex-col shadow-xl">
+        {/* Logo / saudação */}
+        <div className="px-5 py-4 border-b border-blue-500 flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center text-2xl">
+            🚍
+          </div>
+          <div className="leading-tight">
+            <p className="text-xs text-blue-100">Olá, Guilherme 👋</p>
+            <p className="text-sm font-semibold">Seja bem-vindo!</p>
+          </div>
         </div>
-        <nav className="flex-1 p-2 space-y-1">
+
+        {/* Menu */}
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {menu.map((item) => (
-            <Link
+            <NavLink
               key={item.path}
               to={item.path}
-              className={`block px-3 py-2 rounded-md text-sm ${
-                location.pathname === item.path
-                  ? "bg-slate-700 font-semibold"
-                  : "hover:bg-slate-800"
-              }`}
+              end={item.path === "/"}
+              className={({ isActive }) =>
+                [
+                  "flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-blue-100 hover:bg-blue-600/70",
+                ].join(" ")
+              }
             >
               {item.label}
-            </Link>
+            </NavLink>
           ))}
         </nav>
-        <div className="p-3 text-xs text-slate-400 border-t border-slate-700">
-          v0.1 – Farol de Metas e Reuniões
+
+        {/* Rodapé */}
+        <div className="px-4 py-3 border-t border-blue-500 text-[11px] text-blue-100">
+          © {new Date().getFullYear()} InovaQuatai · Farol de Metas
         </div>
       </aside>
-
-      {/* Conteúdo */}
-      <main className="flex-1 p-6">{children}</main>
     </div>
   );
 }
