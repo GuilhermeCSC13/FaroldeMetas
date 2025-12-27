@@ -9,7 +9,7 @@ export default function Layout({ children }) {
 
       {/* Conteúdo principal */}
       <div className="flex-1 flex flex-col">
-        {/* Topbar simples */}
+        {/* Topbar */}
         <header className="h-16 flex items-center px-8 border-b bg-white/80 backdrop-blur">
           <div>
             <p className="text-xs text-slate-500">Farol de Metas e Rotinas</p>
