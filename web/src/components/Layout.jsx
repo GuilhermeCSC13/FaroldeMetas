@@ -9,21 +9,8 @@ const menu = [
 export default function Layout({ children }) {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
-      {/* Conteúdo principal com espaço reservado para a sidebar à direita */}
-      <div className="min-h-screen pr-72">
-        {/* Topbar simples */}
-        <header className="h-16 flex items-center px-8 border-b bg-white/80 backdrop-blur">
-          <div>
-            <p className="text-xs text-slate-500">Farol de Metas e Rotinas</p>
-            <h1 className="text-lg font-semibold">Planejamento Quatai</h1>
-          </div>
-        </header>
-
-        <main className="px-8 py-6">{children}</main>
-      </div>
-
-      {/* Sidebar fixa à direita */}
-      <aside className="fixed right-0 top-0 h-screen w-72 bg-blue-700 text-white flex flex-col shadow-xl">
+      {/* Sidebar fixa à ESQUERDA */}
+      <aside className="fixed left-0 top-0 h-screen w-72 bg-blue-700 text-white flex flex-col shadow-xl z-20">
         {/* Logo / saudação */}
         <div className="px-5 py-4 border-b border-blue-500 flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center text-2xl">
@@ -61,6 +48,19 @@ export default function Layout({ children }) {
           © {new Date().getFullYear()} InovaQuatai · Farol de Metas
         </div>
       </aside>
+
+      {/* Conteúdo principal com espaço reservado para a sidebar à ESQUERDA */}
+      <div className="min-h-screen pl-72">
+        {/* Topbar simples */}
+        <header className="h-16 flex items-center px-8 border-b bg-white/80 backdrop-blur">
+          <div>
+            <p className="text-xs text-slate-500">Farol de Metas e Rotinas</p>
+            <h1 className="text-lg font-semibold">Planejamento Quatai</h1>
+          </div>
+        </header>
+
+        <main className="px-8 py-6">{children}</main>
+      </div>
     </div>
   );
 }
