@@ -1,23 +1,18 @@
 // web/src/App.jsx
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 
-// Sidebar
+// Sidebar (está em web/src/components/Sidebar.jsx)
 import Sidebar from "./components/Sidebar";
 
-// Páginas gerais
+// Páginas gerais existentes
 import Inicio from "./pages/Inicio";
 import PlanejamentoTatico from "./pages/PlanejamentoTatico";
 import ReunioesPeriodicas from "./pages/ReunioesPeriodicas";
 import DetalheReuniao from "./pages/DetalheReuniao";
 import Dashboard from "./pages/Dashboard";
 import Configuracoes from "./pages/Configuracoes";
-
-// Páginas de Planejamento por setor
-import PlanejamentoOperacao from "./pages/PlanejamentoOperacao";
-import PlanejamentoManutencao from "./pages/PlanejamentoManutencao";
-import PlanejamentoMoov from "./pages/PlanejamentoMoov";
-import PlanejamentoFinanceiro from "./pages/PlanejamentoFinanceiro";
-import PlanejamentoPessoas from "./pages/PlanejamentoPessoas";
+// Se você ainda usa a página Operacao antiga, pode manter:
+import Operacao from "./pages/Operacao";
 
 function App() {
   return (
@@ -32,29 +27,22 @@ function App() {
             {/* Início */}
             <Route path="/" element={<Inicio />} />
 
-            {/* Visão geral do Planejamento Tático (se quiser usar) */}
+            {/* Visão geral do Planejamento Tático */}
             <Route
               path="/planejamento-tatico"
               element={<PlanejamentoTatico />}
             />
 
-            {/* Páginas de cada setor do Planejamento Tático */}
+            {/* Rota antiga de Operação (se quiser manter algum uso atual) */}
+            <Route path="/operacao" element={<Operacao />} />
+
+            {/* Qualquer rota de planejamento de setor cai, por enquanto,
+               na visão geral de Planejamento Tático.
+               Ex.: /planejamento/operacao, /planejamento/manutencao etc.
+               (o #resumo, #metas, #rotinas é âncora, o Router ignora) */}
             <Route
-              path="/planejamento/operacao"
-              element={<PlanejamentoOperacao />}
-            />
-            <Route
-              path="/planejamento/manutencao"
-              element={<PlanejamentoManutencao />}
-            />
-            <Route path="/planejamento/moov" element={<PlanejamentoMoov />} />
-            <Route
-              path="/planejamento/financeiro"
-              element={<PlanejamentoFinanceiro />}
-            />
-            <Route
-              path="/planejamento/pessoas"
-              element={<PlanejamentoPessoas />}
+              path="/planejamento/:qualquerCoisa"
+              element={<PlanejamentoTatico />}
             />
 
             {/* Reuniões Periódicas */}
@@ -72,6 +60,9 @@ function App() {
 
             {/* Configurações */}
             <Route path="/configuracoes" element={<Configuracoes />} />
+
+            {/* Qualquer rota desconhecida redireciona para Início */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
