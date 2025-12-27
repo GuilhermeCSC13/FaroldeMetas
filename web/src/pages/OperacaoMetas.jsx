@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
+import { Settings } from 'lucide-react';
 
 // IDs fixos das áreas (PCO e Gestão de Motoristas)
 const ID_PCO = 4;
@@ -17,6 +19,7 @@ const OperacaoMetas = () => {
   const [areaSelecionada, setAreaSelecionada] = useState(null);
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
 
   // Carrega as áreas ao abrir a tela
   useEffect(() => {
@@ -30,7 +33,6 @@ const OperacaoMetas = () => {
 
   const fetchAreas = async () => {
     try {
-      // Busca todas as áreas ativas
       const { data, error } = await supabase
         .from('areas')
         .select('*')
@@ -40,14 +42,11 @@ const OperacaoMetas = () => {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        // Filtra para garantir que pegamos PCO e Motoristas
         const areasFiltradas = data.filter(a => a.id == ID_PCO || a.id == ID_MOTORISTAS);
-
         if (areasFiltradas.length > 0) {
           setAreas(areasFiltradas);
           setAreaSelecionada(areasFiltradas[0].id);
         } else {
-          // Fallback de segurança se os IDs mudarem
           setAreas(data);
           setAreaSelecionada(data[0].id);
         }
@@ -111,7 +110,6 @@ const OperacaoMetas = () => {
 
   // --- LÓGICA DE CÁLCULO BLINDADA (SEM NaN) ---
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    // Validação: Se não for número válido, retorna vazio
     if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
       return { score: 0, faixa: 0, color: 'bg-white' };
     }
@@ -119,38 +117,32 @@ const OperacaoMetas = () => {
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
-    // Evita divisão por zero
     if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
 
     let atingimento = 0;
 
-    // Cálculo do atingimento
     if (tipo === '>=' || tipo === 'maior') {
-      // Maior é melhor (Ex: KM/L)
       atingimento = r / m;
     } else {
-      // Menor é melhor (Ex: Acidentes)
-      // Se r <= m, o resultado é > 100% (Bom)
       atingimento = 1 + ((m - r) / m);
     }
 
-    // Regra das Faixas
     let multiplicador = 0;
-    let cor = 'bg-red-200'; // Faixa 5 (Ruim)
+    let cor = 'bg-red-200';
 
-    if (atingimento >= 1.0) {      // Faixa 1 (100%)
+    if (atingimento >= 1.0) {      
       multiplicador = 1.0;
       cor = 'bg-green-300';
-    } else if (atingimento >= 0.99) { // Faixa 2 (99%)
+    } else if (atingimento >= 0.99) { 
       multiplicador = 0.75;
       cor = 'bg-green-100';
-    } else if (atingimento >= 0.98) { // Faixa 3 (98%)
+    } else if (atingimento >= 0.98) { 
       multiplicador = 0.50;
       cor = 'bg-yellow-100';
-    } else if (atingimento >= 0.97) { // Faixa 4 (97%)
+    } else if (atingimento >= 0.97) { 
       multiplicador = 0.25;
       cor = 'bg-orange-100';
-    } else {                          // Faixa 5 (<96%)
+    } else {                          
       multiplicador = 0.0;
       cor = 'bg-red-200';
     }
@@ -163,8 +155,7 @@ const OperacaoMetas = () => {
   };
 
   const handleSave = async (metaId, mesId, valor) => {
-    // 1. Atualização Visual Imediata (Otimista)
-    const valorNum = valor === '' ? null : parseFloat(valor);
+    const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
     
     setMetas(prev => prev.map(m => {
       if (m.id !== metaId) return m;
@@ -177,7 +168,6 @@ const OperacaoMetas = () => {
       return { ...m, meses: novoMeses };
     }));
 
-    // 2. Gravação no Banco
     const { error } = await supabase
       .from('resultados_farol')
       .upsert({
@@ -196,27 +186,45 @@ const OperacaoMetas = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden">
+    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
       {/* Cabeçalho das Abas */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
-        <div className="flex space-x-2">
-            {areas.length === 0 && !loading && (
-                <span className="text-red-500 text-xs font-bold mr-2">⚠️ Erro ao carregar áreas.</span>
-            )}
-            {areas.map(area => (
-                <button
-                key={area.id}
-                onClick={() => setAreaSelecionada(area.id)}
-                className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
-                    areaSelecionada === area.id
-                    ? 'border-blue-600 text-blue-700 bg-blue-50'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-                }`}
-                >
-                {area.nome}
-                </button>
-            ))}
+        
+        <div className="flex items-center gap-4">
+            {/* Botões de Navegação e Configuração */}
+            <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
+                 <button 
+                    onClick={() => window.location.hash = 'rotinas'} 
+                    className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
+                 >
+                    Ir para Rotinas
+                 </button>
+                 <button 
+                    onClick={() => setShowConfig(true)}
+                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+                    title="Configurações"
+                 >
+                    <Settings size={18} />
+                 </button>
+            </div>
+
+            {/* Seletor de Áreas (PCO / Motoristas) */}
+            <div className="flex space-x-2">
+                {areas.map(area => (
+                    <button
+                    key={area.id}
+                    onClick={() => setAreaSelecionada(area.id)}
+                    className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
+                        areaSelecionada === area.id
+                        ? 'border-blue-600 text-blue-700 bg-blue-50'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                    }`}
+                    >
+                    {area.nome}
+                    </button>
+                ))}
+            </div>
         </div>
       </div>
 
@@ -254,11 +262,9 @@ const OperacaoMetas = () => {
                       return (
                         <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
-                            {/* Meta Pequena (Alvo) */}
                             <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 bg-white/40">
                               {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
                             </div>
-                            {/* Input Principal (Realizado) */}
                             <input 
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                               placeholder="-"
@@ -272,7 +278,6 @@ const OperacaoMetas = () => {
                   </tr>
                 ))}
                 
-                {/* Rodapé Totalizador */}
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                   <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">TOTAL SCORE</td>
                   <td className="p-2 border-r border-red-500 text-center">100</td>
@@ -288,6 +293,10 @@ const OperacaoMetas = () => {
           </div>
         )}
       </div>
+
+      {showConfig && (
+        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />
+      )}
     </div>
   );
 };
