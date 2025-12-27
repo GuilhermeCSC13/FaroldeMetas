@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
 import { Settings } from 'lucide-react';
 
-const ID_MANUTENCAO = 2; // ID definido no SQL
+const ID_MANUTENCAO = 2;
 const MESES = [
   { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
   { id: 4, label: 'abr/26' }, { id: 5, label: 'mai/26' }, { id: 6, label: 'jun/26' },
@@ -45,6 +45,8 @@ const ManutencaoMetas = () => {
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     if (!meta || realizado === '' || realizado === null) return { score: 0, color: 'bg-white' };
     const r = parseFloat(realizado), m = parseFloat(meta);
+    if(m === 0) return { score: 0, color: 'bg-white' };
+    
     let atingimento = (tipo === '>=' || tipo === 'maior') ? r / m : 1 + ((m - r) / m);
 
     if (atingimento >= 1.0) return { score: pesoTotal, color: 'bg-green-300' };
@@ -68,42 +70,46 @@ const ManutencaoMetas = () => {
 
   return (
     <div className="flex flex-col h-full bg-white font-sans">
-      <div className="flex items-center justify-between px-6 py-2 bg-yellow-300 border-b border-yellow-400">
+      <div className="flex items-center justify-between px-6 py-3 bg-yellow-300 border-b border-yellow-400">
         <h2 className="text-lg font-bold text-gray-900 uppercase tracking-wide">FAROL DE METAS</h2>
         <div className="flex items-center gap-3">
-             <button onClick={() => window.location.hash = 'rotinas'} className="px-3 py-1 text-xs font-bold text-gray-800 bg-white/50 hover:bg-white rounded transition-colors">IR PARA ROTINAS</button>
-             <button onClick={() => setShowConfig(true)} className="p-1 text-gray-800 hover:text-black"><Settings size={18} /></button>
+             <button onClick={() => window.location.hash = 'rotinas'} className="px-3 py-1 text-xs font-bold text-gray-800 bg-white/50 hover:bg-white rounded transition-colors shadow-sm">
+                IR PARA ROTINAS
+             </button>
+             <button onClick={() => setShowConfig(true)} className="p-1.5 text-gray-800 hover:text-black hover:bg-yellow-400/50 rounded-full transition-colors">
+                <Settings size={20} />
+             </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-auto">
         <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-20 shadow-sm">
-            <tr className="bg-[#d9ead3] text-gray-900 font-bold text-center border-b border-gray-300 italic">
-              <th className="p-2 border-r border-gray-400 w-64 sticky left-0 bg-[#d9ead3] z-10 text-left pl-4">Descrição</th>
-              <th className="p-2 border-r border-gray-400 w-12">Peso</th>
-              <th className="p-2 border-r border-gray-400 w-12">Tipo</th>
-              {MESES.map(mes => <th key={mes.id} className="p-2 border-r border-gray-400 min-w-[70px]">{mes.label}</th>)}
+            <tr className="bg-[#d9ead3] text-gray-900 font-bold text-center border-b border-gray-400 uppercase">
+              <th className="p-3 border-r border-gray-400 w-64 sticky left-0 bg-[#d9ead3] z-10 text-left pl-4">Descrição</th>
+              <th className="p-3 border-r border-gray-400 w-12">Peso</th>
+              <th className="p-3 border-r border-gray-400 w-12">Tipo</th>
+              {MESES.map(mes => <th key={mes.id} className="p-3 border-r border-gray-400 min-w-[70px]">{mes.label}</th>)}
             </tr>
           </thead>
           <tbody>
             {metas.map(meta => (
               <tr key={meta.id} className="hover:bg-gray-50 text-center border-b border-gray-200">
-                <td className="p-2 border-r border-gray-300 text-left font-bold text-gray-800 sticky left-0 bg-[#d9ead3]/30 z-10">
+                <td className="p-2 border-r border-gray-300 text-left font-bold text-gray-800 sticky left-0 bg-[#f4fce8] z-10">
                     {meta.nome_meta || meta.indicador}
                 </td>
-                <td className="p-2 border-r border-gray-300 bg-[#d9ead3]/50 font-bold">{parseInt(meta.peso)}</td>
-                <td className="p-2 border-r border-gray-300 font-mono text-gray-600">{meta.tipo_comparacao}</td>
+                <td className="p-2 border-r border-gray-300 bg-gray-50">{parseInt(meta.peso)}</td>
+                <td className="p-2 border-r border-gray-300 font-mono text-gray-500">{meta.tipo_comparacao}</td>
                 {MESES.map(mes => {
                   const dados = meta.meses[mes.id];
                   return (
                     <td key={mes.id} className={`border-r border-gray-300 p-0 relative h-10 align-middle ${dados.color}`}>
                        <div className="flex flex-col h-full justify-center">
-                         <div className="text-[8px] text-gray-600 text-right px-1 pt-0.5 opacity-60 absolute top-0 right-0">
+                         <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 opacity-60 absolute top-0 right-0 font-medium">
                             {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
                          </div>
                          <input 
-                            className="w-full text-center bg-transparent font-bold text-gray-900 focus:outline-none h-full"
+                            className="w-full text-center bg-transparent font-bold text-gray-900 focus:outline-none h-full pt-1"
                             placeholder="-"
                             defaultValue={dados.realizado}
                             onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
@@ -114,16 +120,22 @@ const ManutencaoMetas = () => {
                 })}
               </tr>
             ))}
-            <tr className="bg-gray-600 text-white font-bold border-t-2 border-black">
-              <td className="p-2 sticky left-0 bg-gray-600 z-10 text-right pr-4">ACUMULADO</td>
-              <td className="p-2 text-center">100</td>
-              <td></td>
-              {MESES.map(mes => <td key={mes.id} className="p-2 text-center border-l border-gray-500">{getTotalScore(mes.id)}</td>)}
+            {/* Rodapé Totalizador (Cinza escuro conforme estilo manutenção) */}
+            <tr className="bg-gray-700 text-white font-bold border-t-2 border-black">
+              <td className="p-2 sticky left-0 bg-gray-700 z-10 text-right pr-4">TOTAL SCORE</td>
+              <td className="p-2 text-center border-l border-gray-600">100</td>
+              <td className="border-l border-gray-600"></td>
+              {MESES.map(mes => <td key={mes.id} className="p-2 text-center border-l border-gray-600">{getTotalScore(mes.id)}</td>)}
             </tr>
           </tbody>
         </table>
       </div>
-      {showConfig && <ConfiguracaoGeral areasContexto={[{ id: 2, nome: 'Manutenção' }]} onClose={() => { setShowConfig(false); fetchMetasData(); }} />}
+      {showConfig && (
+        <ConfiguracaoGeral 
+            areasContexto={[{ id: 2, nome: 'Manutenção' }]} 
+            onClose={() => { setShowConfig(false); fetchMetasData(); }} 
+        />
+      )}
     </div>
   );
 };
