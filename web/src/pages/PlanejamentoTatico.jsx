@@ -1,27 +1,57 @@
-import React from "react";
+// web/src/pages/PlanejamentoTatico.jsx
+import Layout from "../components/Layout";
 import SetorSection from "../components/tatico/SetorSection";
-
-const SETORES = ["Operação", "Manutenção", "Moov", "Financeiro", "Pessoas"];
 
 export default function PlanejamentoTatico() {
   return (
-    <div className="space-y-8">
-      {/* Cabeçalho geral da página */}
-      <div>
-        <h2 className="text-2xl font-semibold text-slate-800">
-          Planejamento Tático
-        </h2>
-        <p className="text-sm text-slate-500 mt-1 max-w-3xl">
-          Para cada setor, organize o resumo executivo, o farol de metas e o
-          farol de rotinas. Nesta primeira versão, os blocos são apenas
-          estruturais; depois vamos conectar tudo ao Supabase.
-        </p>
-      </div>
+    <Layout>
+      <div className="space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold text-gray-800">
+            Planejamento Tático
+          </h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Para cada setor, organize o resumo executivo, o farol de metas e o
+            farol de rotinas. Nesta primeira versão, os blocos são estruturais;
+            depois vamos conectar tudo ao Supabase.
+          </p>
+        </header>
 
-      {/* Um bloco completo por setor: Resumo / Farol de Metas / Farol de Rotinas */}
-      {SETORES.map((setor) => (
-        <SetorSection key={setor} setor={setor} />
-      ))}
-    </div>
+        {/* Operação */}
+        <SetorSection
+          setorKey="operacao"
+          titulo="Operação"
+          descricao="Resumo, Farol de Metas e Farol de Rotinas do setor de Operação."
+        />
+
+        {/* Manutenção */}
+        <SetorSection
+          setorKey="manutencao"
+          titulo="Manutenção"
+          descricao="Estrutura de planejamento tático para o setor de Manutenção."
+        />
+
+        {/* Moov */}
+        <SetorSection
+          setorKey="moov"
+          titulo="Moov"
+          descricao="Estrutura de planejamento tático para o Moov."
+        />
+
+        {/* Financeiro */}
+        <SetorSection
+          setorKey="financeiro"
+          titulo="Financeiro"
+          descricao="Estrutura de planejamento tático para o setor Financeiro."
+        />
+
+        {/* Pessoas */}
+        <SetorSection
+          setorKey="pessoas"
+          titulo="Pessoas"
+          descricao="Estrutura de planejamento tático para o setor de Pessoas."
+        />
+      </div>
+    </Layout>
   );
 }
