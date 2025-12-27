@@ -71,9 +71,8 @@ const MoovMetas = () => {
     }
   };
 
-  // --- LÓGICA DE CÁLCULO BLINDADA (IGUAL OPERAÇÃO) ---
+  // --- LÓGICA DE CÁLCULO ---
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    // Validação
     if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
       return { score: 0, faixa: 0, color: 'bg-white' };
     }
@@ -85,31 +84,28 @@ const MoovMetas = () => {
 
     let atingimento = 0;
 
-    // Cálculo do atingimento
     if (tipo === '>=' || tipo === 'maior') {
       atingimento = r / m;
     } else {
-      // Menor é melhor
       atingimento = 1 + ((m - r) / m);
     }
 
-    // Regra das Faixas
     let multiplicador = 0;
     let cor = 'bg-red-200';
 
-    if (atingimento >= 1.0) {      // Faixa 1 (100%)
+    if (atingimento >= 1.0) {      
       multiplicador = 1.0;
       cor = 'bg-green-300';
-    } else if (atingimento >= 0.99) { // Faixa 2 (99%)
+    } else if (atingimento >= 0.99) { 
       multiplicador = 0.75;
       cor = 'bg-green-100';
-    } else if (atingimento >= 0.98) { // Faixa 3 (98%)
+    } else if (atingimento >= 0.98) { 
       multiplicador = 0.50;
       cor = 'bg-yellow-100';
-    } else if (atingimento >= 0.97) { // Faixa 4 (97%)
+    } else if (atingimento >= 0.97) { 
       multiplicador = 0.25;
       cor = 'bg-orange-100';
-    } else {                          // Faixa 5 (<96%)
+    } else {                          
       multiplicador = 0.0;
       cor = 'bg-red-200';
     }
@@ -124,7 +120,6 @@ const MoovMetas = () => {
   const handleSave = async (metaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
     
-    // Atualização Visual Imediata
     setMetas(prev => prev.map(m => {
       if (m.id !== metaId) return m;
       const novoMeses = { ...m.meses };
@@ -136,7 +131,6 @@ const MoovMetas = () => {
       return { ...m, meses: novoMeses };
     }));
 
-    // Gravação no Banco
     const { error } = await supabase
       .from('resultados_farol')
       .upsert({
@@ -155,7 +149,7 @@ const MoovMetas = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden">
+    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Moov</h2>
@@ -172,6 +166,7 @@ const MoovMetas = () => {
              >
                 <Settings size={18} />
              </button>
+             <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">MOOV</div>
         </div>
       </div>
 
@@ -246,7 +241,10 @@ const MoovMetas = () => {
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />
+        <ConfiguracaoGeral 
+            areasContexto={[{ id: 3, nome: 'Moov' }]} // Garante edição da Moov
+            onClose={() => { setShowConfig(false); fetchMetasData(); }} 
+        />
       )}
     </div>
   );
