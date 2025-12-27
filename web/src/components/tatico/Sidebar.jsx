@@ -12,7 +12,10 @@ import {
 const setores = [
   { key: "operacao", label: "Operação", path: "/planejamento/operacao" },
   { key: "manutencao", label: "Manutenção", path: "/planejamento/manutencao" },
-  { key: "moov", label: "Moov", path: "/planejamento/moov" },
+  
+  // CORREÇÃO AQUI: Caminho deve bater com o App.jsx (/moov)
+  { key: "moov", label: "Moov", path: "/moov" }, 
+  
   { key: "financeiro", label: "Financeiro", path: "/planejamento/financeiro" },
   { key: "pessoas", label: "Pessoas", path: "/planejamento/pessoas" },
 ];
