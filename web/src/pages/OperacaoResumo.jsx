@@ -3,10 +3,12 @@ import { supabase } from '../supabaseClient';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
 } from 'recharts';
-import { AlertTriangle, TrendingUp, CheckCircle, Target } from 'lucide-react';
+import { AlertTriangle, TrendingUp, CheckCircle, Target, Settings } from 'lucide-react';
+import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral'; // <--- Importação do novo componente
 
 const OperacaoResumo = () => {
   const [loading, setLoading] = useState(true);
+  const [showConfig, setShowConfig] = useState(false); // <--- Estado para abrir o modal
   const [metrics, setMetrics] = useState({
     scoreAtual: 0,
     metasBatidas: 0,
@@ -27,7 +29,7 @@ const OperacaoResumo = () => {
       const { data: metas } = await supabase
         .from('metas_farol')
         .select('*')
-        .in('area_id', [4, 5]); // PCO e Motoristas
+        .in('area_id', [4, 5]);
 
       // 2. Busca Metas Mensais (Alvos)
       const { data: alvos } = await supabase
@@ -46,16 +48,13 @@ const OperacaoResumo = () => {
         return;
       }
 
-      // --- PROCESSAMENTO DOS DADOS ---
-      
-      // Vamos focar no mês de Janeiro/26 como "Mês Atual" para o exemplo
+      // --- PROCESSAMENTO (Exemplo com Janeiro) ---
       const MES_ATUAL = 1; 
       let somaScore = 0;
       let countBatidas = 0;
       let countCriticas = 0;
       const listaAlertas = [];
 
-      // Calcula Score do Mês Atual
       metas.forEach(meta => {
         const alvo = alvos.find(a => a.meta_id === meta.id && a.mes === MES_ATUAL)?.valor_meta;
         const real = realizados.find(r => r.meta_id === meta.id && r.mes === MES_ATUAL)?.valor_realizado;
@@ -75,7 +74,7 @@ const OperacaoResumo = () => {
         }
       });
 
-      // Monta dados do Gráfico (Jan a Jun)
+      // Dados para o Gráfico (Jan-Jun)
       const historico = [1, 2, 3, 4, 5, 6].map(mesId => {
         let scoreMes = 0;
         metas.forEach(meta => {
@@ -108,7 +107,6 @@ const OperacaoResumo = () => {
     }
   };
 
-  // Reutilizando a lógica de cálculo (Simplificada para uso interno)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     if (!meta || realizado === null || realizado === '' || isNaN(realizado)) return { score: 0, faixa: 0 };
     
@@ -143,7 +141,15 @@ const OperacaoResumo = () => {
           <h2 className="text-2xl font-bold text-gray-800">Visão Geral — Operação</h2>
           <p className="text-sm text-gray-500">Acompanhamento consolidado de performance (Jan/2026)</p>
         </div>
-        <div className="text-right">
+        <div className="flex items-center gap-3">
+             {/* BOTÃO DE CONFIGURAÇÃO NOVO */}
+             <button 
+               onClick={() => setShowConfig(true)}
+               className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-700 transition-colors shadow-sm"
+             >
+               <Settings size={16} /> Configurar Metas e Rotinas
+             </button>
+             
              <span className="text-xs font-semibold bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
                 Última atualização: Hoje
              </span>
@@ -249,6 +255,14 @@ const OperacaoResumo = () => {
               )}
             </div>
           </div>
+
+          {/* MODAL DE CONFIGURAÇÃO AQUI */}
+          {showConfig && (
+             <ConfiguracaoGeral onClose={() => {
+                 setShowConfig(false);
+                 fetchDashboardData(); // Recarrega os dados ao fechar
+             }} />
+          )}
         </>
       )}
     </div>
