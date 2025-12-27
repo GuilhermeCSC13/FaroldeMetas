@@ -16,13 +16,11 @@ const AREAS_PADRAO = [
 ];
 
 const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
-  // LÓGICA DE SELEÇÃO: Usa o que veio por prop, se não tiver, usa padrão
+  // Define quais áreas mostrar (Se veio do Moov, só mostra Moov)
   const areasDisponiveis = (areasContexto && areasContexto.length > 0) ? areasContexto : AREAS_PADRAO;
   
-  const [tipo, setTipo] = useState('metas'); 
-  // Inicializa já com o ID correto da área (Ex: 3 se for Moov)
+  const [tipo, setTipo] = useState('metas'); // 'metas' ou 'rotinas'
   const [areaId, setAreaId] = useState(areasDisponiveis[0].id);
-  
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -67,26 +65,33 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     const nome = prompt("Nome do novo Indicador:");
     if (!nome) return;
 
-    if (tipo === 'metas') {
-      await supabase.from('metas_farol').insert({
-        area_id: areaId,
-        indicador: nome,
-        nome_meta: nome,
-        peso: 0,
-        unidade: '',
-        tipo_comparacao: '>=',
-        ano: 2026
-      });
-    } else {
-      await supabase.from('rotinas_indicadores').insert({
-        area_id: areaId,
-        indicador: nome,
-        formato: 'num',
-        ordem: items.length + 1,
-        tipo_comparacao: '>='
-      });
+    try {
+      if (tipo === 'metas') {
+        // CORREÇÃO: Envia nome_meta e ano para evitar erro de SQL
+        const { error } = await supabase.from('metas_farol').insert({
+          area_id: areaId,
+          indicador: nome,
+          nome_meta: nome, 
+          peso: 0,
+          unidade: '',
+          tipo_comparacao: '>=',
+          ano: 2026 
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('rotinas_indicadores').insert({
+          area_id: areaId,
+          indicador: nome,
+          formato: 'num',
+          ordem: items.length + 1,
+          tipo_comparacao: '>='
+        });
+        if (error) throw error;
+      }
+      fetchData(); 
+    } catch (err) {
+      alert("Erro ao criar: " + err.message);
     }
-    fetchData(); 
   };
 
   const handleDelete = async (id) => {
@@ -243,6 +248,20 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
             </div>
           )}
         </div>
+
+        {/* --- AQUI ESTÁ O BOTÃO DE NOVO INDICADOR --- */}
+        <div className="p-4 bg-white border-t rounded-b-xl flex justify-between items-center">
+            <button 
+                onClick={handleAdd} 
+                className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all font-semibold"
+            >
+                <Plus size={18} /> Novo Indicador
+            </button>
+            <p className="text-xs text-gray-400">
+               <span className="font-bold text-gray-600">Nota:</span> Use a coluna amarela para definir a META de cada mês.
+            </p>
+        </div>
+
       </div>
     </div>
   );
