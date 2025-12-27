@@ -1,6 +1,6 @@
 // src/components/tatico/FarolMetasSetor.jsx
 import { useEffect, useState } from "react";
-import { supabase } from "../../supabase";
+import { supabase } from "../../supabaseClient";
 
 const LABEL_SETOR = {
   operacao: "Operação",
