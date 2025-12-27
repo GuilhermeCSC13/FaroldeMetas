@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral'; // Reaproveitando o configurador geral
+import { Settings } from 'lucide-react';
 
-// IDs fixos
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
 
@@ -17,6 +18,7 @@ const OperacaoRotinas = () => {
   const [areaSelecionada, setAreaSelecionada] = useState(null);
   const [rotinas, setRotinas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
 
   useEffect(() => {
     fetchAreas();
@@ -27,7 +29,6 @@ const OperacaoRotinas = () => {
   }, [areaSelecionada]);
 
   const fetchAreas = async () => {
-    // Mesma lógica robusta do Farol de Metas
     const { data } = await supabase.from('areas').select('*').eq('ativa', true).order('id');
     if (data) {
       const filtered = data.filter(a => a.id == ID_PCO || a.id == ID_MOTORISTAS);
@@ -39,25 +40,29 @@ const OperacaoRotinas = () => {
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
-      // 1. Busca Definições
+      // 1. Busca Indicadores
       const { data: defs } = await supabase
         .from('rotinas_indicadores')
         .select('*')
         .eq('area_id', areaSelecionada)
         .order('ordem', { ascending: true });
 
-      // 2. Busca Valores
+      // 2. Busca Valores (Meta e Realizado)
       const { data: valores } = await supabase
         .from('rotinas_mensais')
         .select('*')
         .eq('ano', 2026);
 
-      // 3. Combina
+      // 3. Monta a tabela
       const combined = (defs || []).map(r => {
         const row = { ...r, meses: {} };
         MESES.forEach(mes => {
           const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
-          row.meses[mes.id] = valObj ? valObj.valor_realizado : '';
+          row.meses[mes.id] = {
+            realizado: valObj ? valObj.valor_realizado : '',
+            // AQUI ESTÁ O SEGREDO: Pegamos a meta para exibir
+            meta: valObj ? valObj.valor_meta : null 
+          };
         });
         return row;
       });
@@ -71,63 +76,67 @@ const OperacaoRotinas = () => {
   };
 
   const handleSave = async (rotinaId, mesId, valor) => {
-    // Atualiza estado local
-    setRotinas(prev => prev.map(r => {
-        if (r.id !== rotinaId) return r;
-        const novosMeses = { ...r.meses };
-        novosMeses[mesId] = valor;
-        return { ...r, meses: novosMeses };
-    }));
-
-    // Formata para banco (remove R$ e % se vier formatado, mas aqui usamos input raw)
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
+    
+    // Busca registro atual para não perder a meta ao salvar o realizado
+    const { data: current } = await supabase
+        .from('rotinas_mensais')
+        .select('valor_meta')
+        .eq('rotina_id', rotinaId)
+        .eq('ano', 2026)
+        .eq('mes', mesId)
+        .single();
+    
+    const metaAtual = current ? current.valor_meta : null;
 
-    const { error } = await supabase
-      .from('rotinas_mensais')
-      .upsert({
+    await supabase.from('rotinas_mensais').upsert({
         rotina_id: rotinaId,
         ano: 2026,
         mes: mesId,
-        valor_realizado: valorNum
-      }, { onConflict: 'rotina_id, ano, mes' });
-      
-    if(error) console.error("Erro ao salvar rotina:", error);
+        valor_realizado: valorNum,
+        valor_meta: metaAtual // Mantém a meta existente
+    });
   };
 
-  // Helper de Formatação
-  const formatPlaceholder = (formato) => {
-    if (formato === 'percent') return '%';
-    if (formato === 'currency') return 'R$';
-    return '-';
-  };
-
-  // Cores dinâmicas baseadas na área (PCO = Azul, Gestão = Verde)
   const isPCO = areaSelecionada == ID_PCO;
   const headerColor = isPCO ? 'bg-blue-200 border-blue-300' : 'bg-[#d0e0e3] border-gray-300';
   const subHeaderColor = isPCO ? 'bg-blue-100' : 'bg-[#d0e0e3]';
 
   return (
-    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden">
-      {/* Header Abas */}
+    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden relative">
+      
+      {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Rotinas</h2>
-        <div className="flex space-x-2">
-          {areas.map(area => (
-            <button
-              key={area.id}
-              onClick={() => setAreaSelecionada(area.id)}
-              className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
-                areaSelecionada === area.id
-                  ? 'border-blue-600 text-blue-700 bg-blue-50'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-              }`}
+        
+        <div className="flex items-center gap-4">
+            <div className="flex space-x-2">
+            {areas.map(area => (
+                <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
+                    areaSelecionada === area.id
+                    ? 'border-blue-600 text-blue-700 bg-blue-50'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+                >
+                {area.nome}
+                </button>
+            ))}
+            </div>
+            
+            <button 
+                onClick={() => setShowConfig(true)}
+                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                title="Configurar Metas"
             >
-              {area.nome}
+                <Settings size={20} />
             </button>
-          ))}
         </div>
       </div>
 
+      {/* Tabela */}
       <div className="flex-1 overflow-auto p-4">
         {loading ? (
           <div className="text-center py-10 text-gray-500">Carregando rotinas...</div>
@@ -136,11 +145,8 @@ const OperacaoRotinas = () => {
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className={`${headerColor} text-gray-800 text-center font-bold uppercase`}>
-                  {/* Coluna Responsável só aparece se não for PCO (conforme imagem) ou se tiver dados */}
                   {!isPCO && <th className="p-2 border border-gray-400 w-24">Responsável</th>}
-                  
                   <th className="p-2 border border-gray-400 w-64 text-left pl-4">Indicador</th>
-                  
                   {MESES.map(mes => (
                     <th key={mes.id} className="p-2 border border-gray-400 min-w-[80px]">
                       {mes.label}
@@ -151,37 +157,39 @@ const OperacaoRotinas = () => {
               <tbody>
                 {rotinas.map((row, idx) => (
                   <tr key={row.id || idx} className="hover:bg-gray-50 text-center">
-                    
-                    {/* Coluna Responsável */}
                     {!isPCO && (
                       <td className="p-2 border border-gray-300 font-medium text-gray-700 bg-[#e2efda]">
                         {row.responsavel || '-'}
                       </td>
                     )}
-
-                    {/* Coluna Indicador */}
                     <td className={`p-2 border border-gray-300 text-left font-medium text-gray-800 ${subHeaderColor}`}>
                       {row.indicador}
                     </td>
+                    {MESES.map(mes => {
+                        const dados = row.meses[mes.id];
+                        return (
+                            <td key={mes.id} className="border border-gray-300 p-0 h-10 bg-white relative">
+                                <div className="flex flex-col h-full justify-center relative">
+                                    
+                                    {/* --- AQUI ESTÁ A META PEQUENA NO CANTO --- */}
+                                    <div className="absolute top-0 right-1 text-[9px] text-gray-400 select-none pointer-events-none">
+                                        {dados.meta ? Number(dados.meta).toFixed(row.formato === 'percent' ? 2 : 0) : ''}
+                                    </div>
 
-                    {/* Meses */}
-                    {MESES.map(mes => (
-                      <td key={mes.id} className="border border-gray-300 p-0 h-10 bg-white">
-                        <div className="flex items-center h-full px-1">
-                          {/* Prefixo de moeda/porcentagem visual */}
-                          {row.formato === 'currency' && <span className="text-gray-400 mr-1 text-[9px]">R$</span>}
-                          
-                          <input 
-                            className="w-full h-full text-center bg-transparent focus:outline-none text-gray-800 font-medium"
-                            placeholder={row.formato === 'percent' ? '%' : ''}
-                            defaultValue={row.meses[mes.id]}
-                            onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
-                          />
-                          
-                          {row.formato === 'percent' && <span className="text-gray-400 ml-0.5 text-[9px]">%</span>}
-                        </div>
-                      </td>
-                    ))}
+                                    {/* Input Realizado */}
+                                    <div className="flex items-center justify-center px-1 pt-1">
+                                        {row.formato === 'currency' && <span className="text-gray-400 mr-1 text-[9px]">R$</span>}
+                                        <input 
+                                            className="w-full text-center bg-transparent focus:outline-none text-gray-800 font-medium"
+                                            defaultValue={dados.realizado}
+                                            onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
+                                        />
+                                        {row.formato === 'percent' && <span className="text-gray-400 ml-0.5 text-[9px]">%</span>}
+                                    </div>
+                                </div>
+                            </td>
+                        );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -189,6 +197,10 @@ const OperacaoRotinas = () => {
           </div>
         )}
       </div>
+
+      {showConfig && (
+        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchRotinasData(); }} />
+      )}
     </div>
   );
 };
