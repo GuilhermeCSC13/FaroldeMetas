@@ -127,7 +127,12 @@ const MoovRotinas = () => {
           </tbody>
         </table>
       </div>
-      {showConfig && <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchRotinasData(); }} />}
+      {showConfig && (
+        <ConfiguracaoGeral 
+            areasContexto={[{ id: 3, nome: 'Moov' }]} // Garante edição da Moov
+            onClose={() => { setShowConfig(false); fetchRotinasData(); }} 
+        />
+      )}
     </div>
   );
 };
