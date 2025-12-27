@@ -1,11 +1,9 @@
-// web/src/App.jsx
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Layout from "./components/Layout";
 
 // Páginas
 import Inicio from "./pages/Inicio";
-import PlanejamentoTatico from "./pages/PlanejamentoTatico";
-import Operacao from "./pages/Operacao";
+// O componente Operacao agora age como o "Controlador" (Abas: Resumo, Metas, Rotinas)
+import Operacao from "./pages/Operacao"; 
 import ReunioesPeriodicas from "./pages/ReunioesPeriodicas";
 import DetalheReuniao from "./pages/DetalheReuniao";
 import Configuracoes from "./pages/Configuracoes";
@@ -13,22 +11,24 @@ import Configuracoes from "./pages/Configuracoes";
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Inicio />} />
-          <Route
-            path="/planejamento-tatico"
-            element={<PlanejamentoTatico />}
-          />
-          <Route path="/planejamento/operacao" element={<Operacao />} />
-          <Route
-            path="/reunioes-periodicas"
-            element={<ReunioesPeriodicas />}
-          />
-          <Route path="/reunioes/:id" element={<DetalheReuniao />} />
-          <Route path="/configuracoes" element={<Configuracoes />} />
-        </Routes>
-      </Layout>
+      {/* Removemos o <Layout> global daqui. 
+        Agora cada módulo (ex: Operacao) chama seu próprio Layout (tatico/Layout).
+      */}
+      <Routes>
+        <Route path="/" element={<Inicio />} />
+        
+        {/* Rota principal do Módulo Operação */}
+        {/* Este componente gerencia os hashs #metas, #rotinas, #resumo */}
+        <Route path="/planejamento/operacao" element={<Operacao />} />
+
+        {/* Rotas secundárias / Placeholders */}
+        <Route path="/reunioes-periodicas" element={<ReunioesPeriodicas />} />
+        <Route path="/reunioes/:id" element={<DetalheReuniao />} />
+        <Route path="/configuracoes" element={<Configuracoes />} />
+        
+        {/* Redirecionamentos ou rotas futuras */}
+        <Route path="/planejamento-tatico" element={<Inicio />} /> 
+      </Routes>
     </BrowserRouter>
   );
 }
