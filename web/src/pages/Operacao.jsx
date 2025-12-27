@@ -1,8 +1,8 @@
-// src/pages/Operacao.jsx
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import Layout from '../components/tatico/Layout'; // Seu Layout novo com Sidebar
-import OperacaoMetas from './OperacaoMetas';     // O componente das tabelas
+// VERIFIQUE ESTA LINHA COM CUIDADO:
+import Layout from '../components/tatico/Layout'; 
+import OperacaoMetas from './OperacaoMetas';
 
 const Operacao = () => {
   const location = useLocation();
