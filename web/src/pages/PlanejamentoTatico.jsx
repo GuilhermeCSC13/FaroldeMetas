@@ -1,4 +1,27 @@
+import { useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
+
 export default function PlanejamentoTatico() {
+  const [areas, setAreas] = useState([]);
+
+  useEffect(() => {
+    async function carregarAreas() {
+      const { data, error } = await supabase
+        .from("areas")
+        .select("id, nome, descricao")
+        .order("nome", { ascending: true });
+
+      if (error) {
+        console.error("Erro ao carregar áreas:", error);
+        return;
+      }
+
+      setAreas(data || []);
+    }
+
+    carregarAreas();
+  }, []);
+
   return (
     <div className="space-y-6">
       <div>
@@ -88,6 +111,34 @@ export default function PlanejamentoTatico() {
           Mais pra frente, essas seções serão alimentadas pelas tabelas no
           Supabase (metas, áreas, rotinas e execuções).
         </p>
+      </div>
+
+      {/* Áreas vindo do Supabase */}
+      <div className="bg-white rounded-2xl shadow-sm p-5 border border-slate-100">
+        <h3 className="text-sm font-semibold text-slate-700 mb-3">
+          Áreas cadastradas no Farol (Supabase)
+        </h3>
+
+        {areas.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            Nenhuma área encontrada ainda. Depois vamos permitir o cadastro pela
+            própria ferramenta.
+          </p>
+        ) : (
+          <ul className="text-sm text-slate-600 space-y-1">
+            {areas.map((a) => (
+              <li key={a.id}>
+                <span className="font-medium">{a.nome}</span>
+                {a.descricao && (
+                  <span className="text-xs text-slate-500">
+                    {" "}
+                    – {a.descricao}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
