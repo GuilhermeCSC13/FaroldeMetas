@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
-import { Settings, Target } from 'lucide-react';
+import { Settings } from 'lucide-react';
 
-const ID_MOOV = 3;
+const ID_MOOV = 3; // Área da Moov
+
 const MESES = [
   { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
   { id: 4, label: 'abr/26' }, { id: 5, label: 'mai/26' }, { id: 6, label: 'jun/26' },
@@ -16,129 +17,239 @@ const MoovMetas = () => {
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
 
-  useEffect(() => { fetchMetasData(); }, []);
+  useEffect(() => {
+    fetchMetasData();
+  }, []);
 
   const fetchMetasData = async () => {
     setLoading(true);
     try {
-      const { data: metasDef } = await supabase.from('metas_farol').select('*').eq('area_id', ID_MOOV).order('id');
-      const { data: metasMensais } = await supabase.from('metas_farol_mensal').select('*').eq('ano', 2026);
-      const { data: resultados } = await supabase.from('resultados_farol').select('*').eq('ano', 2026);
+      // 1. Definições das Metas (Linhas)
+      const { data: metasDef } = await supabase
+        .from('metas_farol')
+        .select('*')
+        .eq('area_id', ID_MOOV)
+        .order('id');
 
+      // 2. Metas Mensais (Alvos)
+      const { data: metasMensais } = await supabase
+        .from('metas_farol_mensal')
+        .select('*')
+        .eq('ano', 2026);
+
+      // 3. Resultados Realizados (O que foi digitado)
+      const { data: resultados } = await supabase
+        .from('resultados_farol')
+        .select('*')
+        .eq('ano', 2026);
+
+      // 4. Cruzamento de Dados
       const combined = (metasDef || []).map(m => {
         const row = { ...m, meses: {} };
+        
         MESES.forEach(mes => {
           const alvoObj = metasMensais?.find(x => x.meta_id === m.id && x.mes === mes.id);
           const realObj = resultados?.find(x => x.meta_id === m.id && x.mes === mes.id);
+          
+          const alvo = alvoObj ? parseFloat(alvoObj.valor_meta) : null;
+          const real = realObj ? parseFloat(realObj.valor_realizado) : '';
+
           row.meses[mes.id] = {
-            alvo: alvoObj ? parseFloat(alvoObj.valor_meta) : null,
-            realizado: realObj ? parseFloat(realObj.valor_realizado) : '',
-            ...calculateScore(alvoObj?.valor_meta, realObj?.valor_realizado, m.tipo_comparacao)
+            alvo: alvo,
+            realizado: real,
+            ...calculateScore(alvo, real, m.tipo_comparacao, parseFloat(m.peso))
           };
         });
         return row;
       });
+
       setMetas(combined);
-    } catch (error) { console.error(error); } finally { setLoading(false); }
+    } catch (error) {
+      console.error('Erro ao carregar metas:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const calculateScore = (meta, realizado, tipo) => {
-    if (!meta || realizado === '' || realizado === null) return { color: 'bg-white' };
-    const r = parseFloat(realizado), m = parseFloat(meta);
-    if (m === 0) return { color: 'bg-white' };
-    
-    let atingimento = (tipo === '>=' || tipo === 'maior') ? r / m : 1 + ((m - r) / m);
+  // --- LÓGICA DE CÁLCULO BLINDADA (IGUAL OPERAÇÃO) ---
+  const calculateScore = (meta, realizado, tipo, pesoTotal) => {
+    // Validação
+    if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
+      return { score: 0, faixa: 0, color: 'bg-white' };
+    }
 
-    if (atingimento >= 1.0) return { color: 'bg-green-300' }; // Verde Forte
-    if (atingimento >= 0.99) return { color: 'bg-green-100' }; // Verde Claro
-    if (atingimento >= 0.98) return { color: 'bg-yellow-100' }; // Amarelo
-    return { color: 'bg-red-200' }; // Vermelho
+    const r = parseFloat(realizado);
+    const m = parseFloat(meta);
+
+    if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
+
+    let atingimento = 0;
+
+    // Cálculo do atingimento
+    if (tipo === '>=' || tipo === 'maior') {
+      atingimento = r / m;
+    } else {
+      // Menor é melhor
+      atingimento = 1 + ((m - r) / m);
+    }
+
+    // Regra das Faixas
+    let multiplicador = 0;
+    let cor = 'bg-red-200';
+
+    if (atingimento >= 1.0) {      // Faixa 1 (100%)
+      multiplicador = 1.0;
+      cor = 'bg-green-300';
+    } else if (atingimento >= 0.99) { // Faixa 2 (99%)
+      multiplicador = 0.75;
+      cor = 'bg-green-100';
+    } else if (atingimento >= 0.98) { // Faixa 3 (98%)
+      multiplicador = 0.50;
+      cor = 'bg-yellow-100';
+    } else if (atingimento >= 0.97) { // Faixa 4 (97%)
+      multiplicador = 0.25;
+      cor = 'bg-orange-100';
+    } else {                          // Faixa 5 (<96%)
+      multiplicador = 0.0;
+      cor = 'bg-red-200';
+    }
+
+    return { 
+      score: pesoTotal * multiplicador, 
+      multiplicador,
+      color: cor 
+    };
   };
 
   const handleSave = async (metaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
+    
+    // Atualização Visual Imediata
     setMetas(prev => prev.map(m => {
-        if (m.id !== metaId) return m;
-        const novoMeses = { ...m.meses };
-        novoMeses[mesId] = { ...novoMeses[mesId], realizado: valorNum, ...calculateScore(novoMeses[mesId].alvo, valorNum, m.tipo_comparacao) };
-        return { ...m, meses: novoMeses };
+      if (m.id !== metaId) return m;
+      const novoMeses = { ...m.meses };
+      novoMeses[mesId] = {
+        ...novoMeses[mesId],
+        realizado: valorNum,
+        ...calculateScore(novoMeses[mesId].alvo, valorNum, m.tipo_comparacao, m.peso)
+      };
+      return { ...m, meses: novoMeses };
     }));
-    await supabase.from('resultados_farol').upsert({ meta_id: metaId, ano: 2026, mes: mesId, valor_realizado: valorNum }, { onConflict: 'meta_id, ano, mes' });
+
+    // Gravação no Banco
+    const { error } = await supabase
+      .from('resultados_farol')
+      .upsert({
+        meta_id: metaId,
+        ano: 2026,
+        mes: mesId,
+        valor_realizado: valorNum
+      }, { onConflict: 'meta_id, ano, mes' });
+
+    if (error) console.error("Erro ao salvar:", error);
+  };
+
+  const getTotalScore = (mesId) => {
+    const total = metas.reduce((acc, m) => acc + (m.meses[mesId]?.score || 0), 0);
+    return total.toFixed(1);
   };
 
   return (
-    <div className="flex flex-col h-full bg-white font-sans">
-      {/* Header da Tabela */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
+    <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden">
+      {/* Cabeçalho */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Moov</h2>
         <div className="flex items-center gap-3">
-             <button onClick={() => window.location.hash = 'rotinas'} className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-gray-50 rounded transition-colors">
+             <button 
+                onClick={() => window.location.hash = 'rotinas'} 
+                className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded transition-colors"
+             >
                 Ir para Rotinas
              </button>
-             <button onClick={() => setShowConfig(true)} className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-gray-100">
+             <button 
+                onClick={() => setShowConfig(true)} 
+                className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-gray-100"
+             >
                 <Settings size={18} />
              </button>
-             <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">MOOV</div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-20 shadow-sm">
-            {/* Cabeçalho Cinza conforme imagem */}
-            <tr className="bg-[#d0e0e3] text-gray-800 font-bold text-center uppercase border-b border-gray-300">
-              <th className="sticky left-0 z-30 p-3 w-64 text-left border-r border-gray-300 bg-[#d0e0e3]">Indicador</th>
-              <th className="p-3 w-12 border-r border-gray-300">Peso</th>
-              <th className="p-3 w-12 border-r border-gray-300">Tipo</th>
-              {MESES.map(mes => (
-                <th key={mes.id} className="p-3 min-w-[80px] border-r border-gray-300">
-                   {mes.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {metas.map(meta => (
-              <tr key={meta.id} className="group hover:bg-gray-50/50">
-                {/* Coluna Indicador Fixa */}
-                <td className="sticky left-0 z-10 p-2 bg-gray-50/50 border-r border-gray-300 text-gray-800 font-semibold text-left">
-                    <div className="flex flex-col px-2">
-                        <span>{meta.nome_meta || meta.indicador}</span>
-                        <span className="text-[9px] text-gray-400 font-normal">{meta.unidade}</span>
-                    </div>
-                </td>
-                
-                <td className="p-2 text-center bg-white border-r border-gray-200 text-gray-600">{parseInt(meta.peso)}</td>
-                <td className="p-2 text-center bg-white border-r border-gray-200 font-mono text-[10px] text-gray-500">{meta.tipo_comparacao}</td>
-
-                {/* Células de Dados */}
-                {MESES.map(mes => {
-                  const dados = meta.meses[mes.id];
-                  return (
-                    <td key={mes.id} className={`p-0 border-r border-gray-200 relative align-top h-12 ${dados.color}`}>
-                       <div className="flex flex-col h-full justify-between">
-                         {/* Meta (Alvo) - Pequeno no canto superior direito */}
-                         <div className="text-[9px] text-gray-500 text-right pr-1 pt-0.5 font-medium opacity-70">
-                            {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
-                         </div>
-                         {/* Realizado - Grande no centro */}
-                         <input 
-                            className="w-full text-center bg-transparent font-bold text-gray-900 focus:outline-none pb-1 text-sm"
-                            placeholder="-"
-                            defaultValue={dados.realizado}
-                            onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
-                         />
-                       </div>
+      {/* Tabela de Dados */}
+      <div className="flex-1 overflow-auto p-4">
+        {loading ? (
+          <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
+        ) : (
+          <div className="border border-gray-300 rounded overflow-hidden shadow-sm">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                {/* Cabeçalho Cinza Igual Operação */}
+                <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
+                  <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">Indicador</th>
+                  <th className="p-2 border border-gray-300 w-12">Peso</th>
+                  <th className="p-2 border border-gray-300 w-12">Tipo</th>
+                  {MESES.map(mes => (
+                    <th key={mes.id} className="p-2 border border-gray-300 min-w-[70px]">
+                      {mes.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {metas.map(meta => (
+                  <tr key={meta.id} className="hover:bg-gray-50 text-center">
+                    <td className="p-2 border border-gray-300 text-left font-medium text-gray-800 sticky left-0 bg-white z-10">
+                      {meta.nome_meta || meta.indicador}
+                      <span className='block text-[9px] text-gray-400 font-normal'>{meta.unidade}</span>
                     </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    <td className="p-2 border border-gray-300 bg-gray-50">{parseInt(meta.peso)}</td>
+                    <td className="p-2 border border-gray-300 font-mono text-gray-500">{meta.tipo_comparacao}</td>
+                    
+                    {MESES.map(mes => {
+                      const dados = meta.meses[mes.id];
+                      return (
+                        <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
+                          <div className="flex flex-col h-full justify-between">
+                            {/* Meta Pequena (Alvo) */}
+                            <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 bg-white/40">
+                              {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
+                            </div>
+                            {/* Input Principal (Realizado) */}
+                            <input 
+                              className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                              placeholder="-"
+                              defaultValue={dados.realizado}
+                              onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
+                            />
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                
+                {/* Rodapé Totalizador (Vermelho - Igual Operação) */}
+                <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
+                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">TOTAL SCORE</td>
+                  <td className="p-2 border-r border-red-500 text-center">100</td>
+                  <td className="p-2 border-r border-red-500"></td>
+                  {MESES.map(mes => (
+                    <td key={mes.id} className="p-2 text-center border-r border-red-500 text-sm">
+                      {getTotalScore(mes.id)}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
-      {showConfig && <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />}
+
+      {showConfig && (
+        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />
+      )}
     </div>
   );
 };
+
 export default MoovMetas;
