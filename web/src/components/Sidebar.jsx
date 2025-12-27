@@ -1,4 +1,4 @@
-// src/components/tatico/Sidebar.jsx
+// web/src/components/tatico/Sidebar.jsx
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
@@ -10,17 +10,17 @@ import {
 } from "react-icons/fa";
 
 const setores = [
-  { key: "operacao", label: "Operação", basePath: "/planejamento/operacao" },
-  { key: "manutencao", label: "Manutenção", basePath: "/planejamento/manutencao" },
-  { key: "moov", label: "Moov", basePath: "/planejamento/moov" },
-  { key: "financeiro", label: "Financeiro", basePath: "/planejamento/financeiro" },
-  { key: "pessoas", label: "Pessoas", basePath: "/planejamento/pessoas" },
+  { key: "operacao", label: "Operação", path: "/planejamento/operacao" },
+  { key: "manutencao", label: "Manutenção", path: "/planejamento/manutencao" },
+  { key: "moov", label: "Moov", path: "/planejamento/moov" },
+  { key: "financeiro", label: "Financeiro", path: "/planejamento/financeiro" },
+  { key: "pessoas", label: "Pessoas", path: "/planejamento/pessoas" },
 ];
 
 const subMenus = [
-  { key: "resumo", label: "Resumo", suffix: "/resumo" },
-  { key: "metas", label: "Farol de Metas", suffix: "/metas" },
-  { key: "rotinas", label: "Farol de Rotinas", suffix: "/rotinas" },
+  { key: "resumo", label: "Resumo", hash: "#resumo" },
+  { key: "metas", label: "Farol de Metas", hash: "#metas" },
+  { key: "rotinas", label: "Farol de Rotinas", hash: "#rotinas" },
 ];
 
 export default function Sidebar() {
@@ -120,7 +120,7 @@ export default function Sidebar() {
                       {subMenus.map((sub) => (
                         <NavLink
                           key={sub.key}
-                          to={`${setor.basePath}${sub.suffix}`}
+                          to={`${setor.path}${sub.hash}`}
                           className={({ isActive }) =>
                             `block text-[11px] px-3 py-1 rounded-md ${
                               isActive
@@ -140,7 +140,7 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* Configurações (exemplo de item simples no final) */}
+        {/* Configurações */}
         <NavLink
           to="/configuracoes"
           className={({ isActive }) =>
@@ -154,7 +154,7 @@ export default function Sidebar() {
         </NavLink>
       </nav>
 
-      {/* Rodapé / botão sair (opcional) */}
+      {/* Rodapé */}
       <div className="px-4 py-3 border-t border-blue-500/40 text-[11px] text-blue-100">
         <p>Versão 1.0 · Farol Tático</p>
       </div>
