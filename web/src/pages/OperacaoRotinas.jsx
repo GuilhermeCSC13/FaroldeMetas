@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
-import { Settings, User, Target, AlertCircle } from 'lucide-react';
+import { Settings, User, Target } from 'lucide-react';
 
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
@@ -40,13 +40,14 @@ const OperacaoRotinas = () => {
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
-      // Busca indicadores (incluindo o novo campo tipo_comparacao)
+      // Busca definições
       const { data: defs } = await supabase
         .from('rotinas_indicadores')
         .select('*')
         .eq('area_id', areaSelecionada)
         .order('ordem', { ascending: true });
 
+      // Busca valores
       const { data: valores } = await supabase
         .from('rotinas_mensais')
         .select('*')
@@ -72,28 +73,11 @@ const OperacaoRotinas = () => {
     }
   };
 
-  // --- NOVA FUNÇÃO DE CORES ---
-  const getCellStatus = (real, meta, tipoComparacao) => {
-    if (real === '' || real === null || meta === null) return 'bg-white'; // Sem dados
-
-    const r = parseFloat(real);
-    const m = parseFloat(meta);
-
-    // Lógica: Maior ou Menor Melhor
-    let isGood = false;
-    if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
-      isGood = r <= m; // Ex: Acidentes (Real 1 <= Meta 2 -> Bom)
-    } else {
-      isGood = r >= m; // Ex: Vendas (Real 100 >= Meta 90 -> Bom)
-    }
-
-    return isGood ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
-  };
-
+  // --- NOVA FUNÇÃO DE SALVAR (USA RPC DO BANCO) ---
   const handleSave = async (rotinaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
     
-    // 1. ATUALIZAÇÃO VISUAL IMEDIATA (Resolve o problema de "não gravou")
+    // 1. Atualização Visual Imediata (Para não piscar)
     setRotinas(prev => prev.map(r => {
       if (r.id !== rotinaId) return r;
       const novosMeses = { ...r.meses };
@@ -101,33 +85,38 @@ const OperacaoRotinas = () => {
       return { ...r, meses: novosMeses };
     }));
 
-    // 2. TENTA SALVAR NO BANCO
-    try {
-        // Busca meta atual para não perder
-        const { data: current } = await supabase
-            .from('rotinas_mensais')
-            .select('valor_meta')
-            .eq('rotina_id', rotinaId)
-            .eq('ano', 2026)
-            .eq('mes', mesId)
-            .single();
-        
-        const metaAtual = current ? current.valor_meta : null;
+    // 2. Chama a função segura no Banco
+    const { error } = await supabase.rpc('atualizar_realizado_rotina', {
+      p_rotina_id: rotinaId,
+      p_mes: mesId,
+      p_valor: valorNum
+    });
 
-        const { error } = await supabase.from('rotinas_mensais').upsert({
-            rotina_id: rotinaId,
-            ano: 2026,
-            mes: mesId,
-            valor_realizado: valorNum,
-            valor_meta: metaAtual 
-        });
-
-        if (error) throw error;
-    } catch (err) {
-        console.error("Erro ao salvar:", err);
-        // Opcional: Reverter visualmente se der erro grave, 
-        // mas geralmente o usuário tenta de novo.
+    if (error) {
+      console.error("Erro ao salvar:", error);
+      alert("Erro ao salvar. Verifique sua conexão.");
     }
+  };
+
+  // --- LÓGICA DE CORES (VERDE/VERMELHO) ---
+  const getCellStatus = (real, meta, tipoComparacao) => {
+    // Se não tiver meta ou realizado, fica branco
+    if (real === '' || real === null || meta === null || meta === undefined) return 'bg-white';
+
+    const r = parseFloat(real);
+    const m = parseFloat(meta);
+    if (isNaN(r) || isNaN(m)) return 'bg-white';
+
+    let isGood = false;
+    // Verifica se "Menor é Melhor" (ex: Acidentes) ou "Maior é Melhor" (ex: Vendas)
+    if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
+      isGood = r <= m;
+    } else {
+      isGood = r >= m; 
+    }
+
+    // Retorna cores suaves
+    return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]'; // Verde Claro / Vermelho Claro
   };
 
   const isPCO = areaSelecionada == ID_PCO;
@@ -175,7 +164,7 @@ const OperacaoRotinas = () => {
       <div className="flex-1 overflow-auto bg-white">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400 animate-pulse">
-            Carregando...
+            Carregando indicadores...
           </div>
         ) : (
           <div className="min-w-max">
@@ -201,13 +190,12 @@ const OperacaoRotinas = () => {
                 {rotinas.map((row, idx) => (
                   <tr key={row.id || idx} className="group hover:bg-gray-50/80 transition-colors">
                     
-                    {/* Coluna Fixa */}
+                    {/* Coluna Indicador */}
                     <td className="sticky left-0 z-10 p-4 bg-white border-r border-gray-100 group-hover:bg-gray-50 font-medium text-gray-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                       <div className="flex items-center gap-2">
                         <div className={`w-1 h-8 rounded-full bg-${themeColor}-500/20`}></div>
                         <div className="flex flex-col">
                             <span className="truncate text-sm" title={row.indicador}>{row.indicador}</span>
-                            {/* Mostra a regra visualmente para o usuário saber */}
                             <span className="text-[9px] text-gray-400 uppercase">
                                 {row.tipo_comparacao === '<=' ? 'Menor é melhor' : 'Meta Mínima'}
                             </span>
@@ -221,33 +209,33 @@ const OperacaoRotinas = () => {
                       </td>
                     )}
 
+                    {/* Meses */}
                     {MESES.map(mes => {
                         const dados = row.meses[mes.id];
                         const temMeta = dados.meta !== null && dados.meta !== undefined;
-                        // Calcula cor do background baseado na meta
+                        // Calcula cor aqui
                         const bgStatus = getCellStatus(dados.realizado, dados.meta, row.tipo_comparacao);
                         
                         return (
                             <td key={mes.id} className="p-0 border-r border-gray-50 relative align-top">
-                                <div className={`flex flex-col h-full min-h-[60px] transition-colors ${bgStatus}`}>
+                                <div className={`flex flex-col h-full min-h-[60px] transition-colors duration-300 ${bgStatus}`}>
                                     
                                     {/* Input Realizado */}
                                     <div className="flex-1 flex items-center justify-center pt-2">
                                         <div className="flex items-baseline gap-0.5">
-                                            {row.formato === 'currency' && <span className="text-opacity-50 text-[10px] font-light">R$</span>}
+                                            {row.formato === 'currency' && <span className="text-gray-500/60 text-[10px] font-light">R$</span>}
                                             <input 
-                                                className="w-20 text-center bg-transparent focus:outline-none font-bold text-base placeholder-gray-300"
+                                                className="w-20 text-center bg-transparent focus:outline-none font-bold text-base text-gray-800 placeholder-gray-400/50"
                                                 placeholder="-"
                                                 defaultValue={dados.realizado}
-                                                // onBlur dispara a gravação
                                                 onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
                                             />
-                                            {row.formato === 'percent' && <span className="text-opacity-50 text-[10px] font-light">%</span>}
+                                            {row.formato === 'percent' && <span className="text-gray-500/60 text-[10px] font-light">%</span>}
                                         </div>
                                     </div>
 
                                     {/* Meta (Rodapé) */}
-                                    <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60">
+                                    <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60 text-gray-600">
                                         <Target size={8} />
                                         <span className="font-medium">
                                             {temMeta ? Number(dados.meta).toFixed(row.formato === 'percent' ? 2 : 0) : ''}
