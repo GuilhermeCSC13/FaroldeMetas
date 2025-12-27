@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
-import { Settings, User, Target } from 'lucide-react';
+import { Settings, Target } from 'lucide-react';
 
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
@@ -40,14 +40,12 @@ const OperacaoRotinas = () => {
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
-      // Busca definições
       const { data: defs } = await supabase
         .from('rotinas_indicadores')
         .select('*')
         .eq('area_id', areaSelecionada)
         .order('ordem', { ascending: true });
 
-      // Busca valores
       const { data: valores } = await supabase
         .from('rotinas_mensais')
         .select('*')
@@ -73,11 +71,9 @@ const OperacaoRotinas = () => {
     }
   };
 
-  // --- NOVA FUNÇÃO DE SALVAR (USA RPC DO BANCO) ---
   const handleSave = async (rotinaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
     
-    // 1. Atualização Visual Imediata (Para não piscar)
     setRotinas(prev => prev.map(r => {
       if (r.id !== rotinaId) return r;
       const novosMeses = { ...r.meses };
@@ -85,55 +81,61 @@ const OperacaoRotinas = () => {
       return { ...r, meses: novosMeses };
     }));
 
-    // 2. Chama a função segura no Banco
     const { error } = await supabase.rpc('atualizar_realizado_rotina', {
       p_rotina_id: rotinaId,
       p_mes: mesId,
       p_valor: valorNum
     });
 
-    if (error) {
-      console.error("Erro ao salvar:", error);
-      alert("Erro ao salvar. Verifique sua conexão.");
-    }
+    if (error) console.error("Erro ao salvar:", error);
   };
 
-  // --- LÓGICA DE CORES (VERDE/VERMELHO) ---
   const getCellStatus = (real, meta, tipoComparacao) => {
-    // Se não tiver meta ou realizado, fica branco
     if (real === '' || real === null || meta === null || meta === undefined) return 'bg-white';
-
     const r = parseFloat(real);
     const m = parseFloat(meta);
     if (isNaN(r) || isNaN(m)) return 'bg-white';
 
     let isGood = false;
-    // Verifica se "Menor é Melhor" (ex: Acidentes) ou "Maior é Melhor" (ex: Vendas)
     if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
       isGood = r <= m;
     } else {
       isGood = r >= m; 
     }
-
-    // Retorna cores suaves
-    return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]'; // Verde Claro / Vermelho Claro
+    return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
   const isPCO = areaSelecionada == ID_PCO;
-  const themeColor = isPCO ? 'blue' : 'emerald';
-  const headerClass = isPCO ? 'bg-blue-600 text-white' : 'bg-emerald-600 text-white';
+  // Cor azul se for PCO, ou verde (padrão) se for outro, ajustado para o layout do Moov (Azul)
+  const themeColor = 'blue'; 
+  const headerClass = 'bg-[#3b82f6] text-white';
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
+    <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
       
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-5 bg-white border-b border-gray-100">
-        <div>
-           <h2 className="text-2xl font-bold text-gray-800 tracking-tight">Farol de Rotinas</h2>
-           <p className="text-sm text-gray-400 mt-1">Acompanhamento mensal de indicadores táticos</p>
-        </div>
+        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Farol de Rotinas — Operação</h2>
         
         <div className="flex items-center gap-4">
+            {/* Botões de Navegação */}
+            <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
+                <button 
+                    onClick={() => window.location.hash = 'metas'}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
+                >
+                    Ir para Metas
+                </button>
+                <button 
+                    onClick={() => setShowConfig(true)}
+                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+                    title="Configurações"
+                >
+                    <Settings size={18} />
+                </button>
+            </div>
+
+            {/* Seletor de Áreas */}
             <div className="flex bg-gray-100 p-1 rounded-lg">
                 {areas.map(area => (
                     <button
@@ -149,14 +151,6 @@ const OperacaoRotinas = () => {
                     </button>
                 ))}
             </div>
-            
-            <button 
-                onClick={() => setShowConfig(true)}
-                className="p-2.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all active:scale-95"
-                title="Configurar Metas"
-            >
-                <Settings size={20} />
-            </button>
         </div>
       </div>
 
@@ -164,7 +158,7 @@ const OperacaoRotinas = () => {
       <div className="flex-1 overflow-auto bg-white">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400 animate-pulse">
-            Carregando indicadores...
+            Carregando...
           </div>
         ) : (
           <div className="min-w-max">
@@ -174,11 +168,6 @@ const OperacaoRotinas = () => {
                     <th className={`sticky left-0 z-30 p-4 w-72 text-left font-bold uppercase tracking-wider text-xs border-b border-r border-white/10 ${headerClass}`}>
                         Indicador
                     </th>
-                    {!isPCO && (
-                        <th className={`sticky left-72 z-30 p-4 w-32 text-center font-bold uppercase tracking-wider text-xs border-b border-r border-white/10 ${headerClass}`}>
-                            Resp.
-                        </th>
-                    )}
                     {MESES.map(mes => (
                         <th key={mes.id} className={`p-3 min-w-[100px] text-center font-bold text-xs border-b border-white/10 ${headerClass}`}>
                             {mes.label}
@@ -203,24 +192,16 @@ const OperacaoRotinas = () => {
                       </div>
                     </td>
 
-                    {!isPCO && (
-                      <td className="sticky left-72 z-10 p-2 bg-white border-r border-gray-100 group-hover:bg-gray-50 text-center text-xs text-gray-500">
-                         {row.responsavel || '-'}
-                      </td>
-                    )}
-
                     {/* Meses */}
                     {MESES.map(mes => {
                         const dados = row.meses[mes.id];
                         const temMeta = dados.meta !== null && dados.meta !== undefined;
-                        // Calcula cor aqui
                         const bgStatus = getCellStatus(dados.realizado, dados.meta, row.tipo_comparacao);
                         
                         return (
                             <td key={mes.id} className="p-0 border-r border-gray-50 relative align-top">
                                 <div className={`flex flex-col h-full min-h-[60px] transition-colors duration-300 ${bgStatus}`}>
                                     
-                                    {/* Input Realizado */}
                                     <div className="flex-1 flex items-center justify-center pt-2">
                                         <div className="flex items-baseline gap-0.5">
                                             {row.formato === 'currency' && <span className="text-gray-500/60 text-[10px] font-light">R$</span>}
@@ -234,11 +215,10 @@ const OperacaoRotinas = () => {
                                         </div>
                                     </div>
 
-                                    {/* Meta (Rodapé) */}
                                     <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60 text-gray-600">
                                         <Target size={8} />
                                         <span className="font-medium">
-                                            {temMeta ? Number(dados.meta).toFixed(row.formato === 'percent' ? 2 : 0) : ''}
+                                            {temMeta ? Number(dados.meta).toFixed(row.formato === 'percent' ? 0 : 0) : ''}
                                         </span>
                                     </div>
                                     
