@@ -1,4 +1,3 @@
-// web/src/components/tatico/Sidebar.jsx
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -11,11 +10,11 @@ import {
 
 const setores = [
   { key: "operacao", label: "Operação", path: "/planejamento/operacao" },
-  { key: "manutencao", label: "Manutenção", path: "/planejamento/manutencao" },
   
-  // CORREÇÃO AQUI: Caminho deve bater com o App.jsx (/moov)
-  { key: "moov", label: "Moov", path: "/moov" }, 
+  // CORREÇÃO: O caminho deve ser apenas "/manutencao" conforme o App.jsx
+  { key: "manutencao", label: "Manutenção", path: "/manutencao" },
   
+  { key: "moov", label: "Moov", path: "/moov" },
   { key: "financeiro", label: "Financeiro", path: "/planejamento/financeiro" },
   { key: "pessoas", label: "Pessoas", path: "/planejamento/pessoas" },
 ];
