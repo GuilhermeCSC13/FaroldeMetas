@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import Layout from '../components/tatico/Layout'; // <--- Isso garante que o Sidebar apareça
+import Layout from '../components/tatico/Layout'; // <--- Isso traz o Sidebar de volta
 import MoovMetas from './MoovMetas';
 import MoovRotinas from './MoovRotinas';
 
@@ -8,7 +8,6 @@ const Moov = () => {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState('metas');
 
-  // Monitora a URL para saber se mostra Metas ou Rotinas
   useEffect(() => {
     const hash = location.hash.replace('#', '');
     setActiveTab(hash || 'metas');
@@ -26,7 +25,20 @@ const Moov = () => {
 
   return (
     <Layout>
-      {renderContent()}
+      <div className="p-6 h-full flex flex-col">
+          {/* Título Geral da Página */}
+          <div className="mb-6 flex justify-between items-end">
+              <div>
+                  <h1 className="text-2xl font-bold text-gray-800">Moov — Planejamento Tático</h1>
+                  <p className="text-sm text-gray-500">Gestão de indicadores e rotinas mensais</p>
+              </div>
+          </div>
+          
+          {/* Conteúdo da Aba */}
+          <div className="flex-1 overflow-hidden bg-white rounded-lg shadow-sm border border-gray-200">
+             {renderContent()}
+          </div>
+      </div>
     </Layout>
   );
 };
