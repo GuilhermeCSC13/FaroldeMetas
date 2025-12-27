@@ -1,16 +1,23 @@
-// src/App.jsx
+// web/src/App.jsx
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
-import Sidebar from "./components/tatico/Sidebar";
+// Sidebar
+import Sidebar from "./components/Sidebar";
 
-// Páginas
+// Páginas gerais
 import Inicio from "./pages/Inicio";
 import PlanejamentoTatico from "./pages/PlanejamentoTatico";
-import Operacao from "./pages/Operacao";
 import ReunioesPeriodicas from "./pages/ReunioesPeriodicas";
 import DetalheReuniao from "./pages/DetalheReuniao";
 import Dashboard from "./pages/Dashboard";
 import Configuracoes from "./pages/Configuracoes";
+
+// Páginas de Planejamento por setor
+import PlanejamentoOperacao from "./pages/PlanejamentoOperacao";
+import PlanejamentoManutencao from "./pages/PlanejamentoManutencao";
+import PlanejamentoMoov from "./pages/PlanejamentoMoov";
+import PlanejamentoFinanceiro from "./pages/PlanejamentoFinanceiro";
+import PlanejamentoPessoas from "./pages/PlanejamentoPessoas";
 
 function App() {
   return (
@@ -25,31 +32,45 @@ function App() {
             {/* Início */}
             <Route path="/" element={<Inicio />} />
 
-            {/* Planejamento Tático (visão geral dos setores) */}
+            {/* Visão geral do Planejamento Tático (se quiser usar) */}
             <Route
               path="/planejamento-tatico"
               element={<PlanejamentoTatico />}
             />
 
-            {/* Planejamento / Farol da Operação */}
-            <Route path="/operacao" element={<Operacao />} />
+            {/* Páginas de cada setor do Planejamento Tático */}
+            <Route
+              path="/planejamento/operacao"
+              element={<PlanejamentoOperacao />}
+            />
+            <Route
+              path="/planejamento/manutencao"
+              element={<PlanejamentoManutencao />}
+            />
+            <Route path="/planejamento/moov" element={<PlanejamentoMoov />} />
+            <Route
+              path="/planejamento/financeiro"
+              element={<PlanejamentoFinanceiro />}
+            />
+            <Route
+              path="/planejamento/pessoas"
+              element={<PlanejamentoPessoas />}
+            />
 
             {/* Reuniões Periódicas */}
             <Route
               path="/reunioes-periodicas"
               element={<ReunioesPeriodicas />}
             />
-
-            {/* Detalhe de uma reunião específica */}
             <Route
               path="/reunioes-periodicas/:id"
               element={<DetalheReuniao />}
             />
 
-            {/* Dashboard (caso esteja usando como visão sintética) */}
+            {/* Dashboard geral */}
             <Route path="/dashboard" element={<Dashboard />} />
 
-            {/* Configurações gerais da ferramenta */}
+            {/* Configurações */}
             <Route path="/configuracoes" element={<Configuracoes />} />
           </Routes>
         </main>
