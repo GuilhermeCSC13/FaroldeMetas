@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 
-// IDs fixos baseados no seu SQL para garantir que carregue as abas certas
+// IDs das áreas conforme seu banco de dados
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
 
@@ -26,20 +26,40 @@ const OperacaoMetas = () => {
     if (areaSelecionada) fetchMetasData();
   }, [areaSelecionada]);
 
+  // --- ATUALIZAÇÃO IMPORTANTE AQUI ---
   const fetchAreas = async () => {
-    // Busca apenas as áreas de PCO e Gestão de Motoristas
-    const { data, error } = await supabase
-      .from('areas')
-      .select('*')
-      .in('id', [ID_PCO, ID_MOTORISTAS]) // IDs confirmados no seu SQL
-      .order('id');
+    try {
+      // Busca TODAS as áreas ativas para evitar erro de filtro no SQL
+      const { data, error } = await supabase
+        .from('areas')
+        .select('*')
+        .eq('ativa', true)
+        .order('id');
 
-    if (data && data.length > 0) {
-      setAreas(data);
-      setAreaSelecionada(data[0].id);
-    } else {
-      setLoading(false);
-      console.error("Erro ou nenhuma área encontrada:", error);
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        // Filtra via Javascript para garantir que pegamos PCO e Motoristas
+        // Usa "==" para funcionar tanto se o ID for string ('4') ou numero (4)
+        const areasFiltradas = data.filter(a => a.id == ID_PCO || a.id == ID_MOTORISTAS);
+
+        if (areasFiltradas.length > 0) {
+          setAreas(areasFiltradas);
+          setAreaSelecionada(areasFiltradas[0].id);
+        } else {
+          // Fallback: Se não achar PCO/Motoristas, mostra o que tem (Ex: Operação Geral)
+          console.warn("Áreas PCO/Motoristas não encontradas. Carregando padrão.");
+          setAreas(data);
+          setAreaSelecionada(data[0].id);
+        }
+      } else {
+        console.error("Nenhuma área ativa encontrada no banco.");
+      }
+    } catch (err) {
+      console.error("Erro ao buscar áreas:", err);
+    } finally {
+      // Garante que o loading pare mesmo se der erro
+      if (!areaSelecionada) setLoading(false); 
     }
   };
 
@@ -112,17 +132,14 @@ const OperacaoMetas = () => {
       // Maior é melhor (Ex: KM/L)
       atingimento = r / m;
     } else {
-      // Menor é melhor (Ex: Acidentes, IPK na sua imagem)
+      // Menor é melhor (Ex: Acidentes, IPK)
       // Se R < M (Bom), o atingimento deve ser > 100%
-      // Fórmula de inversão proporcional:
       if (r <= m) atingimento = 1 + ((m - r) / m); 
       else atingimento = 1 - ((r - m) / m);
     }
 
     // Aplicação das Faixas (Regra da Imagem)
     // Faixa 1 (100%): Atingimento >= 100% (ou 1.0)
-    // Faixa 2 (99%):  Atingimento >= 99%
-    // ...
     let multiplicador = 0;
     let cor = 'bg-red-200'; // Padrão Ruim (Faixa 5)
 
@@ -189,6 +206,9 @@ const OperacaoMetas = () => {
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
         <div className="flex space-x-2">
+          {areas.length === 0 && !loading && (
+             <span className="text-red-500 text-xs font-bold">⚠️ Sem áreas carregadas. Verifique RLS.</span>
+          )}
           {areas.map(area => (
             <button
               key={area.id}
