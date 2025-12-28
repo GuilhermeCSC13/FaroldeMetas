@@ -1,14 +1,13 @@
-import { addDays, addMonths, format, parseISO } from 'date-fns';
+import { addDays, addMonths, parseISO } from 'date-fns';
 import { supabase } from '../supabaseClient';
 
-// Gera datas futuras baseadas na regra
-export const gerarDatasRecorrentes = (dataInicial, regra, qtdOcorrencias = 4) => {
+// Gera datas futuras
+export const gerarDatasRecorrentes = (dataInicialISO, regra, qtd = 12) => {
   const datas = [];
-  let dataBase = new Date(dataInicial);
+  let dataBase = new Date(dataInicialISO); // Garante que pega a hora correta
 
-  for (let i = 0; i < qtdOcorrencias; i++) {
+  for (let i = 0; i < qtd; i++) {
     datas.push(new Date(dataBase));
-    
     if (regra === 'semanal') dataBase = addDays(dataBase, 7);
     if (regra === 'quinzenal') dataBase = addDays(dataBase, 15);
     if (regra === 'mensal') dataBase = addMonths(dataBase, 1);
@@ -16,53 +15,57 @@ export const gerarDatasRecorrentes = (dataInicial, regra, qtdOcorrencias = 4) =>
   return datas;
 };
 
-// Salva reunião (Única ou Série)
+// Salva Nova Reunião
 export const salvarReuniao = async (dados, regraRecorrencia) => {
-  const { titulo, tipo_reuniao, data_hora, cor, area_id } = dados;
+  // Desestrutura para garantir que responsável e ata vão pro banco
+  const { titulo, tipo_reuniao, data_hora, cor, area_id, responsavel, pauta } = dados; 
   
-  // 1. Se for única
+  const basePayload = {
+    titulo, 
+    tipo_reuniao, 
+    cor, 
+    area_id, 
+    responsavel, 
+    pauta, // Usando o campo 'pauta' como local da ATA ou Resumo Inicial
+    status: 'Agendada'
+  };
+
   if (!regraRecorrencia || regraRecorrencia === 'unica') {
-    return await supabase.from('reunioes').insert([{
-      titulo, tipo_reuniao, data_hora, cor, area_id, status: 'Agendada'
-    }]);
+    return await supabase.from('reunioes').insert([{ ...basePayload, data_hora }]);
   }
 
-  // 2. Se for recorrente (Gera 12 ocorrências/3 meses aprox por padrão para não pesar)
-  const qtd = regraRecorrencia === 'mensal' ? 12 : 12; // 1 ano se mensal, 3 meses se semanal
-  const datas = gerarDatasRecorrentes(data_hora, regraRecorrencia, qtd);
-
-  const payload = datas.map(dt => ({
-    titulo,
-    tipo_reuniao,
-    data_hora: dt.toISOString(),
-    cor,
-    area_id,
-    status: 'Agendada'
+  const datas = gerarDatasRecorrentes(data_hora, regraRecorrencia);
+  const payloadSerie = datas.map(dt => ({
+    ...basePayload,
+    data_hora: dt.toISOString()
   }));
 
-  return await supabase.from('reunioes').insert(payload);
+  return await supabase.from('reunioes').insert(payloadSerie);
 };
 
-// Edição Inteligente (Série vs Única)
+// Atualiza Reunião (Correção da Hora)
 export const atualizarReuniao = async (id, novosDados, aplicarEmSerie = false) => {
+  // Se for série, atualizamos metadados, mas a HORA é delicada mudar em massa.
+  // Por segurança, a edição de série aqui muda titulo, cor e responsável.
+  // A data/hora muda APENAS a da reunião atual se for série, ou movemos tudo (complexo).
+  // Nesta versão v2: Série muda dados gerais. Única muda tudo (incluindo hora).
+
   if (!aplicarEmSerie) {
-    // Atualiza só essa
     return await supabase.from('reunioes').update(novosDados).eq('id', id);
   } else {
-    // Atualiza esta e todas as FUTURAS do mesmo tipo
-    // ATENÇÃO: A lógica aqui busca pelo "tipo_reuniao" e datas maiores que a atual
+    // Busca a original para pegar a referência da série
     const { data: original } = await supabase.from('reunioes').select('tipo_reuniao, data_hora').eq('id', id).single();
-    
-    if(!original) return { error: 'Reunião não encontrada' };
+    if(!original) return { error: 'Original não encontrada' };
 
+    // Atualiza metadados de todas as futuras do mesmo tipo
     return await supabase.from('reunioes')
       .update({
         titulo: novosDados.titulo,
         cor: novosDados.cor,
-        // Nota: Mudar horário em massa é complexo, aqui vamos mudar apenas metadados ou
-        // se a hora mudou, teríamos que recalcular o delta para todas. 
-        // Para simplificar V1: Atualiza titulo/cor/status em massa.
-        status: novosDados.status 
+        responsavel: novosDados.responsavel,
+        // Não mudamos data_hora em massa aqui para não quebrar dias diferentes da semana
+        // Mas se quiser mudar a HORA de todas mantendo o dia, precisaria de uma logic mais pesada.
+        // Por enquanto, atualizamos o conteúdo.
       })
       .eq('tipo_reuniao', original.tipo_reuniao)
       .gte('data_hora', original.data_hora);
