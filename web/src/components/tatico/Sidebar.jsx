@@ -6,7 +6,8 @@ import {
   FaCogs,
   FaChevronDown,
   FaChevronRight,
-  FaCalendarAlt, // <--- Ícone novo para Reuniões
+  FaCalendarAlt,
+  FaTasks, // Ícone para Central de Ações
 } from "react-icons/fa";
 
 const setores = [
@@ -158,9 +159,9 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* --- NOVO MENU: Reuniões Periódicas --- */}
+        {/* --- NOVO MENU: Agenda de Reuniões --- */}
         <NavLink
-          to="/reunioes-periodicas"
+          to="/reunioes-calendario"
           className={({ isActive }) =>
             `${linkBaseClasses} ${
               isActive ? linkActiveClasses : linkInactiveClasses
@@ -168,7 +169,20 @@ export default function Sidebar() {
           }
         >
           <FaCalendarAlt className="text-sm" />
-          <span>Reuniões</span>
+          <span>Agenda Reuniões</span>
+        </NavLink>
+
+        {/* --- NOVO MENU: Central de Ações --- */}
+        <NavLink
+          to="/gestao-acoes"
+          className={({ isActive }) =>
+            `${linkBaseClasses} ${
+              isActive ? linkActiveClasses : linkInactiveClasses
+            } mt-1`
+          }
+        >
+          <FaTasks className="text-sm" />
+          <span>Central de Ações</span>
         </NavLink>
 
         {/* Configurações */}
