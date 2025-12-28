@@ -9,8 +9,11 @@ import {
   TrendingUp,
   BrainCircuit,
   Loader2,
-  ExternalLink, // <--- NOVO ÍCONE
-  Layers        // <--- NOVO ÍCONE
+  ExternalLink, 
+  Layers,
+  CheckCircle, // <--- Icone Sucesso
+  XCircle,     // <--- Icone Erro
+  Activity     // <--- Icone Verificando
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -18,6 +21,10 @@ const Inicio = () => {
   const navigate = useNavigate();
   const [resumoIA, setResumoIA] = useState("");
   const [loadingIA, setLoadingIA] = useState(true);
+  
+  // Estado do Status da IA ('checking', 'active', 'inactive')
+  const [iaStatus, setIaStatus] = useState("checking");
+  
   const [stats, setStats] = useState({ acoesAbertas: 0, reunioesHoje: 0, metasCriticas: 0 });
 
   useEffect(() => {
@@ -25,7 +32,9 @@ const Inicio = () => {
   }, []);
 
   const carregarDadosEGerarResumo = async () => {
+    setIaStatus("checking"); // Inicia verificação
     try {
+      // 1. Carrega KPIs
       const hoje = new Date().toISOString().split('T')[0];
       const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
       const { count: reunioesCount } = await supabase.from('reunioes').select('*', { count: 'exact', head: true }).gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
@@ -36,29 +45,33 @@ const Inicio = () => {
         metasCriticas: 3
       });
 
+      // 2. Busca dados para IA
       const { data: ultimasReunioes } = await supabase.from('reunioes').select('titulo, pauta, data_hora').order('data_hora', { ascending: false }).limit(3);
       const { data: acoesPendentes } = await supabase.from('acoes').select('descricao, responsavel').eq('status', 'Aberta').limit(5);
 
+      // 3. Tenta Conectar com Gemini (Teste Real)
       const model = getGeminiFlash();
 
       const prompt = `
         Atue como um Diretor de Operações.
         Escreva um "Resumo Executivo do Dia" (máximo 3 parágrafos curtos) para o gestor.
-        
         Dados:
-        - Reuniões recentes: ${JSON.stringify(ultimasReunioes)}
-        - Ações críticas pendentes: ${JSON.stringify(acoesPendentes)}
-        
-        Estilo: Profissional, direto, focado em riscos. Use markdown (negrito) para destaques.
+        - Reuniões: ${JSON.stringify(ultimasReunioes)}
+        - Pendências: ${JSON.stringify(acoesPendentes)}
+        Estilo: Profissional, markdown.
       `;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
+      
+      // Se chegou aqui, deu certo
       setResumoIA(response.text());
+      setIaStatus("active"); 
 
     } catch (error) {
-      console.error(error);
-      setResumoIA("Não foi possível gerar o resumo de inteligência.");
+      console.error("Erro IA:", error);
+      setResumoIA("Sistema de inteligência temporariamente indisponível. Verifique a chave de API ou conexão.");
+      setIaStatus("inactive"); // Marca como inativo se der erro
     } finally {
       setLoadingIA(false);
     }
@@ -68,10 +81,31 @@ const Inicio = () => {
     <Layout>
       <div className="p-8 max-w-7xl mx-auto font-sans pb-20">
         
-        {/* Header */}
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel de Comando</h1>
-          <p className="text-gray-500">Visão unificada da estratégia, tática e operação.</p>
+        {/* Header com Status da IA */}
+        <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel de Comando</h1>
+            <p className="text-gray-500">Visão unificada da estratégia, tática e operação.</p>
+          </div>
+
+          {/* BADGE DE STATUS DA IA */}
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm transition-all duration-500 ${
+            iaStatus === 'active' ? 'bg-green-50 border-green-200 text-green-700' :
+            iaStatus === 'inactive' ? 'bg-red-50 border-red-200 text-red-700' :
+            'bg-slate-50 border-slate-200 text-slate-500'
+          }`}>
+            {iaStatus === 'active' && <CheckCircle size={16} className="text-green-600" />}
+            {iaStatus === 'inactive' && <XCircle size={16} className="text-red-600" />}
+            {iaStatus === 'checking' && <Activity size={16} className="animate-pulse" />}
+            
+            <span className="text-xs font-bold tracking-wider">
+                {iaStatus === 'active' ? 'IA CONECTADA' : 
+                 iaStatus === 'inactive' ? 'IA OFF-LINE' : 
+                 'TESTANDO CONEXÃO...'}
+            </span>
+            
+            {iaStatus === 'active' && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-1"></span>}
+          </div>
         </div>
 
         {/* Cards KPIs */}
@@ -106,17 +140,21 @@ const Inicio = () => {
           
           {/* IA Resumo */}
           <div className="lg:col-span-2">
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-8 shadow-xl relative overflow-hidden h-full">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500 rounded-full blur-[100px] opacity-20 pointer-events-none"></div>
-              <div className="relative z-10">
+            <div className={`rounded-2xl p-8 shadow-xl relative overflow-hidden h-full transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-slate-800' : 'bg-gradient-to-br from-slate-900 to-slate-800'}`}>
+              
+              {/* Efeito de fundo condicional */}
+              <div className={`absolute top-0 right-0 w-64 h-64 rounded-full blur-[100px] opacity-20 pointer-events-none transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-red-500' : 'bg-blue-500'}`}></div>
+              
+              <div className="relative z-10 text-white">
                 <div className="flex items-center gap-3 mb-6">
-                  <BrainCircuit className="text-blue-400" />
-                  <h2 className="text-xl font-bold tracking-wide">Resumo Executivo Diário (IA)</h2>
+                  <BrainCircuit className={iaStatus === 'inactive' ? "text-red-400" : "text-blue-400"} />
+                  <h2 className="text-xl font-bold tracking-wide">Resumo Executivo Diário</h2>
                 </div>
+                
                 {loadingIA ? (
                   <div className="flex flex-col items-center justify-center h-40 text-blue-200/50 animate-pulse">
                     <Loader2 size={32} className="animate-spin mb-2" />
-                    <p className="text-sm">Analisando dados táticos...</p>
+                    <p className="text-sm">Processando dados...</p>
                   </div>
                 ) : (
                   <div className="prose prose-invert prose-p:text-slate-300 prose-strong:text-white prose-sm max-w-none">
@@ -129,9 +167,14 @@ const Inicio = () => {
                      ))}
                   </div>
                 )}
+                
                 <div className="mt-6 pt-6 border-t border-white/10 flex justify-between items-center">
-                    <p className="text-xs text-slate-400">Baseado nas últimas atas e KPIs.</p>
-                    <button onClick={carregarDadosEGerarResumo} className="text-xs text-blue-400 hover:text-white transition-colors">Atualizar</button>
+                    <p className="text-xs text-slate-400">
+                        {iaStatus === 'active' ? 'Inteligência Ativa • Gemini 1.5 Flash' : 'Modo Offline'}
+                    </p>
+                    <button onClick={carregarDadosEGerarResumo} className="text-xs text-blue-400 hover:text-white transition-colors flex items-center gap-1">
+                        <Activity size={12}/> Testar Novamente
+                    </button>
                 </div>
               </div>
             </div>
@@ -158,12 +201,9 @@ const Inicio = () => {
           </div>
         </div>
 
-        {/* --- NOVO BANNER DE ACESSO AO CRM EXTERNO --- */}
+        {/* Banner CRM Externo */}
         <div className="mt-8 bg-gradient-to-r from-indigo-900 to-indigo-800 rounded-xl p-8 text-white flex flex-col md:flex-row items-center justify-between shadow-lg border border-indigo-700 relative overflow-hidden group hover:shadow-2xl transition-all">
-            
-            {/* Efeito de Fundo */}
             <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500 rounded-full blur-[100px] opacity-20 pointer-events-none group-hover:opacity-30 transition-opacity"></div>
-
             <div className="z-10 mb-6 md:mb-0 max-w-2xl">
                 <h2 className="text-2xl font-bold mb-2 flex items-center gap-3">
                     <Layers className="text-indigo-300" />
@@ -173,7 +213,6 @@ const Inicio = () => {
                     Para acessar Tratativas, Controle de Avarias e Intervenções MKBF, utilize o ambiente exclusivo de gestão de frota.
                 </p>
             </div>
-
             <a 
                 href="https://inovequatai.onrender.com/" 
                 target="_blank" 
