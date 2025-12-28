@@ -15,7 +15,7 @@ import {
 import { useNavigate } from "react-router-dom";
 
 // --- CONFIGURAÇÃO DA IA ---
-const API_KEY = "SUA_API_KEY_GEMINI_AQUI"; // <--- COLOQUE SUA CHAVE AQUI
+const API_KEY = "AIzaSyBHbALir0Cpj2yUIHacHOibi3iFIeqhVDs"; // <--- COLOQUE SUA CHAVE AQUI
 
 const Inicio = () => {
   const navigate = useNavigate();
