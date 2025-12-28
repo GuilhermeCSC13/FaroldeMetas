@@ -3,15 +3,17 @@ import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import { 
-  Calendar, ArrowRight, Zap, TrendingUp, BrainCircuit, Loader2, ExternalLink, Layers, CheckCircle, XCircle, Activity
+  Calendar, ArrowRight, Zap, TrendingUp, BrainCircuit, Loader2, ExternalLink, Layers, CheckCircle, XCircle, Activity, RefreshCw
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const Inicio = () => {
   const navigate = useNavigate();
-  const [resumoIA, setResumoIA] = useState("Carregando análise...");
+  const [resumoIA, setResumoIA] = useState("Conectando aos satélites táticos...");
   const [loadingIA, setLoadingIA] = useState(true);
-  const [iaStatus, setIaStatus] = useState("checking");
+  const [iaStatus, setIaStatus] = useState("checking"); // checking | active | inactive
+  const [lastUpdate, setLastUpdate] = useState(null);
+  
   const [stats, setStats] = useState({ acoesAbertas: 0, reunioesHoje: 0, metasCriticas: 0 });
 
   useEffect(() => {
@@ -19,18 +21,30 @@ const Inicio = () => {
   }, []);
 
   const carregarDados = async () => {
-    // 1. Carrega KPIs
     const hoje = new Date().toISOString().split('T')[0];
-    const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
-    const { count: reunioesCount } = await supabase.from('reunioes').select('*', { count: 'exact', head: true }).gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
     
-    setStats({
+    // 1. KPIs (Números)
+    const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
+    const { count: reunioesCount, data: agendaHoje } = await supabase.from('reunioes').select('titulo, data_hora').gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
+    
+    // 2. Últimas Realizadas (Para contexto)
+    const { data: ultimasRealizadas } = await supabase.from('reunioes').select('titulo, status').eq('status', 'Realizada').order('data_hora', { ascending: false }).limit(2);
+
+    const estatisticas = {
       acoesAbertas: acoesCount || 0,
       reunioesHoje: reunioesCount || 0,
-      metasCriticas: 3
+      metasCriticas: 3, // Exemplo
+      agendaHoje: agendaHoje || [],
+      ultimasRealizadas: ultimasRealizadas || []
+    };
+
+    setStats({
+      acoesAbertas: estatisticas.acoesAbertas,
+      reunioesHoje: estatisticas.reunioesHoje,
+      metasCriticas: estatisticas.metasCriticas
     });
 
-    // 2. Cache Inteligente
+    // 3. Cache ou Nova Geração
     const cacheDate = localStorage.getItem('farol_ia_date');
     const cacheText = localStorage.getItem('farol_ia_text');
 
@@ -38,60 +52,35 @@ const Inicio = () => {
       setResumoIA(cacheText);
       setIaStatus("active");
       setLoadingIA(false);
+      setLastUpdate(new Date().toLocaleTimeString());
     } else {
-      await gerarResumoIA(hoje);
+      await gerarResumoIA(estatisticas, hoje);
     }
   };
 
-  const gerarResumoIA = async (dataHoje) => {
+  const gerarResumoIA = async (dados, dataHoje) => {
     setIaStatus("checking");
     try {
-      const agora = new Date().toISOString();
-
-      // --- FILTRAGEM RIGOROSA ---
-      // 1. Data deve ser no passado (lte agora)
-      // 2. Status DEVE ser 'Realizada' (ignora 'Agendada')
-      const { data: reunioesRealizadas } = await supabase
-        .from('reunioes')
-        .select('titulo, pauta, data_hora, status')
-        .lte('data_hora', agora)
-        .eq('status', 'Realizada') // <--- AQUI ESTÁ A TRAVA DE SEGURANÇA
-        .order('data_hora', { ascending: false })
-        .limit(3);
-
-      const { data: acoesPendentes } = await supabase
-        .from('acoes')
-        .select('descricao, responsavel')
-        .eq('status', 'Aberta')
-        .limit(5);
-
-      // --- BLOQUEIO DE IA (Se não tiver nada realizado, não chama a IA) ---
-      if (!reunioesRealizadas || reunioesRealizadas.length === 0) {
-        const textoPadrao = "Nenhuma reunião foi realizada e finalizada recentemente. O painel aguarda novas execuções para gerar insights.";
-        setResumoIA(textoPadrao);
-        setIaStatus("inactive"); // Fica cinza pois não usou IA
-        setLoadingIA(false);
-        // Salva esse estado vazio no cache para não tentar de novo hoje
-        localStorage.setItem('farol_ia_date', dataHoje);
-        localStorage.setItem('farol_ia_text', textoPadrao);
-        return; 
-      }
-
-      // Se chegou aqui, TEM dados reais. Chama a IA.
       const model = getGeminiFlash();
 
+      // PROMPT "DIRETOR DE OPERAÇÕES" (Rico em contexto, zero invenção)
       const prompt = `
-        Você é um auditor de processos. Seja extremamente direto e literal.
+        Aja como um Diretor de Operações Sênior analisando o Farol Tático da empresa.
         
-        DADOS DE ENTRADA (Apenas o que aconteceu):
-        - Reuniões Realizadas: ${JSON.stringify(reunioesRealizadas)}
-        - Pendências: ${JSON.stringify(acoesPendentes)}
-
-        INSTRUÇÕES:
-        1. Resuma APENAS o conteúdo técnico das reuniões listadas acima.
-        2. Se a pauta da reunião for "Teste" ou estiver vazia, diga apenas: "Registro de teste identificado no sistema."
-        3. NÃO invente alinhamentos, estratégias ou nomes (como DBO/Oferta) se eles não estiverem explicitamente no JSON acima.
-        4. Use tom formal e curto.
+        DADOS REAIS DO DIA (${dataHoje}):
+        1. AGENDA DE HOJE: ${dados.agendaHoje.length > 0 ? JSON.stringify(dados.agendaHoje) : "Nenhuma reunião agendada."}
+        2. PENDÊNCIAS: ${dados.acoesAbertas} ações em aberto no CRM.
+        3. HISTÓRICO RECENTE: ${JSON.stringify(dados.ultimasRealizadas)}
+        
+        MISSÃO:
+        Escreva um resumo executivo de 3 a 4 linhas (formato markdown).
+        
+        DIRETRIZES DE RESPOSTA:
+        - Se a agenda estiver vazia, diga algo positivo como: "Dia livre de reuniões. Recomendado foco total na execução e limpeza das ${dados.acoesAbertas} pendências."
+        - Se houver reuniões hoje, liste-as brevemente e peça preparação.
+        - Se houver muitas pendências (>5), dê um alerta de gargalo.
+        - NÃO invente reuniões passadas. Se o histórico for vazio, ignore-o.
+        - Use emojis moderados (🎯, ⚠️, ✅).
       `;
 
       const result = await model.generateContent(prompt);
@@ -99,13 +88,14 @@ const Inicio = () => {
       
       setResumoIA(texto);
       setIaStatus("active");
+      setLastUpdate(new Date().toLocaleTimeString());
       
       localStorage.setItem('farol_ia_date', dataHoje);
       localStorage.setItem('farol_ia_text', texto);
 
     } catch (error) {
       console.error("Erro IA:", error);
-      setResumoIA("Sistema operando. Aguardando novos dados.");
+      setResumoIA("⚠️ Satélite de IA temporariamente indisponível. Os dados manuais acima permanecem precisos.");
       setIaStatus("inactive");
     } finally {
       setLoadingIA(false);
@@ -115,128 +105,163 @@ const Inicio = () => {
   const forcarAtualizacao = () => {
     setLoadingIA(true);
     localStorage.removeItem('farol_ia_date');
-    const hoje = new Date().toISOString().split('T')[0];
-    gerarResumoIA(hoje);
+    carregarDados(); // Recarrega tudo
   };
 
   return (
     <Layout>
       <div className="p-8 max-w-7xl mx-auto font-sans pb-20">
         
-        {/* Header */}
-        <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        {/* HEADER & STATUS BAR */}
+        <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel de Comando</h1>
-            <p className="text-gray-500">Visão unificada da estratégia, tática e operação.</p>
+            <h1 className="text-3xl font-bold text-gray-900">Painel de Comando</h1>
+            <p className="text-gray-500 text-sm mt-1">Visão Estratégica & Tática Unificada</p>
           </div>
 
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm transition-all duration-500 ${
-            iaStatus === 'active' ? 'bg-green-50 border-green-200 text-green-700' :
-            'bg-slate-50 border-slate-200 text-slate-500'
-          }`}>
-            {iaStatus === 'active' ? <CheckCircle size={16} /> : <Activity size={16} />}
-            <span className="text-xs font-bold tracking-wider">
-                {iaStatus === 'active' ? 'IA CONECTADA' : 'MONITORAMENTO'}
-            </span>
+          {/* STATUS DA IA (REDESENHADO) */}
+          <div className="flex items-center gap-3 bg-white p-2 pr-4 rounded-full border border-gray-200 shadow-sm">
+            <div className={`w-3 h-3 rounded-full ${iaStatus === 'active' ? 'bg-green-500 animate-pulse' : iaStatus === 'checking' ? 'bg-yellow-400 animate-bounce' : 'bg-red-500'}`}></div>
+            <div className="flex flex-col">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    {iaStatus === 'active' ? 'Sistema Online' : iaStatus === 'checking' ? 'Analisando...' : 'Offline'}
+                </span>
+                {lastUpdate && <span className="text-[10px] text-gray-500">Atualizado às {lastUpdate}</span>}
+            </div>
+            {iaStatus === 'active' && <BrainCircuit size={16} className="text-blue-600 ml-2 opacity-50"/>}
           </div>
         </div>
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-          <div onClick={() => navigate('/gestao-acoes')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm cursor-pointer hover:shadow-md transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 bg-red-50 text-red-600 rounded-lg"><Zap size={24} /></div>
-              <span className="text-3xl font-bold text-gray-800">{stats.acoesAbertas}</span>
+        {/* KPIs GRIDS */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div onClick={() => navigate('/gestao-acoes')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden">
+            <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><Zap size={60} /></div>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Pendências</p>
+            <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold text-gray-800">{stats.acoesAbertas}</span>
+                <span className="text-xs text-red-500 font-medium">ações abertas</span>
             </div>
-            <h3 className="font-semibold text-gray-700">Ações Pendentes</h3>
           </div>
-          <div onClick={() => navigate('/central-reunioes')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm cursor-pointer hover:shadow-md transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 bg-blue-50 text-blue-600 rounded-lg"><Calendar size={24} /></div>
-              <span className="text-3xl font-bold text-gray-800">{stats.reunioesHoje}</span>
+
+          <div onClick={() => navigate('/central-reunioes')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden">
+            <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><Calendar size={60} /></div>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Agenda Hoje</p>
+            <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold text-gray-800">{stats.reunioesHoje}</span>
+                <span className="text-xs text-blue-500 font-medium">eventos</span>
             </div>
-            <h3 className="font-semibold text-gray-700">Reuniões Hoje</h3>
           </div>
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm cursor-pointer hover:shadow-md transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 bg-green-50 text-green-600 rounded-lg"><TrendingUp size={24} /></div>
-              <span className="text-3xl font-bold text-gray-800">{stats.metasCriticas}</span>
+
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all group relative overflow-hidden">
+            <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity"><TrendingUp size={60} /></div>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Metas Críticas</p>
+            <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold text-gray-800">{stats.metasCriticas}</span>
+                <span className="text-xs text-yellow-600 font-medium">atenção</span>
             </div>
-            <h3 className="font-semibold text-gray-700">Metas em Alerta</h3>
           </div>
         </div>
 
-        {/* Grid Principal */}
+        {/* ÁREA CENTRAL: IA E ATALHOS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-10">
           
-          {/* Resumo IA */}
+          {/* CARTÃO DE INTELIGÊNCIA (O CÉREBRO) */}
           <div className="lg:col-span-2">
-            <div className="bg-slate-900 rounded-2xl p-8 shadow-xl relative overflow-hidden h-full">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500 rounded-full blur-[100px] opacity-10 pointer-events-none"></div>
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 shadow-xl relative overflow-hidden h-full flex flex-col justify-between group">
+              {/* Efeitos de Fundo */}
+              <div className="absolute top-0 right-0 w-80 h-80 bg-blue-600 rounded-full blur-[120px] opacity-20 group-hover:opacity-30 transition-opacity duration-1000"></div>
               
-              <div className="relative z-10 text-white">
-                <div className="flex items-center gap-3 mb-6">
-                  <BrainCircuit className="text-blue-400" />
-                  <h2 className="text-xl font-bold tracking-wide">Resumo Executivo</h2>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-blue-500/20 p-2 rounded-lg">
+                            <BrainCircuit className="text-blue-400" size={24} />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-white tracking-wide">Análise Executiva</h2>
+                            <p className="text-xs text-slate-400">Gemini 1.5 Pro • Monitoramento Ativo</p>
+                        </div>
+                    </div>
+                    <button onClick={forcarAtualizacao} className="text-slate-400 hover:text-white transition-colors" title="Forçar Reanálise">
+                        <RefreshCw size={18} className={loadingIA ? "animate-spin" : ""} />
+                    </button>
                 </div>
                 
                 {loadingIA ? (
-                  <div className="flex flex-col items-center justify-center h-40 text-blue-200/50 animate-pulse">
-                    <Loader2 size={32} className="animate-spin mb-2" />
-                    <p className="text-sm">Analisando dados...</p>
+                  <div className="flex flex-col items-center justify-center py-10 text-blue-200/50">
+                    <Loader2 size={32} className="animate-spin mb-3" />
+                    <p className="text-sm animate-pulse">Processando dados operacionais...</p>
                   </div>
                 ) : (
-                  <div className="prose prose-invert prose-p:text-slate-300 prose-sm max-w-none">
+                  <div className="prose prose-invert prose-p:text-slate-200 prose-p:leading-relaxed prose-strong:text-white prose-sm max-w-none">
+                     {/* Renderização segura do Markdown da IA */}
                      {resumoIA.split('\n').map((line, idx) => (
-                        <p key={idx} className="mb-2 leading-relaxed">
+                        <p key={idx} className="mb-2">
                             {line.replace(/\*\*(.*?)\*\*/g, (match, p1) => `<strong>${p1}</strong>`).split(/<strong>(.*?)<\/strong>/g).map((part, i) => 
-                                i % 2 === 1 ? <strong key={i} className="text-white font-bold">{part}</strong> : part
+                                i % 2 === 1 ? <strong key={i} className="text-white font-semibold bg-white/10 px-1 rounded">{part}</strong> : part
                             )}
                         </p>
                      ))}
                   </div>
                 )}
-                
-                <div className="mt-6 pt-6 border-t border-white/10 flex justify-end">
-                    <button onClick={forcarAtualizacao} className="text-xs text-blue-400 hover:text-white transition-colors flex items-center gap-1">
-                        <Activity size={12}/> Atualizar
-                    </button>
-                </div>
+              </div>
+
+              {/* Rodapé do Card */}
+              <div className="relative z-10 mt-6 pt-6 border-t border-white/5 flex gap-4 text-xs text-slate-400 font-mono">
+                 <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-green-500"></div> CRM Conectado</span>
+                 <span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div> Agenda Sincronizada</span>
               </div>
             </div>
           </div>
 
-          {/* Atalhos */}
+          {/* MENUS RÁPIDOS */}
           <div className="space-y-4">
-            <h3 className="font-bold text-gray-700 mb-4 px-1">Acesso Rápido</h3>
-            <button onClick={() => navigate('/central-reunioes')} className="w-full bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition-all flex items-center justify-between group text-left">
-              <div><h4 className="font-bold text-gray-800">Agenda Tática</h4></div>
-              <ArrowRight className="text-gray-300 group-hover:text-blue-600" size={20} />
-            </button>
-            <button onClick={() => navigate('/central-atas')} className="w-full bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition-all flex items-center justify-between group text-left">
-              <div><h4 className="font-bold text-gray-800">Banco de Atas</h4></div>
-              <ArrowRight className="text-gray-300 group-hover:text-blue-600" size={20} />
-            </button>
-            <button onClick={() => navigate('/copiloto')} className="w-full bg-red-50 p-4 rounded-xl border border-red-100 shadow-sm hover:bg-red-100 transition-all flex items-center justify-between group text-left">
-              <div>
-                <h4 className="font-bold text-red-800">Gravar Reunião</h4>
-                <p className="text-xs text-red-600">Copiloto IA</p>
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">Acesso Rápido</h3>
+            
+            <button onClick={() => navigate('/central-reunioes')} className="w-full bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-400 hover:shadow-md transition-all flex items-center justify-between group text-left">
+              <div className="flex items-center gap-3">
+                 <div className="bg-blue-50 text-blue-600 p-2 rounded-lg group-hover:bg-blue-600 group-hover:text-white transition-colors"><Calendar size={20}/></div>
+                 <div><h4 className="font-bold text-gray-800">Agenda Tática</h4><p className="text-xs text-gray-500">Ver calendário</p></div>
               </div>
-              <Zap size={16} className="text-red-600" />
+              <ArrowRight className="text-gray-300 group-hover:text-blue-600 transition-colors" size={18} />
+            </button>
+
+            <button onClick={() => navigate('/central-atas')} className="w-full bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-400 hover:shadow-md transition-all flex items-center justify-between group text-left">
+              <div className="flex items-center gap-3">
+                 <div className="bg-purple-50 text-purple-600 p-2 rounded-lg group-hover:bg-purple-600 group-hover:text-white transition-colors"><Layers size={20}/></div>
+                 <div><h4 className="font-bold text-gray-800">Banco de Atas</h4><p className="text-xs text-gray-500">Histórico de decisões</p></div>
+              </div>
+              <ArrowRight className="text-gray-300 group-hover:text-purple-600 transition-colors" size={18} />
+            </button>
+
+            <button onClick={() => navigate('/copiloto')} className="w-full bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-red-400 hover:shadow-md transition-all flex items-center justify-between group text-left">
+              <div className="flex items-center gap-3">
+                 <div className="bg-red-50 text-red-600 p-2 rounded-lg group-hover:bg-red-600 group-hover:text-white transition-colors"><Zap size={20}/></div>
+                 <div><h4 className="font-bold text-gray-800">Gravar Reunião</h4><p className="text-xs text-gray-500">IA Copiloto</p></div>
+              </div>
+              <ArrowRight className="text-gray-300 group-hover:text-red-600 transition-colors" size={18} />
             </button>
           </div>
         </div>
-        
-        {/* CRM Link */}
-        <div className="mt-8 bg-gradient-to-r from-indigo-900 to-indigo-800 rounded-xl p-8 text-white flex flex-col md:flex-row items-center justify-between shadow-lg relative overflow-hidden">
-            <div className="z-10 mb-6 md:mb-0">
-                <h2 className="text-2xl font-bold mb-2 flex items-center gap-3"><Layers className="text-indigo-300" /> Sistema de Frota & Avarias</h2>
-                <p className="text-indigo-200 text-sm">Acesse o ambiente exclusivo para gestão de tratativas.</p>
+
+        {/* Link Externo CRM */}
+        <div className="mt-4 border-t border-gray-100 pt-8">
+            <div className="bg-gradient-to-r from-indigo-900 to-blue-900 rounded-xl p-1 text-white shadow-lg">
+                <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-white/10 p-3 rounded-full"><Layers className="text-white" /></div>
+                        <div>
+                            <h2 className="font-bold text-lg">Sistema de Tratativas & Avarias</h2>
+                            <p className="text-blue-200 text-sm">Ambiente exclusivo para gestão de frota.</p>
+                        </div>
+                    </div>
+                    <a href="https://inovequatai.onrender.com/" target="_blank" rel="noopener noreferrer" className="bg-white text-blue-900 px-6 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg text-sm">
+                        Acessar Inove Quatai <ExternalLink size={16} />
+                    </a>
+                </div>
             </div>
-            <a href="https://inovequatai.onrender.com/" target="_blank" rel="noopener noreferrer" className="z-10 bg-white text-indigo-900 px-6 py-3 rounded-lg font-bold hover:bg-indigo-50 transition-all flex items-center gap-2 shadow-md">
-                Acessar Inove Quatai <ExternalLink size={18} />
-            </a>
         </div>
+
       </div>
     </Layout>
   );
