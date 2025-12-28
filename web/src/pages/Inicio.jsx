@@ -3,17 +3,7 @@ import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import { 
-  Calendar, 
-  ArrowRight, 
-  Zap, 
-  TrendingUp,
-  BrainCircuit,
-  Loader2,
-  ExternalLink, 
-  Layers,
-  CheckCircle, // <--- Icone Sucesso
-  XCircle,     // <--- Icone Erro
-  Activity     // <--- Icone Verificando
+  Calendar, ArrowRight, Zap, TrendingUp, BrainCircuit, Loader2, ExternalLink, Layers, CheckCircle, XCircle, Activity
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -21,74 +11,104 @@ const Inicio = () => {
   const navigate = useNavigate();
   const [resumoIA, setResumoIA] = useState("");
   const [loadingIA, setLoadingIA] = useState(true);
-  
-  // Estado do Status da IA ('checking', 'active', 'inactive')
   const [iaStatus, setIaStatus] = useState("checking");
-  
   const [stats, setStats] = useState({ acoesAbertas: 0, reunioesHoje: 0, metasCriticas: 0 });
 
   useEffect(() => {
-    carregarDadosEGerarResumo();
+    carregarDados();
   }, []);
 
-  const carregarDadosEGerarResumo = async () => {
-    setIaStatus("checking"); // Inicia verificação
-    try {
-      // 1. Carrega KPIs
-      const hoje = new Date().toISOString().split('T')[0];
-      const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
-      const { count: reunioesCount } = await supabase.from('reunioes').select('*', { count: 'exact', head: true }).gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
-      
-      setStats({
-        acoesAbertas: acoesCount || 0,
-        reunioesHoje: reunioesCount || 0,
-        metasCriticas: 3
-      });
+  const carregarDados = async () => {
+    // 1. Carrega KPIs (Sempre atualizados)
+    const hoje = new Date().toISOString().split('T')[0];
+    const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
+    const { count: reunioesCount } = await supabase.from('reunioes').select('*', { count: 'exact', head: true }).gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
+    
+    setStats({
+      acoesAbertas: acoesCount || 0,
+      reunioesHoje: reunioesCount || 0,
+      metasCriticas: 3
+    });
 
-      // 2. Busca dados para IA
+    // 2. Lógica de Cache da IA (Para não carregar toda hora)
+    const cacheDate = localStorage.getItem('farol_ia_date');
+    const cacheText = localStorage.getItem('farol_ia_text');
+
+    if (cacheDate === hoje && cacheText) {
+      // Se já gerou hoje, usa o cache e não chama a IA
+      setResumoIA(cacheText);
+      setIaStatus("active");
+      setLoadingIA(false);
+    } else {
+      // Se não tem cache de hoje, gera novo
+      await gerarResumoIA(hoje);
+    }
+  };
+
+  const gerarResumoIA = async (dataHoje) => {
+    setIaStatus("checking");
+    try {
+      // Busca dados REAIS
       const { data: ultimasReunioes } = await supabase.from('reunioes').select('titulo, pauta, data_hora').order('data_hora', { ascending: false }).limit(3);
       const { data: acoesPendentes } = await supabase.from('acoes').select('descricao, responsavel').eq('status', 'Aberta').limit(5);
 
-      // 3. Tenta Conectar com Gemini (Teste Real)
       const model = getGeminiFlash();
 
+      // PROMPT ANTI-ALUCINAÇÃO
       const prompt = `
-        Atue como um Diretor de Operações.
-        Escreva um "Resumo Executivo do Dia" (máximo 3 parágrafos curtos) para o gestor.
-        Dados:
-        - Reuniões: ${JSON.stringify(ultimasReunioes)}
-        - Pendências: ${JSON.stringify(acoesPendentes)}
-        Estilo: Profissional, markdown.
+        Atue como um Diretor de Operações analisando este painel.
+        
+        DADOS REAIS (Use APENAS estes dados, não invente nada):
+        - Reuniões Recentes: ${JSON.stringify(ultimasReunioes)}
+        - Pendências Críticas: ${JSON.stringify(acoesPendentes)}
+
+        INSTRUÇÕES:
+        1. Se a lista de reuniões estiver vazia, diga: "Não houve reuniões registradas recentemente."
+        2. Se não houver pendências, diga: "Operação rodando sem pendências críticas no momento."
+        3. NÃO crie reuniões fictícias (como "DBO" ou "Oferta x Demanda") se não estiverem na lista acima.
+        4. Seja breve (máximo 3 parágrafos).
+        5. Use markdown para negrito.
       `;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
+      const texto = response.text();
       
-      // Se chegou aqui, deu certo
-      setResumoIA(response.text());
-      setIaStatus("active"); 
+      setResumoIA(texto);
+      setIaStatus("active");
+      
+      // Salva no Cache
+      localStorage.setItem('farol_ia_date', dataHoje);
+      localStorage.setItem('farol_ia_text', texto);
 
     } catch (error) {
       console.error("Erro IA:", error);
-      setResumoIA("Sistema de inteligência temporariamente indisponível. Verifique a chave de API ou conexão.");
-      setIaStatus("inactive"); // Marca como inativo se der erro
+      setResumoIA("Não foi possível gerar a análise no momento.");
+      setIaStatus("inactive");
     } finally {
       setLoadingIA(false);
     }
+  };
+
+  // Botão para forçar atualização (caso o usuário queira)
+  const forcarAtualizacao = () => {
+    setLoadingIA(true);
+    localStorage.removeItem('farol_ia_date'); // Limpa cache
+    const hoje = new Date().toISOString().split('T')[0];
+    gerarResumoIA(hoje);
   };
 
   return (
     <Layout>
       <div className="p-8 max-w-7xl mx-auto font-sans pb-20">
         
-        {/* Header com Status da IA */}
+        {/* Header */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel de Comando</h1>
             <p className="text-gray-500">Visão unificada da estratégia, tática e operação.</p>
           </div>
 
-          {/* BADGE DE STATUS DA IA */}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm transition-all duration-500 ${
             iaStatus === 'active' ? 'bg-green-50 border-green-200 text-green-700' :
             iaStatus === 'inactive' ? 'bg-red-50 border-red-200 text-red-700' :
@@ -97,14 +117,9 @@ const Inicio = () => {
             {iaStatus === 'active' && <CheckCircle size={16} className="text-green-600" />}
             {iaStatus === 'inactive' && <XCircle size={16} className="text-red-600" />}
             {iaStatus === 'checking' && <Activity size={16} className="animate-pulse" />}
-            
             <span className="text-xs font-bold tracking-wider">
-                {iaStatus === 'active' ? 'IA CONECTADA' : 
-                 iaStatus === 'inactive' ? 'IA OFF-LINE' : 
-                 'TESTANDO CONEXÃO...'}
+                {iaStatus === 'active' ? 'IA CONECTADA' : iaStatus === 'inactive' ? 'IA OFF-LINE' : 'CONECTANDO...'}
             </span>
-            
-            {iaStatus === 'active' && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-1"></span>}
           </div>
         </div>
 
@@ -117,7 +132,6 @@ const Inicio = () => {
             </div>
             <h3 className="font-semibold text-gray-700">Ações Pendentes</h3>
           </div>
-
           <div onClick={() => navigate('/reunioes-calendario')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all cursor-pointer group">
             <div className="flex justify-between items-start mb-4">
               <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors"><Calendar size={24} /></div>
@@ -125,7 +139,6 @@ const Inicio = () => {
             </div>
             <h3 className="font-semibold text-gray-700">Reuniões Hoje</h3>
           </div>
-
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all cursor-pointer group">
             <div className="flex justify-between items-start mb-4">
               <div className="p-3 bg-green-50 text-green-600 rounded-lg group-hover:bg-green-100 transition-colors"><TrendingUp size={24} /></div>
@@ -141,8 +154,6 @@ const Inicio = () => {
           {/* IA Resumo */}
           <div className="lg:col-span-2">
             <div className={`rounded-2xl p-8 shadow-xl relative overflow-hidden h-full transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-slate-800' : 'bg-gradient-to-br from-slate-900 to-slate-800'}`}>
-              
-              {/* Efeito de fundo condicional */}
               <div className={`absolute top-0 right-0 w-64 h-64 rounded-full blur-[100px] opacity-20 pointer-events-none transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-red-500' : 'bg-blue-500'}`}></div>
               
               <div className="relative z-10 text-white">
@@ -170,10 +181,10 @@ const Inicio = () => {
                 
                 <div className="mt-6 pt-6 border-t border-white/10 flex justify-between items-center">
                     <p className="text-xs text-slate-400">
-                        {iaStatus === 'active' ? 'Inteligência Ativa • Gemini 1.5 Flash' : 'Modo Offline'}
+                        {iaStatus === 'active' ? 'Inteligência Ativa • Gemini 1.5 Pro' : 'Modo Offline'}
                     </p>
-                    <button onClick={carregarDadosEGerarResumo} className="text-xs text-blue-400 hover:text-white transition-colors flex items-center gap-1">
-                        <Activity size={12}/> Testar Novamente
+                    <button onClick={forcarAtualizacao} className="text-xs text-blue-400 hover:text-white transition-colors flex items-center gap-1">
+                        <Activity size={12}/> Atualizar Análise
                     </button>
                 </div>
               </div>
@@ -201,29 +212,17 @@ const Inicio = () => {
           </div>
         </div>
 
-        {/* Banner CRM Externo */}
+        {/* Banner CRM */}
         <div className="mt-8 bg-gradient-to-r from-indigo-900 to-indigo-800 rounded-xl p-8 text-white flex flex-col md:flex-row items-center justify-between shadow-lg border border-indigo-700 relative overflow-hidden group hover:shadow-2xl transition-all">
             <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500 rounded-full blur-[100px] opacity-20 pointer-events-none group-hover:opacity-30 transition-opacity"></div>
             <div className="z-10 mb-6 md:mb-0 max-w-2xl">
-                <h2 className="text-2xl font-bold mb-2 flex items-center gap-3">
-                    <Layers className="text-indigo-300" />
-                    Sistema de Tratativas & Avarias
-                </h2>
-                <p className="text-indigo-200 text-sm md:text-base leading-relaxed">
-                    Para acessar Tratativas, Controle de Avarias e Intervenções MKBF, utilize o ambiente exclusivo de gestão de frota.
-                </p>
+                <h2 className="text-2xl font-bold mb-2 flex items-center gap-3"><Layers className="text-indigo-300" /> Sistema de Tratativas & Avarias</h2>
+                <p className="text-indigo-200 text-sm md:text-base leading-relaxed">Para acessar Tratativas, Controle de Avarias e Intervenções MKBF, utilize o ambiente exclusivo de gestão de frota.</p>
             </div>
-            <a 
-                href="https://inovequatai.onrender.com/" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="z-10 whitespace-nowrap bg-white text-indigo-900 px-8 py-4 rounded-lg font-bold hover:bg-indigo-50 transition-all flex items-center gap-2 shadow-md hover:scale-105 active:scale-95"
-            >
-                Acessar Inove Quatai
-                <ExternalLink size={18} />
+            <a href="https://inovequatai.onrender.com/" target="_blank" rel="noopener noreferrer" className="z-10 whitespace-nowrap bg-white text-indigo-900 px-8 py-4 rounded-lg font-bold hover:bg-indigo-50 transition-all flex items-center gap-2 shadow-md hover:scale-105 active:scale-95">
+                Acessar Inove Quatai <ExternalLink size={18} />
             </a>
         </div>
-
       </div>
     </Layout>
   );
