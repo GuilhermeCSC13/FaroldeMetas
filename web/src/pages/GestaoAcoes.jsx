@@ -44,19 +44,6 @@ const GestaoAcoes = () => {
     return 'Pendente';
   };
 
-  // Só pode concluir se tiver resultado + evidência de conclusão
-  const podeConcluirAcao = (acao) => {
-    if (!acao) return false;
-
-    const temResultado = (acao.resultado || '').trim().length > 0;
-    const evidenciasConclusao = Array.isArray(acao.fotos_conclusao)
-      ? acao.fotos_conclusao
-      : [];
-    const temEvidenciaConclusao = evidenciasConclusao.length > 0;
-
-    return temResultado && temEvidenciaConclusao && getStatusAcao(acao) !== 'Concluída';
-  };
-
   // --------- BUSCA NO SUPABASE ----------
   const fetchAcoes = async (idParaManterSelecionado = null) => {
     setLoading(true);
@@ -103,6 +90,18 @@ const GestaoAcoes = () => {
       .eq('id', id);
 
     await fetchAcoes(id);
+  };
+
+  // callbacks usados pelo modal
+  const handleAfterSave = (id) => {
+    // recarrega mantendo a ação selecionada
+    fetchAcoes(id);
+  };
+
+  const handleAfterDelete = () => {
+    // recarrega lista e fecha modal/limpa seleção
+    fetchAcoes();
+    setAcaoSelecionada(null);
     setShowModalDetalhes(false);
   };
 
@@ -151,11 +150,13 @@ const GestaoAcoes = () => {
 
   const fecharModalDetalhes = () => {
     setShowModalDetalhes(false);
+    setAcaoSelecionada(null);
+    // ao sair do popup, atualiza a lista automaticamente
+    fetchAcoes();
   };
 
   const acaoDetalhe = acaoSelecionada;
   const statusDetalhe = acaoDetalhe ? getStatusAcao(acaoDetalhe) : 'Pendente';
-  const podeConcluirSelecionada = podeConcluirAcao(acaoDetalhe);
 
   return (
     <Layout>
@@ -379,9 +380,10 @@ const GestaoAcoes = () => {
           aberto={showModalDetalhes}
           acao={acaoDetalhe}
           status={statusDetalhe}
-          podeConcluir={podeConcluirSelecionada}
           onClose={fecharModalDetalhes}
-          onConcluir={() => acaoDetalhe && podeConcluirSelecionada && handleConcluir(acaoDetalhe.id)}
+          onConcluir={() => acaoDetalhe && handleConcluir(acaoDetalhe.id)}
+          onAfterSave={handleAfterSave}
+          onAfterDelete={handleAfterDelete}
         />
       </div>
     </Layout>
