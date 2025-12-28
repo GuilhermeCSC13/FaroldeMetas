@@ -5,7 +5,7 @@ import { MessageSquare, X, Send, Bot, Loader2 } from 'lucide-react';
 
 // ATENÇÃO: Coloque sua API KEY do Google AI Studio aqui (não a do Vertex, a API Key simples é mais fácil p/ frontend)
 // Pegue em: https://aistudio.google.com/app/apikey
-const API_KEY = "SUA_API_KEY_GEMINI_AQUI"; 
+const API_KEY = "AIzaSyBHbALir0Cpj2yUIHacHOibi3iFIeqhVDs"; 
 
 const TacticalAssistant = () => {
   const [isOpen, setIsOpen] = useState(false);
