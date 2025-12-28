@@ -1,21 +1,24 @@
+// src/pages/GestaoAcoes.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
 import { CheckCircle, ExternalLink, Search } from 'lucide-react';
+import ModalDetalhesAcao from '../components/tatico/ModalDetalhesAcao';
 
 const GestaoAcoes = () => {
   const [acoes, setAcoes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [acaoSelecionada, setAcaoSelecionada] = useState(null);
+  const [showModalDetalhes, setShowModalDetalhes] = useState(false);
   
-  // Estados dos Filtros
+  // Filtros
   const [filtroTexto, setFiltroTexto] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Pendente, Vencida, Concluída
   const [filtroResponsavel, setFiltroResponsavel] = useState('Todos'); 
   const [filtroOrigem, setFiltroOrigem] = useState('Todas');
 
-  // Listas para os Selects (Preenchidas dinamicamente)
+  // Listas para selects
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [listaOrigens, setListaOrigens] = useState([]);
 
@@ -23,11 +26,10 @@ const GestaoAcoes = () => {
     fetchAcoes();
   }, []);
 
-  // ------------------ REGRAS DE STATUS ------------------
+  // --------- REGRAS DE STATUS ----------
   const getStatusAcao = (acao) => {
     if (!acao) return 'Pendente';
 
-    // Se já está marcada como concluída no banco, não discute
     if (acao.status === 'Concluída') return 'Concluída';
 
     const hoje = new Date();
@@ -42,22 +44,20 @@ const GestaoAcoes = () => {
     return 'Pendente';
   };
 
-  // regra: só pode concluir se tiver resultado preenchido e pelo menos 1 foto de conclusão
+  // Só pode concluir se tiver resultado + evidência de conclusão
   const podeConcluirAcao = (acao) => {
     if (!acao) return false;
-    const temResultado = (acao.resultado || '').trim().length > 0;
 
-    // evidências de conclusão (campo novo); se não existir, trava
+    const temResultado = (acao.resultado || '').trim().length > 0;
     const evidenciasConclusao = Array.isArray(acao.fotos_conclusao)
       ? acao.fotos_conclusao
       : [];
-
     const temEvidenciaConclusao = evidenciasConclusao.length > 0;
 
     return temResultado && temEvidenciaConclusao && getStatusAcao(acao) !== 'Concluída';
   };
 
-  // ------------------ BUSCA / CARGA ------------------
+  // --------- BUSCA NO SUPABASE ----------
   const fetchAcoes = async (idParaManterSelecionado = null) => {
     setLoading(true);
 
@@ -76,20 +76,19 @@ const GestaoAcoes = () => {
     if (data) {
       setAcoes(data);
 
-      // Mantém a seleção se foi passada
-      if (idParaManterSelecionado) {
-        const encontrada = data.find(a => a.id === idParaManterSelecionado);
-        setAcaoSelecionada(encontrada || null);
-      } else if (acaoSelecionada) {
-        // se já havia uma ação selecionada, tenta atualizar a mesma
-        const encontrada = data.find(a => a.id === acaoSelecionada.id);
-        setAcaoSelecionada(encontrada || null);
-      }
-
+      // listas para filtros
       const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
       const origens = [...new Set(data.map(item => item.tipo_reuniao).filter(Boolean))].sort();
       setListaResponsaveis(resps);
       setListaOrigens(origens);
+
+      if (idParaManterSelecionado) {
+        const encontrada = data.find(a => a.id === idParaManterSelecionado);
+        setAcaoSelecionada(encontrada || null);
+      } else if (acaoSelecionada) {
+        const encontrada = data.find(a => a.id === acaoSelecionada.id);
+        setAcaoSelecionada(encontrada || null);
+      }
     }
 
     setLoading(false);
@@ -104,9 +103,10 @@ const GestaoAcoes = () => {
       .eq('id', id);
 
     await fetchAcoes(id);
+    setShowModalDetalhes(false);
   };
 
-  // ------------------ FILTRAGEM ------------------
+  // --------- FILTRAGEM ----------
   const acoesFiltradas = useMemo(() => {
     return acoes.filter(acao => {
       const statusCalculado = getStatusAcao(acao);
@@ -128,7 +128,7 @@ const GestaoAcoes = () => {
     });
   }, [acoes, filtroTexto, filtroStatus, filtroResponsavel, filtroOrigem]);
 
-  // ------------------ CARDS RESUMO ------------------
+  // --------- CARDS RESUMO ----------
   const cardsResumo = useMemo(() => {
     let pendente = 0;
     let vencida = 0;
@@ -144,7 +144,17 @@ const GestaoAcoes = () => {
     return { pendente, vencida, concluida };
   }, [acoesFiltradas]);
 
+  const abrirModalDetalhes = (acao) => {
+    setAcaoSelecionada(acao);
+    setShowModalDetalhes(true);
+  };
+
+  const fecharModalDetalhes = () => {
+    setShowModalDetalhes(false);
+  };
+
   const acaoDetalhe = acaoSelecionada;
+  const statusDetalhe = acaoDetalhe ? getStatusAcao(acaoDetalhe) : 'Pendente';
   const podeConcluirSelecionada = podeConcluirAcao(acaoDetalhe);
 
   return (
@@ -245,9 +255,8 @@ const GestaoAcoes = () => {
           </div>
         </div>
 
-        {/* Tabela + Detalhes */}
+        {/* Tabela */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col">
-          {/* Tabela */}
           <div className="overflow-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-semibold border-b border-gray-200 sticky top-0">
@@ -278,7 +287,6 @@ const GestaoAcoes = () => {
                   acoesFiltradas.map(acao => {
                     const statusCalculado = getStatusAcao(acao);
 
-                    // compat: fotos_acao / fotos_conclusao / fotos
                     const evidenciasAcao = Array.isArray(acao.fotos_acao)
                       ? acao.fotos_acao
                       : Array.isArray(acao.fotos)
@@ -293,16 +301,13 @@ const GestaoAcoes = () => {
                       ? (evidenciasConclusao[0] || evidenciasAcao[0])
                       : null;
 
-                    const podeConcluir = podeConcluirAcao(acao);
                     const dataBase = acao.data_criacao || acao.created_at;
 
                     return (
                       <tr
                         key={acao.id}
-                        className={`hover:bg-blue-50/30 transition-colors group cursor-pointer ${
-                          acaoSelecionada?.id === acao.id ? 'bg-blue-50/40' : ''
-                        }`}
-                        onClick={() => setAcaoSelecionada(acao)}
+                        className="hover:bg-blue-50/30 transition-colors group cursor-pointer"
+                        onClick={() => abrirModalDetalhes(acao)}
                       >
                         <td className="p-4">
                           <span
@@ -352,18 +357,9 @@ const GestaoAcoes = () => {
                         <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                           {statusCalculado !== 'Concluída' && (
                             <button
-                              onClick={() => podeConcluir && handleConcluir(acao.id)}
-                              disabled={!podeConcluir}
-                              className={`p-1.5 rounded-full transition-all ${
-                                podeConcluir
-                                  ? 'text-gray-400 hover:text-green-600 hover:bg-green-50'
-                                  : 'text-gray-300 cursor-not-allowed'
-                              }`}
-                              title={
-                                podeConcluir
-                                  ? 'Concluir ação'
-                                  : 'Só é possível concluir com conclusão preenchida e evidência da conclusão'
-                              }
+                              onClick={() => abrirModalDetalhes(acao)}
+                              className="p-1.5 rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                              title="Ver detalhes / concluir"
                             >
                               <CheckCircle size={20} />
                             </button>
@@ -376,176 +372,17 @@ const GestaoAcoes = () => {
               </tbody>
             </table>
           </div>
-
-          {/* Detalhes da Ação */}
-          {acaoDetalhe && (
-            <div className="border-t border-gray-200 bg-gray-50 px-6 py-5 space-y-6">
-              
-              {/* PARTE DE CIMA - AÇÃO */}
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
-                  Detalhes da Ação
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
-                  <div>
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Ação
-                    </span>
-                    <p className="text-sm font-semibold text-gray-800">
-                      {acaoDetalhe.descricao}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap gap-4 text-[11px] text-gray-500 mt-1">
-                    <span>
-                      <strong className="font-semibold text-gray-600">Criação:</strong>{' '}
-                      {acaoDetalhe.data_criacao
-                        ? new Date(acaoDetalhe.data_criacao).toLocaleString()
-                        : acaoDetalhe.created_at
-                          ? new Date(acaoDetalhe.created_at).toLocaleString()
-                          : '-'}
-                    </span>
-                    <span>
-                      <strong className="font-semibold text-gray-600">Vencimento:</strong>{' '}
-                      {acaoDetalhe.data_vencimento
-                        ? new Date(acaoDetalhe.data_vencimento).toLocaleDateString()
-                        : '-'}
-                    </span>
-                    <span>
-                      <strong className="font-semibold text-gray-600">Responsável:</strong>{' '}
-                      {acaoDetalhe.responsavel || '-'}
-                    </span>
-                  </div>
-
-                  <div className="mt-3">
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Observações
-                    </span>
-                    <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">
-                      {acaoDetalhe.observacao || 'Sem observações registradas.'}
-                    </p>
-                  </div>
-
-                  <div className="mt-3">
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Evidências (registro da ação)
-                    </span>
-                    {(() => {
-                      const evidenciasAcao = Array.isArray(acaoDetalhe.fotos_acao)
-                        ? acaoDetalhe.fotos_acao
-                        : Array.isArray(acaoDetalhe.fotos)
-                          ? acaoDetalhe.fotos
-                          : [];
-
-                      return evidenciasAcao.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {evidenciasAcao.map((url, idx) => (
-                            <a
-                              key={idx}
-                              href={url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                              title={`Abrir evidência ${idx + 1}`}
-                            >
-                              <img
-                                src={url}
-                                alt={`Evidência ${idx + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                            </a>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 mt-1">
-                          Nenhuma evidência anexada à ação.
-                        </p>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-
-              {/* PARTE DE BAIXO - CONCLUSÃO */}
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
-                  Conclusão da Ação
-                </h3>
-                <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-                  <div>
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Observação do que foi realizado
-                    </span>
-                    <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">
-                      {acaoDetalhe.resultado && acaoDetalhe.resultado.trim().length > 0
-                        ? acaoDetalhe.resultado
-                        : 'Ainda não foi registrada a conclusão desta ação.'}
-                    </p>
-                  </div>
-
-                  <div>
-                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Evidências do que foi feito
-                    </span>
-                    {(() => {
-                      const evidenciasConclusao = Array.isArray(acaoDetalhe.fotos_conclusao)
-                        ? acaoDetalhe.fotos_conclusao
-                        : [];
-
-                      return evidenciasConclusao.length > 0 ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {evidenciasConclusao.map((url, idx) => (
-                            <a
-                              key={idx}
-                              href={url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                              title={`Abrir evidência de conclusão ${idx + 1}`}
-                            >
-                              <img
-                                src={url}
-                                alt={`Evidência de conclusão ${idx + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                            </a>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 mt-1">
-                          Nenhuma evidência vinculada à conclusão.
-                        </p>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="pt-3 border-t border-gray-100 flex justify-end">
-                    {getStatusAcao(acaoDetalhe) === 'Concluída' ? (
-                      <span className="text-xs font-semibold text-green-600">
-                        Ação já finalizada.
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() =>
-                          podeConcluirSelecionada && handleConcluir(acaoDetalhe.id)
-                        }
-                        disabled={!podeConcluirSelecionada}
-                        className={`px-5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${
-                          podeConcluirSelecionada
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                        }`}
-                      >
-                        <CheckCircle size={16} />
-                        Finalizar ação
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* MODAL REUTILIZÁVEL */}
+        <ModalDetalhesAcao
+          aberto={showModalDetalhes}
+          acao={acaoDetalhe}
+          status={statusDetalhe}
+          podeConcluir={podeConcluirSelecionada}
+          onClose={fecharModalDetalhes}
+          onConcluir={() => acaoDetalhe && podeConcluirSelecionada && handleConcluir(acaoDetalhe.id)}
+        />
       </div>
     </Layout>
   );
