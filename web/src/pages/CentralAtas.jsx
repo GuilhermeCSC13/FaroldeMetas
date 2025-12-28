@@ -61,8 +61,8 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    // 1. Ações desta reunião
-    const { data: criadas } = await supabase
+    // 1. Ações desta reuno
+    const { data: crdas } = await supabase
       .from('acoes')
       .select('*')
       .eq('reuniao_id', ata.id)
@@ -405,7 +405,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       className="text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex gap-1"
                     >
                       {isGenerating ? <Loader2 size={14} className="animate-spin"/> : <Cpu size={14}/>}
-                      IA Refazer
+                      Gerar Resumo IA
                     </button>
                   )}
                 </div>
