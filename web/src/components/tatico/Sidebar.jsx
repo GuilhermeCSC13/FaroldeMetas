@@ -65,7 +65,7 @@ export default function Sidebar() {
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center text-xl font-bold backdrop-blur-sm">Q</div>
           <div>
-            <p className="text-xs text-blue-100 opacity-80">Olá, Guilherme 👋</p>
+            <p className="text-xs text-blue-100 opacity-80">Olá, Gestor 👋</p>
             <p className="text-sm font-bold tracking-tight">Farol Tático</p>
           </div>
         </div>
@@ -130,10 +130,16 @@ export default function Sidebar() {
         <div className="pt-2">
             <p className="px-4 text-[10px] font-bold text-blue-300 uppercase tracking-wider mb-1">Ferramentas</p>
             
-            {/* ATUALIZADO: Link para a nova Central */}
+            {/* LINK 1: Agenda Tática (Antiga Central de Reuniões) */}
             <NavLink to="/central-reunioes" className={({ isActive }) => `${linkBaseClasses} ${isActive ? linkActiveClasses : linkInactiveClasses}`}>
                 <FaCalendarAlt className="text-sm" />
-                <span>Central de Reuniões</span>
+                <span>Agenda Tática</span>
+            </NavLink>
+
+            {/* LINK 2: Banco de Atas (NOVO) */}
+            <NavLink to="/central-atas" className={({ isActive }) => `${linkBaseClasses} ${isActive ? linkActiveClasses : linkInactiveClasses}`}>
+                <FaClipboardList className="text-sm" />
+                <span>Banco de Atas</span>
             </NavLink>
 
             <NavLink to="/gestao-acoes" className={({ isActive }) => `${linkBaseClasses} ${isActive ? linkActiveClasses : linkInactiveClasses}`}>
