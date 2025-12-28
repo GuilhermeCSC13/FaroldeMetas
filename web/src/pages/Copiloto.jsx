@@ -8,7 +8,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 // ==========================================
 // CONFIGURAÇÃO DA IA
 // ==========================================
-const API_KEY = "SUA_API_KEY_AQUI"; // <--- COLE SUA CHAVE DO AI STUDIO AQUI
+const API_KEY = "AIzaSyBHbALir0Cpj2yUIHacHOibi3iFIeqhVDs"; // <--- COLE SUA CHAVE DO AI STUDIO AQUI
 
 const Copiloto = () => {
   const navigate = useNavigate();
