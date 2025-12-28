@@ -7,7 +7,8 @@ import {
   FaChevronDown,
   FaChevronRight,
   FaCalendarAlt,
-  FaTasks, // Ícone para Central de Ações
+  FaTasks,
+  FaMicrophone, // <--- Ícone do Copiloto
 } from "react-icons/fa";
 
 const setores = [
@@ -51,7 +52,7 @@ export default function Sidebar() {
   const linkActiveClasses = "bg-blue-100 text-blue-700 font-semibold";
 
   return (
-    <aside className="w-64 bg-blue-700 text-white flex flex-col min-h-screen">
+    <aside className="w-64 bg-blue-700 text-white flex flex-col min-h-screen font-sans">
       {/* Cabeçalho */}
       <div className="px-4 py-4 border-b border-blue-500/40">
         <div className="flex items-center gap-3">
@@ -159,20 +160,35 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* --- NOVO MENU: Agenda de Reuniões --- */}
+        {/* --- DESTAQUE: COPILOTO IA --- */}
+        <NavLink
+          to="/copiloto"
+          className={({ isActive }) =>
+            `${linkBaseClasses} ${
+              isActive 
+                ? "bg-red-500/20 text-red-100 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]" 
+                : "text-red-200 hover:bg-red-500/10 hover:text-white"
+            } mt-6 mb-2`
+          }
+        >
+          <FaMicrophone className={`text-sm ${location.pathname === '/copiloto' ? 'animate-pulse' : ''}`} />
+          <span className="font-bold tracking-wide">Copiloto IA</span>
+        </NavLink>
+
+        {/* --- Agenda de Reuniões --- */}
         <NavLink
           to="/reunioes-calendario"
           className={({ isActive }) =>
             `${linkBaseClasses} ${
               isActive ? linkActiveClasses : linkInactiveClasses
-            } mt-2`
+            }`
           }
         >
           <FaCalendarAlt className="text-sm" />
           <span>Agenda Reuniões</span>
         </NavLink>
 
-        {/* --- NOVO MENU: Central de Ações --- */}
+        {/* --- Central de Ações --- */}
         <NavLink
           to="/gestao-acoes"
           className={({ isActive }) =>
@@ -191,7 +207,7 @@ export default function Sidebar() {
           className={({ isActive }) =>
             `${linkBaseClasses} ${
               isActive ? linkActiveClasses : linkInactiveClasses
-            } mt-2`
+            } mt-4`
           }
         >
           <FaCogs className="text-sm" />
@@ -201,7 +217,7 @@ export default function Sidebar() {
 
       {/* Rodapé */}
       <div className="px-4 py-3 border-t border-blue-500/40 text-[11px] text-blue-100">
-        <p>Versão 1.0 · Farol Tático</p>
+        <p>Versão 1.2 · Farol Tático</p>
       </div>
     </aside>
   );
