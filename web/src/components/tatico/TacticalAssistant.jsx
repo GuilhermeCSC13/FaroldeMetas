@@ -18,7 +18,7 @@ const TacticalAssistant = () => {
     const timestamp = localStorage.getItem('farol_chat_time');
     if (saved && timestamp) {
       const hoursPassed = (Date.now() - parseInt(timestamp)) / (1000 * 60 * 60);
-      if (hoursPassed < 4) return JSON.parse(saved); // 4 horas de validade
+      if (hoursPassed < 4) return JSON.parse(saved);
     }
     return [welcomeMsg];
   });
@@ -35,44 +35,54 @@ const TacticalAssistant = () => {
     localStorage.removeItem('farol_chat_time');
   };
 
-  // --- 2. CÉREBRO: BUSCA CONTEXTO REAL NO BANCO ---
+  // --- 2. CÉREBRO: BUSCA CONTEXTO (COM PROTEÇÃO DE ERRO) ---
   const buscarContextoDados = async () => {
-    const hoje = new Date().toISOString();
-    
-    // A. Busca Agenda Futura (Próximos 15 dias) - Para evitar conflitos
-    const { data: agendaFutura } = await supabase
-        .from('reunioes')
-        .select('titulo, data_hora, tipo_reuniao')
-        .gte('data_hora', hoje)
-        .order('data_hora', { ascending: true })
-        .limit(10);
+    try {
+        const hoje = new Date().toISOString();
+        
+        // A. Busca Agenda Futura
+        const { data: agendaFutura, error: erroAgenda } = await supabase
+            .from('reunioes')
+            .select('titulo, data_hora, tipo_reuniao')
+            .gte('data_hora', hoje)
+            .order('data_hora', { ascending: true })
+            .limit(10);
+        
+        if (erroAgenda) console.warn("Aviso Agenda:", erroAgenda);
 
-    // B. Busca Histórico Recente (Últimas 5 realizadas) - Para ler ATAS
-    const { data: historicoPassado } = await supabase
-        .from('reunioes')
-        .select('titulo, data_hora, pauta, responsavel') // Traz a PAUTA (Ata)
-        .lte('data_hora', hoje)
-        .order('data_hora', { ascending: false })
-        .limit(5);
+        // B. Busca Histórico Recente
+        const { data: historicoPassado, error: erroHist } = await supabase
+            .from('reunioes')
+            .select('titulo, data_hora, pauta, responsavel')
+            .lte('data_hora', hoje)
+            .order('data_hora', { ascending: false })
+            .limit(5);
 
-    // C. Formata para a IA entender
-    let contexto = `\n--- 📅 AGENDA FUTURA (Use para verificar disponibilidade) ---\n`;
-    if (agendaFutura?.length) {
-        agendaFutura.forEach(r => {
-            const dt = new Date(r.data_hora);
-            contexto += `- ${dt.toLocaleDateString()} às ${dt.toLocaleTimeString().slice(0,5)}: ${r.titulo} (${r.tipo_reuniao})\n`;
-        });
-    } else { contexto += "(Agenda vazia nos próximos dias)\n"; }
+        if (erroHist) console.warn("Aviso Histórico:", erroHist);
 
-    contexto += `\n--- 📚 HISTÓRICO E ATAS (Use para responder sobre o passado) ---\n`;
-    if (historicoPassado?.length) {
-        historicoPassado.forEach(r => {
-            contexto += `- [Realizada em ${new Date(r.data_hora).toLocaleDateString()}]: ${r.titulo}\n`;
-            contexto += `  RESUMO DA ATA: ${r.pauta ? r.pauta.substring(0, 300) + '...' : 'Sem ata registrada.'}\n`;
-        });
-    } else { contexto += "(Nenhuma reunião realizada recentemente)\n"; }
+        // C. Formata para a IA
+        let contexto = `\n--- 📅 AGENDA FUTURA (Use para verificar disponibilidade) ---\n`;
+        if (agendaFutura?.length) {
+            agendaFutura.forEach(r => {
+                const dt = new Date(r.data_hora);
+                contexto += `- ${dt.toLocaleDateString()} às ${dt.toLocaleTimeString().slice(0,5)}: ${r.titulo} (${r.tipo_reuniao})\n`;
+            });
+        } else { contexto += "(Agenda livre nos próximos dias)\n"; }
 
-    return contexto;
+        contexto += `\n--- 📚 HISTÓRICO RECENTE (Use para responder sobre o passado) ---\n`;
+        if (historicoPassado?.length) {
+            historicoPassado.forEach(r => {
+                contexto += `- [Realizada em ${new Date(r.data_hora).toLocaleDateString()}]: ${r.titulo}\n`;
+                if (r.pauta) contexto += `  RESUMO: ${r.pauta.substring(0, 200)}...\n`;
+            });
+        } else { contexto += "(Nenhuma reunião realizada recentemente)\n"; }
+
+        return contexto;
+
+    } catch (err) {
+        console.error("Erro não-bloqueante ao buscar contexto:", err);
+        return " (Aviso: Não foi possível acessar a agenda em tempo real. Responda com base no que o usuário informar.)";
+    }
   };
 
   // --- 3. PROCESSAMENTO DA IA ---
@@ -84,25 +94,23 @@ const TacticalAssistant = () => {
     setLoading(true);
 
     try {
-      // PASSO 1: Buscar dados frescos no banco
+      // Busca contexto (agora seguro, não trava se falhar)
       const dadosContexto = await buscarContextoDados();
       
       const model = getGeminiFlash();
       
-      // PASSO 2: Prompt Engenharia de Confiança
       const prompt = `
         Você é o Assistente de Inteligência do Farol Tático.
-        Sua função é gerenciar a agenda e recuperar informações de atas.
-
-        DADOS REAIS DO SISTEMA (Baseie-se APENAS nisso):
+        
+        CONTEXTO DO SISTEMA:
         ${dadosContexto}
 
         HOJE: ${new Date().toLocaleString('pt-BR')}
 
-        INSTRUÇÕES DE SEGURANÇA:
-        1. Se o usuário perguntar sobre uma reunião que NÃO está na lista "HISTÓRICO", diga que não encontrou registro. NÃO INVENTE.
-        2. Se o usuário quiser agendar, verifique na lista "AGENDA FUTURA" se já existe algo no horário. Se houver conflito, avise.
-        3. Para agendar, retorne APENAS JSON. Para conversar, retorne texto.
+        INSTRUÇÕES:
+        1. Responda a pergunta do usuário ou agende a reunião solicitada.
+        2. Se for agendar, verifique conflitos na lista "AGENDA FUTURA".
+        3. Se o usuário confirmar dados de agendamento, retorne APENAS o JSON.
 
         USUÁRIO DISSE: "${userMsg}"
 
@@ -111,7 +119,7 @@ const TacticalAssistant = () => {
       `;
 
       const result = await model.generateContent(prompt);
-      let text = result.response.text();
+      const text = result.response.text();
 
       // Limpeza de Markdown
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -123,14 +131,14 @@ const TacticalAssistant = () => {
       }
 
     } catch (error) {
-      console.error(error);
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Erro ao consultar banco de dados. Tente novamente.' }]);
+      console.error("Erro Crítico IA:", error);
+      setMessages(prev => [...prev, { role: 'assistant', text: 'Desculpe, estou com dificuldade de conexão agora. Tente novamente em instantes.' }]);
     } finally {
       setLoading(false);
     }
   };
 
-  // --- 4. FUNÇÕES DE AGENDAMENTO (Manter igual) ---
+  // --- 4. FUNÇÕES DE AGENDAMENTO ---
   const handleCreateMeetingIntent = async (dadosJSON) => {
     try {
         const dados = JSON.parse(dadosJSON);
@@ -157,12 +165,13 @@ const TacticalAssistant = () => {
             cor: '#2563EB',
             area_id: 4,
             responsavel: 'IA Copiloto',
-            pauta: `Agendado via IA.\nSolicitação original: ${dados.intent || 'Via chat'}`
+            pauta: `Agendado via IA.\nSolicitação: ${dados.intent || 'Chat'}`
         }, dados.recorrencia || 'unica');
 
         setMessages(prev => [...prev, { role: 'assistant', text: `✅ Agendado: ${dados.titulo} em ${dados.data} às ${dados.hora}.` }]);
     } catch (error) {
-        setMessages(prev => [...prev, { role: 'assistant', text: "Erro ao gravar no banco." }]);
+        console.error(error);
+        setMessages(prev => [...prev, { role: 'assistant', text: "Erro ao gravar no banco. Verifique sua conexão." }]);
     } finally {
         setLoading(false);
     }
@@ -184,7 +193,7 @@ const TacticalAssistant = () => {
                 <div className="bg-blue-600 p-1.5 rounded-lg"><Bot size={16} /></div>
                 <div>
                     <h3 className="font-bold text-sm">Copiloto IA</h3>
-                    <p className="text-[10px] text-blue-200 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> Conectado aos Dados</p>
+                    <p className="text-[10px] text-blue-200 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> Online</p>
                 </div>
             </div>
             <div className="flex gap-1">
@@ -224,7 +233,7 @@ const TacticalAssistant = () => {
             {loading && (
                 <div className="flex items-center gap-2 text-slate-400 text-xs pl-2">
                     <Loader2 size={14} className="animate-spin text-blue-500"/>
-                    <span>Analisando banco de dados...</span>
+                    <span>Processando...</span>
                 </div>
             )}
             <div ref={messagesEndRef} />
@@ -234,7 +243,7 @@ const TacticalAssistant = () => {
             <div className="flex gap-2 bg-slate-100 p-1.5 rounded-full border border-slate-200 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
               <input 
                 className="flex-1 bg-transparent px-4 py-2 text-sm outline-none text-slate-700 placeholder:text-slate-400" 
-                placeholder="Pergunte sobre atas ou agende..." 
+                placeholder="Ex: Marcar DBO amanhã às 9h..." 
                 value={input} 
                 onChange={(e) => setInput(e.target.value)} 
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
