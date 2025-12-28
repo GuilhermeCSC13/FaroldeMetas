@@ -8,76 +8,52 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, List, 
-  Clock, MapPin, MoreVertical, X, Repeat 
+  X, Repeat, User, AlignLeft, Clock, Save, Trash2
 } from 'lucide-react';
-import { salvarReuniao, atualizarReuniao } from '../services/agendaService'; // Importe o serviço criado
+import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 
 export default function CentralReunioes() {
-  const [view, setView] = useState('calendar'); // 'calendar' | 'list'
+  const [view, setView] = useState('calendar'); 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reunioes, setReunioes] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Modal Criar/Editar
+  
+  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
+  const [activeTab, setActiveTab] = useState('detalhes'); // 'detalhes' | 'ata'
   
-  // Form State
   const [formData, setFormData] = useState({
-    titulo: '', tipo_reuniao: 'Geral', data: '', hora: '09:00', cor: '#3B82F6', recorrencia: 'unica'
+    titulo: '', 
+    tipo_reuniao: 'Geral', 
+    data: '', 
+    hora: '09:00', 
+    cor: '#3B82F6', 
+    responsavel: '',
+    pauta: '', // ATA
+    recorrencia: 'unica'
   });
 
   useEffect(() => {
     fetchReunioes();
-  }, [currentDate]); // Recarrega ao mudar o mês
+  }, [currentDate]);
 
   const fetchReunioes = async () => {
-    setLoading(true);
-    // Busca abrangente (poderia filtrar por mês para otimizar)
     const { data } = await supabase.from('reunioes').select('*').order('data_hora');
     setReunioes(data || []);
-    setLoading(false);
   };
 
-  // --- Lógica do Calendário ---
+  // --- Helpers de Calendário ---
   const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
+  
   const onDateClick = (day) => {
-    setFormData({ ...formData, data: format(day, 'yyyy-MM-dd') });
-    setIsModalOpen(true);
-  };
-
-  const monthStart = startOfMonth(currentDate);
-  const monthEnd = endOfMonth(monthStart);
-  const startDate = startOfWeek(monthStart);
-  const endDate = endOfWeek(monthEnd);
-  const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
-
-  // --- Ações do Formulário ---
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const dataCompleta = new Date(`${formData.data}T${formData.hora}:00`);
-    
-    const dados = {
-      titulo: formData.titulo,
-      tipo_reuniao: formData.tipo_reuniao,
-      data_hora: dataCompleta.toISOString(),
-      cor: formData.cor,
-      area_id: 4 // Padrão ou criar seletor
-    };
-
-    if (editingReuniao) {
-      // Lógica de edição
-      const aplicarSerie = window.confirm("Deseja aplicar essa alteração para TODAS as reuniões futuras desta série?");
-      await atualizarReuniao(editingReuniao.id, dados, aplicarSerie);
-    } else {
-      // Criação nova com recorrência
-      await salvarReuniao(dados, formData.recorrencia);
-    }
-
-    setIsModalOpen(false);
     setEditingReuniao(null);
-    fetchReunioes(); // Atualiza tela
+    setFormData({ 
+        titulo: '', tipo_reuniao: 'Geral', data: format(day, 'yyyy-MM-dd'), hora: '09:00', 
+        cor: '#3B82F6', responsavel: '', pauta: '', recorrencia: 'unica' 
+    });
+    setActiveTab('detalhes');
+    setIsModalOpen(true);
   };
 
   const handleEdit = (reuniao) => {
@@ -86,35 +62,67 @@ export default function CentralReunioes() {
       titulo: reuniao.titulo,
       tipo_reuniao: reuniao.tipo_reuniao,
       data: format(dt, 'yyyy-MM-dd'),
-      hora: format(dt, 'HH:mm'),
+      hora: format(dt, 'HH:mm'), // Garante formato HH:mm para o input
       cor: reuniao.cor,
-      recorrencia: 'unica' // Edição padrão mostra única
+      responsavel: reuniao.responsavel || '',
+      pauta: reuniao.pauta || '',
+      recorrencia: 'unica'
     });
     setEditingReuniao(reuniao);
+    setActiveTab('ata'); // Abre direto na Ata se for edição (opcional)
     setIsModalOpen(true);
   };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    // Constrói a data/hora correta combinando os inputs
+    // Importante: input type="date" retorna YYYY-MM-DD e type="time" HH:MM
+    const dataHoraIso = new Date(`${formData.data}T${formData.hora}:00`).toISOString();
+    
+    const dados = {
+      titulo: formData.titulo,
+      tipo_reuniao: formData.tipo_reuniao,
+      data_hora: dataHoraIso,
+      cor: formData.cor,
+      responsavel: formData.responsavel,
+      pauta: formData.pauta, // Salva o texto da ATA
+      area_id: 4 
+    };
+
+    if (editingReuniao) {
+      const aplicarSerie = window.confirm("Você alterou esta reunião. Deseja aplicar as mudanças (exceto data/hora) para todas as futuras desta série?");
+      await atualizarReuniao(editingReuniao.id, dados, aplicarSerie);
+    } else {
+      await salvarReuniao(dados, formData.recorrencia);
+    }
+
+    setIsModalOpen(false);
+    fetchReunioes();
+  };
+
+  // Calendário Render Logic
+  const monthStart = startOfMonth(currentDate);
+  const startDate = startOfWeek(monthStart);
+  const calendarDays = eachDayOfInterval({ start: startDate, end: endOfWeek(endOfMonth(monthStart)) });
 
   return (
     <Layout>
       <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden">
         
-        {/* Header Toolbar */}
+        {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Agenda Tática</h1>
-            <p className="text-sm text-slate-500">Gestão visual de rituais e alinhamentos.</p>
+            <h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1>
+            <p className="text-sm text-slate-500">Agendamento e controle de rituais.</p>
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className="bg-white border p-1 rounded-lg flex shadow-sm">
+          <div className="flex gap-2">
+             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
               <button onClick={() => setView('calendar')} className={`p-2 rounded ${view === 'calendar' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}><CalIcon size={18}/></button>
               <button onClick={() => setView('list')} className={`p-2 rounded ${view === 'list' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}><List size={18}/></button>
             </div>
-            <button 
-              onClick={() => { setEditingReuniao(null); setIsModalOpen(true); }}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md active:scale-95 transition-all"
-            >
-              <Plus size={18} /> Nova Reunião
+            <button onClick={() => onDateClick(new Date())} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md">
+              <Plus size={18} /> Nova
             </button>
           </div>
         </div>
@@ -122,48 +130,32 @@ export default function CentralReunioes() {
         {/* --- VIEW: CALENDÁRIO --- */}
         {view === 'calendar' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-            {/* Nav Mês */}
+             {/* Navegação Mês */}
             <div className="flex items-center justify-between p-4 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-700 capitalize">
-                {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
-              </h2>
+              <h2 className="text-xl font-bold text-slate-700 capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</h2>
               <div className="flex gap-2">
                 <button onClick={prevMonth} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft /></button>
-                <button onClick={() => setCurrentDate(new Date())} className="text-sm font-bold text-blue-600 px-3">Hoje</button>
                 <button onClick={nextMonth} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
               </div>
             </div>
-
-            {/* Dias da Semana */}
-            <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
+            
+            {/* Cabeçalho Dias */}
+            <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-100">
               {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
-                <div key={d} className="py-2 text-center text-xs font-bold text-slate-400 uppercase tracking-wider">{d}</div>
+                <div key={d} className="py-2 text-center text-xs font-bold text-slate-400 uppercase">{d}</div>
               ))}
             </div>
 
-            {/* Grid Dias */}
+            {/* Grid */}
             <div className="grid grid-cols-7 grid-rows-5 flex-1">
-              {calendarDays.map((day, idx) => {
-                const isCurrentMonth = isSameMonth(day, monthStart);
+              {calendarDays.map((day) => {
                 const dayMeetings = reunioes.filter(r => isSameDay(new Date(r.data_hora), day));
-
+                const isCurrent = isSameMonth(day, monthStart);
                 return (
-                  <div 
-                    key={day.toString()} 
-                    onClick={() => onDateClick(day)}
-                    className={`border-r border-b border-slate-50 p-2 min-h-[100px] transition-colors hover:bg-slate-50 cursor-pointer flex flex-col gap-1 ${!isCurrentMonth ? 'bg-slate-50/50 text-slate-300' : 'bg-white'}`}
-                  >
-                    <span className={`text-xs font-bold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isSameDay(day, new Date()) ? 'bg-blue-600 text-white' : ''}`}>
-                      {format(day, 'd')}
-                    </span>
-                    
+                  <div key={day.toString()} onClick={() => onDateClick(day)} className={`border-r border-b border-slate-50 p-1 cursor-pointer hover:bg-blue-50/30 transition-colors flex flex-col gap-1 ${!isCurrent ? 'bg-slate-50/50 opacity-50' : ''}`}>
+                    <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isSameDay(day, new Date()) ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{format(day, 'd')}</span>
                     {dayMeetings.map(m => (
-                      <div 
-                        key={m.id}
-                        onClick={(e) => { e.stopPropagation(); handleEdit(m); }}
-                        className="text-[10px] truncate px-1.5 py-0.5 rounded border-l-2 shadow-sm hover:scale-105 transition-transform"
-                        style={{ borderLeftColor: m.cor, backgroundColor: m.cor + '20', color: '#334155' }}
-                      >
+                      <div key={m.id} onClick={(e) => { e.stopPropagation(); handleEdit(m); }} className="text-[10px] truncate px-1 rounded border-l-2 font-medium" style={{ borderLeftColor: m.cor, backgroundColor: m.cor + '15', color: '#475569' }}>
                         {format(new Date(m.data_hora), 'HH:mm')} {m.titulo}
                       </div>
                     ))}
@@ -174,101 +166,144 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* --- VIEW: LISTA (Estilo Agenda) --- */}
+        {/* --- VIEW: LISTA --- */}
         {view === 'list' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-4 custom-scrollbar">
-            {reunioes.filter(r => new Date(r.data_hora) >= new Date()).map(r => (
-               <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer transition-colors">
-                  <div className="flex flex-col items-center justify-center w-14 h-14 bg-slate-100 rounded-lg text-slate-600">
-                     <span className="text-xs font-bold uppercase">{format(new Date(r.data_hora), 'MMM', { locale: ptBR })}</span>
-                     <span className="text-xl font-bold">{format(new Date(r.data_hora), 'dd')}</span>
+             {reunioes.map(r => (
+               <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
+                  <div className="w-12 text-center">
+                    <div className="text-xs font-bold uppercase text-slate-400">{format(new Date(r.data_hora), 'MMM', { locale: ptBR })}</div>
+                    <div className="text-xl font-bold text-slate-800">{format(new Date(r.data_hora), 'dd')}</div>
                   </div>
                   <div className="flex-1">
-                     <h3 className="font-bold text-slate-800">{r.titulo}</h3>
-                     <p className="text-sm text-slate-500 flex items-center gap-2">
-                        <Clock size={14}/> {format(new Date(r.data_hora), 'HH:mm')} • {r.tipo_reuniao}
-                     </p>
-                  </div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-bold ${r.status === 'Realizada' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                     {r.status}
+                    <h4 className="font-bold text-slate-800">{r.titulo}</h4>
+                    <p className="text-xs text-slate-500">{r.responsavel ? `Resp: ${r.responsavel}` : 'Sem responsável'} • {format(new Date(r.data_hora), 'HH:mm')}</p>
                   </div>
                </div>
-            ))}
+             ))}
           </div>
         )}
-
       </div>
 
-      {/* --- MODAL DE CRIAÇÃO / EDIÇÃO --- */}
+      {/* --- MODAL WIDE (GRANDE) --- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
-            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="font-bold text-lg text-slate-800">{editingReuniao ? 'Editar Reunião' : 'Agendar Reunião'}</h3>
-              <button onClick={() => setIsModalOpen(false)}><X className="text-slate-400 hover:text-red-500"/></button>
-            </div>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95">
             
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Título</label>
-                <input required className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
-                  value={formData.titulo} onChange={e => setFormData({...formData, titulo: e.target.value})} placeholder="Ex: DBO Operacional" />
+            {/* Header do Modal */}
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center shrink-0">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                {editingReuniao ? 'Editar Reunião' : 'Nova Reunião'}
+              </h2>
+              <div className="flex gap-2">
+                {/* Abas */}
+                <div className="flex bg-slate-200 p-1 rounded-lg mr-4">
+                    <button onClick={() => setActiveTab('detalhes')} className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'detalhes' ? 'bg-white shadow text-blue-700' : 'text-slate-500'}`}>Detalhes</button>
+                    <button onClick={() => setActiveTab('ata')} className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'ata' ? 'bg-white shadow text-blue-700' : 'text-slate-500'}`}>Ata / Pauta</button>
+                </div>
+                <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-200 rounded-full"><X size={20} className="text-slate-500"/></button>
               </div>
+            </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Data</label>
-                   <input type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                     value={formData.data} onChange={e => setFormData({...formData, data: e.target.value})} />
-                </div>
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hora</label>
-                   <input type="time" required className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                     value={formData.hora} onChange={e => setFormData({...formData, hora: e.target.value})} />
-                </div>
-              </div>
+            {/* Corpo do Modal (Scrollável) */}
+            <form onSubmit={handleSubmit} className="flex-1 flex flex-col md:flex-row overflow-hidden">
+                
+                {/* COLUNA ESQUERDA: Detalhes */}
+                <div className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${activeTab === 'ata' ? 'hidden md:block' : ''}`}>
+                    <div className="space-y-6 max-w-lg mx-auto">
+                        
+                        <div>
+                            <label className="label-form">Título da Reunião</label>
+                            <input required className="input-form text-lg font-bold" value={formData.titulo} onChange={e => setFormData({...formData, titulo: e.target.value})} placeholder="Ex: Reunião Mensal de Resultados" />
+                        </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo / Série</label>
-                   <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm"
-                     value={formData.tipo_reuniao} onChange={e => setFormData({...formData, tipo_reuniao: e.target.value})} placeholder="Ex: Mensal" />
-                </div>
-                <div>
-                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cor</label>
-                   <input type="color" className="w-full h-10 p-1 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer"
-                     value={formData.cor} onChange={e => setFormData({...formData, cor: e.target.value})} />
-                </div>
-              </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="label-form">Data</label>
+                                <input type="date" required className="input-form" value={formData.data} onChange={e => setFormData({...formData, data: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="label-form">Hora</label>
+                                <input type="time" required className="input-form" value={formData.hora} onChange={e => setFormData({...formData, hora: e.target.value})} />
+                            </div>
+                        </div>
 
-              {!editingReuniao && (
-                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                  <label className="block text-xs font-bold text-blue-800 uppercase mb-2 flex items-center gap-1"><Repeat size={12}/> Recorrência</label>
-                  <div className="flex gap-2">
-                    {['unica', 'semanal', 'quinzenal', 'mensal'].map(tipo => (
-                      <button 
-                        key={tipo}
-                        type="button"
-                        onClick={() => setFormData({...formData, recorrencia: tipo})}
-                        className={`px-3 py-1.5 text-xs font-medium rounded capitalize border transition-all ${formData.recorrencia === tipo ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
-                      >
-                        {tipo}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-blue-600 mt-2 italic">
-                    {formData.recorrencia !== 'unica' ? `O sistema criará ocorrências automáticas para os próximos meses.` : 'Apenas uma reunião será criada.'}
-                  </p>
-                </div>
-              )}
+                        <div>
+                            <label className="label-form">Responsável (Organizador)</label>
+                            <div className="relative">
+                                <User className="absolute left-3 top-3 text-slate-400" size={18} />
+                                <input className="input-form pl-10" value={formData.responsavel} onChange={e => setFormData({...formData, responsavel: e.target.value})} placeholder="Quem está liderando?" />
+                            </div>
+                        </div>
 
-              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg active:scale-[0.98] transition-all">
-                {editingReuniao ? 'Salvar Alterações' : 'Agendar Reunião'}
-              </button>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="label-form">Tipo / Categoria</label>
+                                <input className="input-form" value={formData.tipo_reuniao} onChange={e => setFormData({...formData, tipo_reuniao: e.target.value})} list="tipos" />
+                                <datalist id="tipos">
+                                    <option value="Operacional" /><option value="Estratégica" /><option value="Feedback" /><option value="Treinamento" />
+                                </datalist>
+                            </div>
+                            <div>
+                                <label className="label-form">Cor na Agenda</label>
+                                <div className="flex items-center gap-2 h-11">
+                                    <input type="color" className="w-10 h-10 rounded border-none cursor-pointer" value={formData.cor} onChange={e => setFormData({...formData, cor: e.target.value})} />
+                                    <span className="text-xs text-slate-400">Clique para escolher</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {!editingReuniao && (
+                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                <label className="label-form text-blue-800 flex items-center gap-2"><Repeat size={14}/> Recorrência</label>
+                                <div className="flex gap-2 mt-2">
+                                    {['unica', 'semanal', 'mensal'].map(t => (
+                                        <button key={t} type="button" onClick={() => setFormData({...formData, recorrencia: t})} className={`px-3 py-1 text-xs font-bold rounded uppercase ${formData.recorrencia === t ? 'bg-blue-600 text-white' : 'bg-white border text-slate-500'}`}>{t}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* COLUNA DIREITA: ATA / PAUTA */}
+                <div className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'}`}>
+                    <label className="label-form flex items-center gap-2 mb-2">
+                        <AlignLeft size={16}/> Ata da Reunião / Pauta
+                        <span className="text-xs font-normal text-slate-400 ml-auto">Markdown suportado</span>
+                    </label>
+                    <textarea 
+                        className="flex-1 w-full bg-white border border-slate-200 rounded-xl p-6 text-slate-700 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500 resize-none shadow-sm"
+                        placeholder="Digite aqui os tópicos discutidos, decisões tomadas e próximos passos..."
+                        value={formData.pauta}
+                        onChange={e => setFormData({...formData, pauta: e.target.value})}
+                    ></textarea>
+                </div>
+
             </form>
+
+            {/* Footer Ações */}
+            <div className="bg-white p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+                {editingReuniao && (
+                    <button type="button" className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4">
+                        <Trash2 size={16} /> Excluir
+                    </button>
+                )}
+                <button onClick={() => setIsModalOpen(false)} className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg">Cancelar</button>
+                <button onClick={handleSubmit} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2">
+                    <Save size={18}/> Salvar Reunião
+                </button>
+            </div>
+
           </div>
         </div>
       )}
+
+      {/* CSS Helper Local */}
+      <style>{`
+        .label-form { @apply block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wide; }
+        .input-form { @apply w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all; }
+      `}</style>
     </Layout>
   );
 }
