@@ -11,8 +11,8 @@ const GestaoAcoes = () => {
   
   // Estados dos Filtros
   const [filtroTexto, setFiltroTexto] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Aberta, Concluída
-  const [filtroResponsavel, setFiltroResponsavel] = useState('Todos');
+  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Pendente, Vencida, Concluída
+  const [filtroResponsavel, setFiltroResponsavel] = useState('Todos'); 
   const [filtroOrigem, setFiltroOrigem] = useState('Todas');
 
   // Listas para os Selects (Preenchidas dinamicamente)
@@ -23,7 +23,42 @@ const GestaoAcoes = () => {
     fetchAcoes();
   }, []);
 
-  const fetchAcoes = async () => {
+  // ------------------ REGRAS DE STATUS ------------------
+  const getStatusAcao = (acao) => {
+    if (!acao) return 'Pendente';
+
+    // Se já está marcada como concluída no banco, não discute
+    if (acao.status === 'Concluída') return 'Concluída';
+
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
+    if (acao.data_vencimento) {
+      const dt = new Date(acao.data_vencimento);
+      dt.setHours(0, 0, 0, 0);
+      if (dt < hoje) return 'Vencida';
+    }
+
+    return 'Pendente';
+  };
+
+  // regra: só pode concluir se tiver resultado preenchido e pelo menos 1 foto de conclusão
+  const podeConcluirAcao = (acao) => {
+    if (!acao) return false;
+    const temResultado = (acao.resultado || '').trim().length > 0;
+
+    // evidências de conclusão (campo novo); se não existir, trava
+    const evidenciasConclusao = Array.isArray(acao.fotos_conclusao)
+      ? acao.fotos_conclusao
+      : [];
+
+    const temEvidenciaConclusao = evidenciasConclusao.length > 0;
+
+    return temResultado && temEvidenciaConclusao && getStatusAcao(acao) !== 'Concluída';
+  };
+
+  // ------------------ BUSCA / CARGA ------------------
+  const fetchAcoes = async (idParaManterSelecionado = null) => {
     setLoading(true);
 
     const { data, error } = await supabase
@@ -41,9 +76,14 @@ const GestaoAcoes = () => {
     if (data) {
       setAcoes(data);
 
-      // Define uma ação selecionada inicial se ainda não houver
-      if (!acaoSelecionada && data.length > 0) {
-        setAcaoSelecionada(data[0]);
+      // Mantém a seleção se foi passada
+      if (idParaManterSelecionado) {
+        const encontrada = data.find(a => a.id === idParaManterSelecionado);
+        setAcaoSelecionada(encontrada || null);
+      } else if (acaoSelecionada) {
+        // se já havia uma ação selecionada, tenta atualizar a mesma
+        const encontrada = data.find(a => a.id === acaoSelecionada.id);
+        setAcaoSelecionada(encontrada || null);
       }
 
       const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
@@ -56,31 +96,27 @@ const GestaoAcoes = () => {
   };
 
   const handleConcluir = async (id) => {
-    if (!confirm("Marcar ação como concluída?")) return;
+    if (!confirm('Marcar ação como concluída?')) return;
+
     await supabase
       .from('acoes')
       .update({ status: 'Concluída', data_conclusao: new Date().toISOString() })
       .eq('id', id);
-    await fetchAcoes();
+
+    await fetchAcoes(id);
   };
 
-  // regra: só pode concluir se tiver resultado preenchido e pelo menos 1 foto
-  const podeConcluirAcao = (acao) => {
-    if (!acao) return false;
-    const temResultado = (acao.resultado || '').trim().length > 0;
-    const temEvidencia = Array.isArray(acao.fotos) && acao.fotos.length > 0;
-    return temResultado && temEvidencia && acao.status !== 'Concluída';
-  };
-
-  // Lógica de Filtragem
+  // ------------------ FILTRAGEM ------------------
   const acoesFiltradas = useMemo(() => {
     return acoes.filter(acao => {
+      const statusCalculado = getStatusAcao(acao);
+
       const matchTexto = (acao.descricao || '')
         .toLowerCase()
         .includes(filtroTexto.toLowerCase());
       
       const matchStatus =
-        filtroStatus === 'Todas' ? true : acao.status === filtroStatus;
+        filtroStatus === 'Todas' ? true : statusCalculado === filtroStatus;
 
       const matchResp =
         filtroResponsavel === 'Todos' ? true : acao.responsavel === filtroResponsavel;
@@ -92,6 +128,22 @@ const GestaoAcoes = () => {
     });
   }, [acoes, filtroTexto, filtroStatus, filtroResponsavel, filtroOrigem]);
 
+  // ------------------ CARDS RESUMO ------------------
+  const cardsResumo = useMemo(() => {
+    let pendente = 0;
+    let vencida = 0;
+    let concluida = 0;
+
+    acoesFiltradas.forEach(a => {
+      const s = getStatusAcao(a);
+      if (s === 'Concluída') concluida++;
+      else if (s === 'Vencida') vencida++;
+      else pendente++;
+    });
+
+    return { pendente, vencida, concluida };
+  }, [acoesFiltradas]);
+
   const acaoDetalhe = acaoSelecionada;
   const podeConcluirSelecionada = podeConcluirAcao(acaoDetalhe);
 
@@ -100,10 +152,32 @@ const GestaoAcoes = () => {
       <div className="p-8 h-full font-sans flex flex-col bg-gray-50">
         
         {/* Header */}
-        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-800">Central de Ações e Pendências</h1>
           <div className="text-sm text-gray-500">
             Total: <b>{acoesFiltradas.length}</b> ações encontradas
+          </div>
+        </div>
+
+        {/* Cards Resumo */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+          <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+            <div className="text-xs text-yellow-700 font-bold uppercase">Pendente</div>
+            <div className="text-2xl font-bold text-yellow-900">
+              {cardsResumo.pendente}
+            </div>
+          </div>
+          <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
+            <div className="text-xs text-red-700 font-bold uppercase">Vencida</div>
+            <div className="text-2xl font-bold text-red-900">
+              {cardsResumo.vencida}
+            </div>
+          </div>
+          <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
+            <div className="text-xs text-green-700 font-bold uppercase">Concluída</div>
+            <div className="text-2xl font-bold text-green-900">
+              {cardsResumo.concluida}
+            </div>
           </div>
         </div>
 
@@ -134,7 +208,8 @@ const GestaoAcoes = () => {
               className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-100 outline-none"
             >
               <option value="Todas">Todos</option>
-              <option value="Aberta">Aberta</option>
+              <option value="Pendente">Pendente</option>
+              <option value="Vencida">Vencida</option>
               <option value="Concluída">Concluída</option>
             </select>
           </div>
@@ -201,8 +276,23 @@ const GestaoAcoes = () => {
                   </tr>
                 ) : (
                   acoesFiltradas.map(acao => {
-                    const temFotos = Array.isArray(acao.fotos) && acao.fotos.length > 0;
-                    const primeiraFoto = temFotos ? acao.fotos[0] : null;
+                    const statusCalculado = getStatusAcao(acao);
+
+                    // compat: fotos_acao / fotos_conclusao / fotos
+                    const evidenciasAcao = Array.isArray(acao.fotos_acao)
+                      ? acao.fotos_acao
+                      : Array.isArray(acao.fotos)
+                        ? acao.fotos
+                        : [];
+                    const evidenciasConclusao = Array.isArray(acao.fotos_conclusao)
+                      ? acao.fotos_conclusao
+                      : [];
+
+                    const temFotos = evidenciasAcao.length > 0 || evidenciasConclusao.length > 0;
+                    const primeiraFoto = temFotos
+                      ? (evidenciasConclusao[0] || evidenciasAcao[0])
+                      : null;
+
                     const podeConcluir = podeConcluirAcao(acao);
                     const dataBase = acao.data_criacao || acao.created_at;
 
@@ -217,12 +307,14 @@ const GestaoAcoes = () => {
                         <td className="p-4">
                           <span
                             className={`px-2.5 py-1 rounded text-[10px] uppercase font-bold border ${
-                              acao.status === 'Concluída'
+                              statusCalculado === 'Concluída'
                                 ? 'bg-green-50 text-green-700 border-green-200'
-                                : 'bg-red-50 text-red-700 border-red-200'
+                                : statusCalculado === 'Vencida'
+                                  ? 'bg-red-50 text-red-700 border-red-200'
+                                  : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                             }`}
                           >
-                            {acao.status || 'Aberta'}
+                            {statusCalculado}
                           </span>
                         </td>
                         <td className="p-4 font-medium text-gray-800">
@@ -258,7 +350,7 @@ const GestaoAcoes = () => {
                           )}
                         </td>
                         <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                          {acao.status !== 'Concluída' && (
+                          {statusCalculado !== 'Concluída' && (
                             <button
                               onClick={() => podeConcluir && handleConcluir(acao.id)}
                               disabled={!podeConcluir}
@@ -270,7 +362,7 @@ const GestaoAcoes = () => {
                               title={
                                 podeConcluir
                                   ? 'Concluir ação'
-                                  : 'Só é possível concluir com resultado preenchido e evidência'
+                                  : 'Só é possível concluir com conclusão preenchida e evidência da conclusão'
                               }
                             >
                               <CheckCircle size={20} />
@@ -309,7 +401,9 @@ const GestaoAcoes = () => {
                       <strong className="font-semibold text-gray-600">Criação:</strong>{' '}
                       {acaoDetalhe.data_criacao
                         ? new Date(acaoDetalhe.data_criacao).toLocaleString()
-                        : '-'}
+                        : acaoDetalhe.created_at
+                          ? new Date(acaoDetalhe.created_at).toLocaleString()
+                          : '-'}
                     </span>
                     <span>
                       <strong className="font-semibold text-gray-600">Vencimento:</strong>{' '}
@@ -334,32 +428,40 @@ const GestaoAcoes = () => {
 
                   <div className="mt-3">
                     <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                      Evidências
+                      Evidências (registro da ação)
                     </span>
-                    {Array.isArray(acaoDetalhe.fotos) && acaoDetalhe.fotos.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {acaoDetalhe.fotos.map((url, idx) => (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                            title={`Abrir evidência ${idx + 1}`}
-                          >
-                            <img
-                              src={url}
-                              alt={`Evidência ${idx + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 mt-1">
-                        Nenhuma evidência anexada à ação.
-                      </p>
-                    )}
+                    {(() => {
+                      const evidenciasAcao = Array.isArray(acaoDetalhe.fotos_acao)
+                        ? acaoDetalhe.fotos_acao
+                        : Array.isArray(acaoDetalhe.fotos)
+                          ? acaoDetalhe.fotos
+                          : [];
+
+                      return evidenciasAcao.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {evidenciasAcao.map((url, idx) => (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
+                              title={`Abrir evidência ${idx + 1}`}
+                            >
+                              <img
+                                src={url}
+                                alt={`Evidência ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 mt-1">
+                          Nenhuma evidência anexada à ação.
+                        </p>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -385,36 +487,42 @@ const GestaoAcoes = () => {
                     <span className="text-[11px] font-semibold text-gray-400 uppercase">
                       Evidências do que foi feito
                     </span>
-                    {Array.isArray(acaoDetalhe.fotos) && acaoDetalhe.fotos.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {acaoDetalhe.fotos.map((url, idx) => (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                            title={`Abrir evidência ${idx + 1}`}
-                          >
-                            <img
-                              src={url}
-                              alt={`Evidência ${idx + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 mt-1">
-                        Nenhuma evidência vinculada à conclusão.
-                      </p>
-                    )}
+                    {(() => {
+                      const evidenciasConclusao = Array.isArray(acaoDetalhe.fotos_conclusao)
+                        ? acaoDetalhe.fotos_conclusao
+                        : [];
+
+                      return evidenciasConclusao.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {evidenciasConclusao.map((url, idx) => (
+                            <a
+                              key={idx}
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
+                              title={`Abrir evidência de conclusão ${idx + 1}`}
+                            >
+                              <img
+                                src={url}
+                                alt={`Evidência de conclusão ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 mt-1">
+                          Nenhuma evidência vinculada à conclusão.
+                        </p>
+                      );
+                    })()}
                   </div>
 
                   <div className="pt-3 border-t border-gray-100 flex justify-end">
-                    {acaoDetalhe.status === 'Concluída' ? (
+                    {getStatusAcao(acaoDetalhe) === 'Concluída' ? (
                       <span className="text-xs font-semibold text-green-600">
-                        Ação já finalizada em fluxo anterior.
+                        Ação já finalizada.
                       </span>
                     ) : (
                       <button
