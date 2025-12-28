@@ -6,34 +6,37 @@ import Inicio from "./pages/Inicio";
 // Módulos Táticos
 import Operacao from "./pages/Operacao";
 import Moov from "./pages/Moov";
-import Manutencao from "./pages/Manutencao"; // <--- IMPORTAR AQUI
+import Manutencao from "./pages/Manutencao";
 
-// Outras Páginas
-import ReunioesPeriodicas from "./pages/ReunioesPeriodicas";
+// Reuniões & Ações (Novo Módulo)
+import ReunioesCalendario from "./pages/ReunioesCalendario";
 import DetalheReuniao from "./pages/DetalheReuniao";
+import GestaoAcoes from "./pages/GestaoAcoes";
+
+// Configurações
 import Configuracoes from "./pages/Configuracoes";
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Home */}
         <Route path="/" element={<Inicio />} />
         
-        {/* --- MÓDULO OPERAÇÃO --- */}
+        {/* --- MÓDULOS DE ÁREAS --- */}
         <Route path="/planejamento/operacao" element={<Operacao />} />
-
-        {/* --- MÓDULO MOOV --- */}
         <Route path="/moov" element={<Moov />} />
-
-        {/* --- MÓDULO MANUTENÇÃO (NOVO) --- */}
         <Route path="/manutencao" element={<Manutencao />} />
 
-        {/* --- ROTAS SECUNDÁRIAS --- */}
-        <Route path="/reunioes-periodicas" element={<ReunioesPeriodicas />} />
+        {/* --- MÓDULO REUNIÕES (NOVO) --- */}
+        <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
         <Route path="/reunioes/:id" element={<DetalheReuniao />} />
+        <Route path="/gestao-acoes" element={<GestaoAcoes />} />
+
+        {/* --- CONFIGURAÇÕES GERAIS --- */}
         <Route path="/configuracoes" element={<Configuracoes />} />
         
-        {/* Redirecionamento Padrão */}
+        {/* Redirecionamento de segurança */}
         <Route path="/planejamento-tatico" element={<Inicio />} /> 
       </Routes>
     </BrowserRouter>
