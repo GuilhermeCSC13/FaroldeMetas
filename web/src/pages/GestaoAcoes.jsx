@@ -6,6 +6,8 @@ import { CheckCircle, ExternalLink, Search } from 'lucide-react';
 const GestaoAcoes = () => {
   const [acoes, setAcoes] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const [acaoSelecionada, setAcaoSelecionada] = useState(null);
   
   // Estados dos Filtros
   const [filtroTexto, setFiltroTexto] = useState('');
@@ -38,7 +40,12 @@ const GestaoAcoes = () => {
 
     if (data) {
       setAcoes(data);
-      // Extrair valores únicos para os filtros (se no futuro tiver tipo_reuniao na tabela)
+
+      // Define uma ação selecionada inicial se ainda não houver
+      if (!acaoSelecionada && data.length > 0) {
+        setAcaoSelecionada(data[0]);
+      }
+
       const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
       const origens = [...new Set(data.map(item => item.tipo_reuniao).filter(Boolean))].sort();
       setListaResponsaveis(resps);
@@ -54,11 +61,12 @@ const GestaoAcoes = () => {
       .from('acoes')
       .update({ status: 'Concluída', data_conclusao: new Date().toISOString() })
       .eq('id', id);
-    fetchAcoes();
+    await fetchAcoes();
   };
 
   // regra: só pode concluir se tiver resultado preenchido e pelo menos 1 foto
   const podeConcluirAcao = (acao) => {
+    if (!acao) return false;
     const temResultado = (acao.resultado || '').trim().length > 0;
     const temEvidencia = Array.isArray(acao.fotos) && acao.fotos.length > 0;
     return temResultado && temEvidencia && acao.status !== 'Concluída';
@@ -67,26 +75,25 @@ const GestaoAcoes = () => {
   // Lógica de Filtragem
   const acoesFiltradas = useMemo(() => {
     return acoes.filter(acao => {
-      // 1. Texto (Descrição)
       const matchTexto = (acao.descricao || '')
         .toLowerCase()
         .includes(filtroTexto.toLowerCase());
       
-      // 2. Status
       const matchStatus =
         filtroStatus === 'Todas' ? true : acao.status === filtroStatus;
 
-      // 3. Responsável
       const matchResp =
         filtroResponsavel === 'Todos' ? true : acao.responsavel === filtroResponsavel;
 
-      // 4. Origem (se um dia tiver tipo_reuniao na tabela)
       const matchOrigem =
         filtroOrigem === 'Todas' ? true : acao.tipo_reuniao === filtroOrigem;
 
       return matchTexto && matchStatus && matchResp && matchOrigem;
     });
   }, [acoes, filtroTexto, filtroStatus, filtroResponsavel, filtroOrigem]);
+
+  const acaoDetalhe = acaoSelecionada;
+  const podeConcluirSelecionada = podeConcluirAcao(acaoDetalhe);
 
   return (
     <Layout>
@@ -147,7 +154,7 @@ const GestaoAcoes = () => {
             </select>
           </div>
 
-          {/* Filtro Origem (por enquanto vai ficar vazio até ligarmos com a tabela de reuniões) */}
+          {/* Filtro Origem */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem (Reunião)</label>
             <select 
@@ -163,8 +170,9 @@ const GestaoAcoes = () => {
           </div>
         </div>
 
-        {/* Tabela */}
+        {/* Tabela + Detalhes */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col">
+          {/* Tabela */}
           <div className="overflow-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-semibold border-b border-gray-200 sticky top-0">
@@ -199,7 +207,13 @@ const GestaoAcoes = () => {
                     const dataBase = acao.data_criacao || acao.created_at;
 
                     return (
-                      <tr key={acao.id} className="hover:bg-blue-50/30 transition-colors group">
+                      <tr
+                        key={acao.id}
+                        className={`hover:bg-blue-50/30 transition-colors group cursor-pointer ${
+                          acaoSelecionada?.id === acao.id ? 'bg-blue-50/40' : ''
+                        }`}
+                        onClick={() => setAcaoSelecionada(acao)}
+                      >
                         <td className="p-4">
                           <span
                             className={`px-2.5 py-1 rounded text-[10px] uppercase font-bold border ${
@@ -228,7 +242,7 @@ const GestaoAcoes = () => {
                         <td className="p-4 text-gray-500 text-xs">
                           {dataBase ? new Date(dataBase).toLocaleDateString() : '-'}
                         </td>
-                        <td className="p-4 text-center">
+                        <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                           {primeiraFoto ? (
                             <a
                               href={primeiraFoto}
@@ -243,31 +257,24 @@ const GestaoAcoes = () => {
                             <span className="text-gray-300">-</span>
                           )}
                         </td>
-                        <td className="p-4 text-center">
+                        <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                           {acao.status !== 'Concluída' && (
-                            <>
-                              <button
-                                onClick={() => podeConcluir && handleConcluir(acao.id)}
-                                disabled={!podeConcluir}
-                                className={`p-1.5 rounded-full transition-all ${
-                                  podeConcluir
-                                    ? 'text-gray-400 hover:text-green-600 hover:bg-green-50'
-                                    : 'text-gray-300 cursor-not-allowed'
-                                }`}
-                                title={
-                                  podeConcluir
-                                    ? 'Concluir ação'
-                                    : 'Só é possível concluir com resultado preenchido e evidência'
-                                }
-                              >
-                                <CheckCircle size={20} />
-                              </button>
-                              {!podeConcluir && (
-                                <span className="block text-[10px] text-red-400 mt-1">
-                                  Preencha resultado e evidência
-                                </span>
-                              )}
-                            </>
+                            <button
+                              onClick={() => podeConcluir && handleConcluir(acao.id)}
+                              disabled={!podeConcluir}
+                              className={`p-1.5 rounded-full transition-all ${
+                                podeConcluir
+                                  ? 'text-gray-400 hover:text-green-600 hover:bg-green-50'
+                                  : 'text-gray-300 cursor-not-allowed'
+                              }`}
+                              title={
+                                podeConcluir
+                                  ? 'Concluir ação'
+                                  : 'Só é possível concluir com resultado preenchido e evidência'
+                              }
+                            >
+                              <CheckCircle size={20} />
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -277,6 +284,159 @@ const GestaoAcoes = () => {
               </tbody>
             </table>
           </div>
+
+          {/* Detalhes da Ação */}
+          {acaoDetalhe && (
+            <div className="border-t border-gray-200 bg-gray-50 px-6 py-5 space-y-6">
+              
+              {/* PARTE DE CIMA - AÇÃO */}
+              <div>
+                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
+                  Detalhes da Ação
+                </h3>
+                <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
+                  <div>
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                      Ação
+                    </span>
+                    <p className="text-sm font-semibold text-gray-800">
+                      {acaoDetalhe.descricao}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 text-[11px] text-gray-500 mt-1">
+                    <span>
+                      <strong className="font-semibold text-gray-600">Criação:</strong>{' '}
+                      {acaoDetalhe.data_criacao
+                        ? new Date(acaoDetalhe.data_criacao).toLocaleString()
+                        : '-'}
+                    </span>
+                    <span>
+                      <strong className="font-semibold text-gray-600">Vencimento:</strong>{' '}
+                      {acaoDetalhe.data_vencimento
+                        ? new Date(acaoDetalhe.data_vencimento).toLocaleDateString()
+                        : '-'}
+                    </span>
+                    <span>
+                      <strong className="font-semibold text-gray-600">Responsável:</strong>{' '}
+                      {acaoDetalhe.responsavel || '-'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                      Observações
+                    </span>
+                    <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">
+                      {acaoDetalhe.observacao || 'Sem observações registradas.'}
+                    </p>
+                  </div>
+
+                  <div className="mt-3">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                      Evidências
+                    </span>
+                    {Array.isArray(acaoDetalhe.fotos) && acaoDetalhe.fotos.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {acaoDetalhe.fotos.map((url, idx) => (
+                          <a
+                            key={idx}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
+                            title={`Abrir evidência ${idx + 1}`}
+                          >
+                            <img
+                              src={url}
+                              alt={`Evidência ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Nenhuma evidência anexada à ação.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* PARTE DE BAIXO - CONCLUSÃO */}
+              <div>
+                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
+                  Conclusão da Ação
+                </h3>
+                <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+                  <div>
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                      Observação do que foi realizado
+                    </span>
+                    <p className="text-sm text-gray-700 mt-1 whitespace-pre-line">
+                      {acaoDetalhe.resultado && acaoDetalhe.resultado.trim().length > 0
+                        ? acaoDetalhe.resultado
+                        : 'Ainda não foi registrada a conclusão desta ação.'}
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                      Evidências do que foi feito
+                    </span>
+                    {Array.isArray(acaoDetalhe.fotos) && acaoDetalhe.fotos.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {acaoDetalhe.fotos.map((url, idx) => (
+                          <a
+                            key={idx}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
+                            title={`Abrir evidência ${idx + 1}`}
+                          >
+                            <img
+                              src={url}
+                              alt={`Evidência ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Nenhuma evidência vinculada à conclusão.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 flex justify-end">
+                    {acaoDetalhe.status === 'Concluída' ? (
+                      <span className="text-xs font-semibold text-green-600">
+                        Ação já finalizada em fluxo anterior.
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          podeConcluirSelecionada && handleConcluir(acaoDetalhe.id)
+                        }
+                        disabled={!podeConcluirSelecionada}
+                        className={`px-5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${
+                          podeConcluirSelecionada
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                        }`}
+                      >
+                        <CheckCircle size={16} />
+                        Finalizar ação
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Layout>
