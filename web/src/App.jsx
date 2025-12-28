@@ -12,9 +12,10 @@ import Manutencao from "./pages/Manutencao";
 import ReunioesCalendario from "./pages/ReunioesCalendario";
 import DetalheReuniao from "./pages/DetalheReuniao";
 import GestaoAcoes from "./pages/GestaoAcoes";
+import CentralReunioes from "./pages/CentralReunioes"; // <--- NOVO IMPORT
 
 // Inteligência Artificial
-import Copiloto from "./pages/Copiloto"; // <--- NOVO IMPORT
+import Copiloto from "./pages/Copiloto";
 
 // Configurações
 import Configuracoes from "./pages/Configuracoes";
@@ -32,12 +33,13 @@ export default function App() {
         <Route path="/manutencao" element={<Manutencao />} />
 
         {/* --- MÓDULO REUNIÕES --- */}
+        <Route path="/central-reunioes" element={<CentralReunioes />} /> {/* <--- NOVA ROTA PRINCIPAL */}
         <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
         <Route path="/reunioes/:id" element={<DetalheReuniao />} />
         <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
         {/* --- COPILOTO IA --- */}
-        <Route path="/copiloto" element={<Copiloto />} /> {/* <--- NOVA ROTA */}
+        <Route path="/copiloto" element={<Copiloto />} />
 
         {/* --- CONFIGURAÇÕES GERAIS --- */}
         <Route path="/configuracoes" element={<Configuracoes />} />
