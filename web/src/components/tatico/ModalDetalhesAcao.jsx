@@ -29,7 +29,7 @@ const ModalDetalhesAcao = ({
 
   // Responsável (via tabela usuarios_sistema)
   const [responsavel, setResponsavel] = useState("");
-  const [responsavelId, setResponsavelId] = useState<string | null>(null);
+  const [responsavelId, setResponsavelId] = useState(null);
   const [listaUsuarios, setListaUsuarios] = useState([]);
   const [loadingUsuarios, setLoadingUsuarios] = useState(false);
 
@@ -95,7 +95,9 @@ const ModalDetalhesAcao = ({
         // tenta casar pelo nome para pré-selecionar.
         if (!acao.responsavel_id && acao.responsavel && data?.length) {
           const encontrado = data.find(
-            (u) => u.nome && u.nome.toLowerCase() === acao.responsavel.toLowerCase()
+            (u) =>
+              u.nome &&
+              u.nome.toLowerCase() === acao.responsavel.toLowerCase()
           );
           if (encontrado) {
             setResponsavelId(encontrado.id);
@@ -149,7 +151,7 @@ const ModalDetalhesAcao = ({
           ? await uploadArquivos(novosArquivosConclusao)
           : [];
 
-      const payload: any = {
+      const payload = {
         observacao: obsAcao,
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
@@ -457,7 +459,7 @@ const ModalDetalhesAcao = ({
             </div>
           </div>
 
-          {/* CONCLUSão */}
+          {/* CONCLUSÃO */}
           <div>
             <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
               Conclusão da ação
