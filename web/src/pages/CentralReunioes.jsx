@@ -8,7 +8,7 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, List, 
-  X, Repeat, User, AlignLeft, Clock, Save, Trash2
+  X, Repeat, User, AlignLeft, Save, Trash2
 } from 'lucide-react';
 import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 
@@ -20,7 +20,7 @@ export default function CentralReunioes() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
-  const [activeTab, setActiveTab] = useState('detalhes'); // 'detalhes' | 'ata'
+  const [activeTab, setActiveTab] = useState('detalhes'); 
   
   const [formData, setFormData] = useState({
     titulo: '', 
@@ -29,7 +29,7 @@ export default function CentralReunioes() {
     hora: '09:00', 
     cor: '#3B82F6', 
     responsavel: '',
-    pauta: '', // ATA
+    pauta: '', 
     recorrencia: 'unica'
   });
 
@@ -57,28 +57,34 @@ export default function CentralReunioes() {
   };
 
   const handleEdit = (reuniao) => {
-    const dt = new Date(reuniao.data_hora);
+    // CORREÇÃO DE FUSO: Usar parseISO garante que a string UTC do banco
+    // seja convertida corretamente para o horário local do navegador.
+    const dt = parseISO(reuniao.data_hora);
+    
     setFormData({
       titulo: reuniao.titulo,
       tipo_reuniao: reuniao.tipo_reuniao,
       data: format(dt, 'yyyy-MM-dd'),
-      hora: format(dt, 'HH:mm'), // Garante formato HH:mm para o input
+      hora: format(dt, 'HH:mm'), 
       cor: reuniao.cor,
       responsavel: reuniao.responsavel || '',
       pauta: reuniao.pauta || '',
       recorrencia: 'unica'
     });
     setEditingReuniao(reuniao);
-    setActiveTab('ata'); // Abre direto na Ata se for edição (opcional)
+    setActiveTab('ata');
     setIsModalOpen(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Constrói a data/hora correta combinando os inputs
-    // Importante: input type="date" retorna YYYY-MM-DD e type="time" HH:MM
-    const dataHoraIso = new Date(`${formData.data}T${formData.hora}:00`).toISOString();
+    // CORREÇÃO: Cria a data combinando Data + Hora explicitamente
+    // Isso cria um objeto Date com o fuso horário do seu computador (Brasil)
+    const dataCombined = new Date(`${formData.data}T${formData.hora}:00`);
+    
+    // Converte para ISO string (UTC) para o Supabase entender e salvar corretamente
+    const dataHoraIso = dataCombined.toISOString();
     
     const dados = {
       titulo: formData.titulo,
@@ -86,7 +92,7 @@ export default function CentralReunioes() {
       data_hora: dataHoraIso,
       cor: formData.cor,
       responsavel: formData.responsavel,
-      pauta: formData.pauta, // Salva o texto da ATA
+      pauta: formData.pauta,
       area_id: 4 
     };
 
@@ -149,14 +155,16 @@ export default function CentralReunioes() {
             {/* Grid */}
             <div className="grid grid-cols-7 grid-rows-5 flex-1">
               {calendarDays.map((day) => {
-                const dayMeetings = reunioes.filter(r => isSameDay(new Date(r.data_hora), day));
+                // CORREÇÃO: Usa parseISO para comparar corretamente o dia
+                const dayMeetings = reunioes.filter(r => isSameDay(parseISO(r.data_hora), day));
                 const isCurrent = isSameMonth(day, monthStart);
                 return (
                   <div key={day.toString()} onClick={() => onDateClick(day)} className={`border-r border-b border-slate-50 p-1 cursor-pointer hover:bg-blue-50/30 transition-colors flex flex-col gap-1 ${!isCurrent ? 'bg-slate-50/50 opacity-50' : ''}`}>
                     <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isSameDay(day, new Date()) ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{format(day, 'd')}</span>
                     {dayMeetings.map(m => (
                       <div key={m.id} onClick={(e) => { e.stopPropagation(); handleEdit(m); }} className="text-[10px] truncate px-1 rounded border-l-2 font-medium" style={{ borderLeftColor: m.cor, backgroundColor: m.cor + '15', color: '#475569' }}>
-                        {format(new Date(m.data_hora), 'HH:mm')} {m.titulo}
+                        {/* parseISO aqui também */}
+                        {format(parseISO(m.data_hora), 'HH:mm')} {m.titulo}
                       </div>
                     ))}
                   </div>
@@ -169,18 +177,21 @@ export default function CentralReunioes() {
         {/* --- VIEW: LISTA --- */}
         {view === 'list' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-4 custom-scrollbar">
-             {reunioes.map(r => (
-               <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
-                  <div className="w-12 text-center">
-                    <div className="text-xs font-bold uppercase text-slate-400">{format(new Date(r.data_hora), 'MMM', { locale: ptBR })}</div>
-                    <div className="text-xl font-bold text-slate-800">{format(new Date(r.data_hora), 'dd')}</div>
+             {reunioes.map(r => {
+                const dt = parseISO(r.data_hora);
+                return (
+                  <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
+                      <div className="w-12 text-center">
+                        <div className="text-xs font-bold uppercase text-slate-400">{format(dt, 'MMM', { locale: ptBR })}</div>
+                        <div className="text-xl font-bold text-slate-800">{format(dt, 'dd')}</div>
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-bold text-slate-800">{r.titulo}</h4>
+                        <p className="text-xs text-slate-500">{r.responsavel ? `Resp: ${r.responsavel}` : 'Sem responsável'} • {format(dt, 'HH:mm')}</p>
+                      </div>
                   </div>
-                  <div className="flex-1">
-                    <h4 className="font-bold text-slate-800">{r.titulo}</h4>
-                    <p className="text-xs text-slate-500">{r.responsavel ? `Resp: ${r.responsavel}` : 'Sem responsável'} • {format(new Date(r.data_hora), 'HH:mm')}</p>
-                  </div>
-               </div>
-             ))}
+               )
+             })}
           </div>
         )}
       </div>
