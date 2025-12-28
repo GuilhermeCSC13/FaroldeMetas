@@ -3,7 +3,7 @@ import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
 import { 
   Mic, Square, Loader2, Cpu, CheckCircle, Search, Calendar, Clock, ExternalLink, 
-  Plus, ListTodo, AlertTriangle, User, Trash2, Save
+  Plus, ListTodo, User, FileText
 } from 'lucide-react';
 import { getGeminiFlash } from '../services/gemini';
 import { useNavigate } from 'react-router-dom';
@@ -14,7 +14,7 @@ const Copiloto = () => {
   // --- ESTADOS GERAIS ---
   const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split('T')[0]);
   const [listaReunioes, setListaReunioes] = useState([]);
-  const [reuniaoSelecionada, setReuniaoSelecionada] = useState(null); // Objeto completo
+  const [reuniaoSelecionada, setReuniaoSelecionada] = useState(null);
   const [buscaTexto, setBuscaTexto] = useState('');
   const [loadingList, setLoadingList] = useState(false);
 
@@ -43,6 +43,7 @@ const Copiloto = () => {
   useEffect(() => {
     if (reuniaoSelecionada) {
       setPautaExistente(reuniaoSelecionada.pauta || null);
+      // Só busca ações se tiver um tipo definido, senão busca geral ou nada
       fetchAcoesDoTipo(reuniaoSelecionada.tipo_reuniao);
     } else {
       setPautaExistente(null);
@@ -65,7 +66,7 @@ const Copiloto = () => {
   // --- BUSCAS DE DADOS ---
   const fetchReunioesPorData = async () => {
     setLoadingList(true);
-    if (!isRecording) setReuniaoSelecionada(null); // Só limpa se NÃO estiver gravando
+    if (!isRecording) setReuniaoSelecionada(null); 
     try {
       const inicioDia = `${dataFiltro}T00:00:00`;
       const fimDia = `${dataFiltro}T23:59:59`;
@@ -87,20 +88,24 @@ const Copiloto = () => {
   };
 
   const fetchAcoesDoTipo = async (tipo) => {
-    if (!tipo) return;
+    // Se não tiver tipo, não busca para não dar erro
+    if (!tipo) {
+        setAcoesPendentes([]);
+        return;
+    }
+
     setLoadingAcoes(true);
     try {
-      // Busca ações que pertencem a reuniões do MESMO TIPO (Ex: DBO) e estão ABERTAS
-      // Isso exige um join manual ou filtro inteligente. 
-      // Aqui faremos via JS para simplificar se o banco não tiver relação direta configurada.
-      
       // 1. Pega IDs de reuniões desse tipo
-      const { data: idsReunioes } = await supabase
+      const { data: idsReunioes, error } = await supabase
         .from('reunioes')
         .select('id')
         .eq('tipo_reuniao', tipo);
-        
-      const listaIds = idsReunioes.map(r => r.id);
+      
+      if (error) throw error;
+
+      // CORREÇÃO: Adicionado (|| []) para garantir que não quebre se vier null
+      const listaIds = (idsReunioes || []).map(r => r.id);
 
       if (listaIds.length > 0) {
           const { data: acoes } = await supabase
@@ -111,9 +116,12 @@ const Copiloto = () => {
             .order('data_criacao', { ascending: false });
             
           setAcoesPendentes(acoes || []);
+      } else {
+          setAcoesPendentes([]);
       }
     } catch (e) {
       console.error("Erro ao buscar ações:", e);
+      setAcoesPendentes([]); // Garante lista vazia em caso de erro
     } finally {
       setLoadingAcoes(false);
     }
@@ -122,25 +130,35 @@ const Copiloto = () => {
   const salvarNovaAcao = async () => {
     if (!novaAcao.descricao || !reuniaoSelecionada) return;
     
-    const payload = {
-        descricao: novaAcao.descricao,
-        responsavel: novaAcao.responsavel || 'Geral',
-        reuniao_id: reuniaoSelecionada.id,
-        status: 'Aberta',
-        data_criacao: new Date().toISOString()
-    };
+    try {
+        const payload = {
+            descricao: novaAcao.descricao,
+            responsavel: novaAcao.responsavel || 'Geral',
+            reuniao_id: reuniaoSelecionada.id,
+            status: 'Aberta',
+            data_criacao: new Date().toISOString()
+        };
 
-    const { data, error } = await supabase.from('acoes').insert([payload]).select();
-    if (!error && data) {
-        setAcoesPendentes([data[0], ...acoesPendentes]);
-        setNovaAcao({ descricao: '', responsavel: '' });
+        const { data, error } = await supabase.from('acoes').insert([payload]).select();
+        if (error) throw error;
+
+        if (data) {
+            setAcoesPendentes([data[0], ...acoesPendentes]);
+            setNovaAcao({ descricao: '', responsavel: '' });
+        }
+    } catch (error) {
+        alert("Erro ao salvar ação: " + error.message);
     }
   };
 
   const concluirAcao = async (id) => {
-      const { error } = await supabase.from('acoes').update({ status: 'Concluída' }).eq('id', id);
-      if (!error) {
-          setAcoesPendentes(prev => prev.filter(a => a.id !== id));
+      try {
+          const { error } = await supabase.from('acoes').update({ status: 'Concluída' }).eq('id', id);
+          if (!error) {
+              setAcoesPendentes(prev => prev.filter(a => a.id !== id));
+          }
+      } catch (e) {
+          console.error(e);
       }
   };
 
@@ -199,7 +217,7 @@ const Copiloto = () => {
 
       const prompt = `
         Gere uma ATA DE REUNIÃO Executiva.
-        Contexto: Reunião do tipo "${reuniaoSelecionada.tipo_reuniao}" - Título: "${reuniaoSelecionada.titulo}".
+        Contexto: Reunião do tipo "${reuniaoSelecionada.tipo_reuniao || 'Geral'}" - Título: "${reuniaoSelecionada.titulo}".
         
         # ATA DE REUNIÃO
         ## 1. Resumo
@@ -220,6 +238,8 @@ const Copiloto = () => {
       }).eq('id', reuniaoSelecionada.id);
 
       setPautaExistente(texto);
+      // Atualiza lista local para mostrar o check verde
+      setListaReunioes(prev => prev.map(r => r.id === reuniaoSelecionada.id ? {...r, pauta: texto} : r));
       setStatusText("Salvo!");
     } catch (error) {
       alert("Erro: " + error.message);
@@ -229,6 +249,9 @@ const Copiloto = () => {
   };
 
   const formatTime = (s) => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
+
+  // Filtro visual
+  const listaFiltrada = listaReunioes.filter(r => r.titulo.toLowerCase().includes(buscaTexto.toLowerCase()));
 
   return (
     <Layout>
@@ -253,11 +276,11 @@ const Copiloto = () => {
                 </div>
             </div>
 
-            {/* Filtros (Bloqueados se gravando) */}
+            {/* Filtros */}
             <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 transition-opacity ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
                 <div className="bg-slate-800 border border-slate-700 rounded-lg flex items-center px-3 py-2">
                     <Calendar size={16} className="text-slate-400 mr-2" />
-                    <input type="date" className="bg-transparent text-white text-sm outline-none w-full" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
+                    <input type="date" className="bg-transparent text-white text-sm outline-none w-full cursor-pointer" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
                 </div>
                 <div className="bg-slate-800 border border-slate-700 rounded-lg flex items-center px-3 py-2">
                     <Search size={16} className="text-slate-400 mr-2" />
@@ -267,7 +290,9 @@ const Copiloto = () => {
 
             {/* Lista de Reuniões */}
             <div className={`flex-1 bg-slate-800/50 border border-slate-700 rounded-xl mb-6 overflow-y-auto custom-scrollbar ${isRecording ? 'opacity-80 pointer-events-none' : ''}`}>
-                {listaReunioes.length > 0 ? listaReunioes.map(r => (
+                {loadingList ? (
+                    <div className="flex items-center justify-center h-full text-slate-500 gap-2"><Loader2 className="animate-spin"/> Carregando...</div>
+                ) : listaFiltrada.length > 0 ? listaFiltrada.map(r => (
                     <div 
                         key={r.id} 
                         onClick={() => setReuniaoSelecionada(r)}
@@ -295,7 +320,7 @@ const Copiloto = () => {
             </div>
 
             {/* Área de Gravação */}
-            <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-center relative overflow-hidden">
+            <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-center relative overflow-hidden shrink-0">
                 {isProcessing ? (
                     <div className="flex flex-col items-center gap-2">
                         <Loader2 className="animate-spin text-blue-400"/>
@@ -340,7 +365,7 @@ const Copiloto = () => {
         {/* --- COLUNA DIREITA (40%) - AÇÕES E ATA --- */}
         <div className="w-5/12 bg-slate-800/30 flex flex-col border-l border-slate-800">
             
-            {/* Seção 1: Nova Ação Rápida */}
+            {/* Seção 1: Nova Ação */}
             <div className="p-6 border-b border-slate-800">
                 <h2 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center gap-2">
                     <ListTodo size={16}/> Ações da Reunião
@@ -348,7 +373,7 @@ const Copiloto = () => {
                 
                 <div className={`bg-slate-800 p-4 rounded-xl border border-slate-700 ${!reuniaoSelecionada ? 'opacity-50 pointer-events-none' : ''}`}>
                     <input 
-                        className="w-full bg-transparent border-b border-slate-600 pb-2 mb-3 text-sm outline-none focus:border-blue-500 transition-colors placeholder:text-slate-500"
+                        className="w-full bg-transparent border-b border-slate-600 pb-2 mb-3 text-sm outline-none focus:border-blue-500 transition-colors placeholder:text-slate-500 text-white"
                         placeholder="Descreva a ação..."
                         value={novaAcao.descricao}
                         onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})}
@@ -357,7 +382,7 @@ const Copiloto = () => {
                         <div className="flex-1 flex items-center bg-slate-900 rounded-lg px-3 border border-slate-700">
                             <User size={14} className="text-slate-500 mr-2"/>
                             <input 
-                                className="bg-transparent py-2 text-xs outline-none w-full"
+                                className="bg-transparent py-2 text-xs outline-none w-full text-white"
                                 placeholder="Responsável"
                                 value={novaAcao.responsavel}
                                 onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})}
@@ -370,11 +395,11 @@ const Copiloto = () => {
                 </div>
             </div>
 
-            {/* Seção 2: Lista de Ações (Filtro por Tipo) */}
+            {/* Seção 2: Lista de Ações */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-xs font-bold text-slate-400 uppercase">
-                        Pendências {reuniaoSelecionada ? `(${reuniaoSelecionada.tipo_reuniao})` : ''}
+                        Pendências {reuniaoSelecionada ? `(${reuniaoSelecionada.tipo_reuniao || 'Geral'})` : ''}
                     </h3>
                     <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-300">{acoesPendentes.length}</span>
                 </div>
@@ -385,11 +410,11 @@ const Copiloto = () => {
                     <div className="space-y-2">
                         {acoesPendentes.map(acao => (
                             <div key={acao.id} className="bg-slate-800 p-3 rounded-lg border border-slate-700 flex gap-3 hover:border-slate-500 transition-colors group">
-                                <button onClick={() => concluirAcao(acao.id)} className="mt-1 w-4 h-4 rounded border border-slate-500 hover:bg-green-500 hover:border-green-500 transition-colors"></button>
-                                <div className="flex-1">
-                                    <p className="text-sm text-slate-200 leading-tight">{acao.descricao}</p>
+                                <button onClick={() => concluirAcao(acao.id)} className="mt-1 w-4 h-4 rounded border border-slate-500 hover:bg-green-500 hover:border-green-500 transition-colors shrink-0"></button>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-slate-200 leading-tight truncate">{acao.descricao}</p>
                                     <div className="flex justify-between items-center mt-2">
-                                        <span className="text-[10px] text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full">{acao.responsavel}</span>
+                                        <span className="text-[10px] text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full truncate max-w-[100px]">{acao.responsavel}</span>
                                         <span className="text-[10px] text-slate-500">{new Date(acao.data_criacao).toLocaleDateString()}</span>
                                     </div>
                                 </div>
@@ -399,14 +424,14 @@ const Copiloto = () => {
                 ) : (
                     <div className="text-center text-slate-600 py-10 border-2 border-dashed border-slate-800 rounded-xl">
                         <CheckCircle size={24} className="mx-auto mb-2 opacity-20"/>
-                        <p className="text-xs">Nenhuma pendência para {reuniaoSelecionada?.tipo_reuniao || 'seleção'}.</p>
+                        <p className="text-xs">Nenhuma pendência.</p>
                     </div>
                 )}
             </div>
 
             {/* Seção 3: Preview da ATA */}
             {pautaExistente && (
-                <div className="h-1/3 border-t border-slate-800 bg-slate-900 p-6 overflow-hidden flex flex-col">
+                <div className="h-1/3 border-t border-slate-800 bg-slate-900 p-6 overflow-hidden flex flex-col shrink-0">
                     <h3 className="text-xs font-bold text-green-500 uppercase mb-2 flex items-center gap-2">
                         <FileText size={14}/> Ata Registrada
                     </h3>
