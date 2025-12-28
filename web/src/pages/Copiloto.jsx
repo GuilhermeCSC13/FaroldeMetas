@@ -314,6 +314,33 @@ const Copiloto = () => {
     return 'bg-slate-800 text-slate-300 border border-slate-600'; // Pendente ou null
   };
 
+  // -------- STATUS DAS AÇÕES (Pendente / Concluída / Vencida) --------
+  const getStatusAcao = (acao) => {
+    if (acao.status === 'Concluída') return 'Concluída';
+
+    if (acao.data_vencimento) {
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+      const dt = new Date(acao.data_vencimento);
+      dt.setHours(0, 0, 0, 0);
+
+      if (dt < hoje) return 'Vencida';
+    }
+
+    return 'Pendente';
+  };
+
+  const getBadgeClasseAcao = (status) => {
+    if (status === 'Concluída') {
+      return 'bg-green-900/60 text-green-300 border border-green-600';
+    }
+    if (status === 'Vencida') {
+      return 'bg-red-900/60 text-red-300 border border-red-600';
+    }
+    // Pendente
+    return 'bg-amber-900/60 text-amber-200 border border-amber-600';
+  };
+
   return (
     <Layout>
       <div className="h-screen bg-slate-900 text-white font-sans flex overflow-hidden">
@@ -485,13 +512,22 @@ const Copiloto = () => {
                           <CheckCircle size={14}/> Criadas Agora ({acoesCriadasAgora.length})
                         </h3>
                         <div className="space-y-2">
-                            {acoesCriadasAgora.map(acao => (
+                            {acoesCriadasAgora.map(acao => {
+                                const statusAcao = getStatusAcao(acao);
+                                return (
                                 <button
                                   key={acao.id}
                                   onClick={() => abrirDetalheAcao(acao)}
                                   className="w-full text-left bg-slate-800/50 border border-green-900/30 p-3 rounded-lg hover:bg-slate-800 transition-colors"
                                 >
-                                    <p className="text-sm text-slate-200">{acao.descricao}</p>
+                                    <div className="flex justify-between items-start gap-2">
+                                      <p className="text-sm text-slate-200 flex-1">{acao.descricao}</p>
+                                      <span
+                                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${getBadgeClasseAcao(statusAcao)}`}
+                                      >
+                                        {statusAcao}
+                                      </span>
+                                    </div>
                                     <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-500">
                                         <span className="flex items-center gap-1">
                                           <User size={10}/> {acao.responsavel}
@@ -508,7 +544,7 @@ const Copiloto = () => {
                                         )}
                                     </div>
                                 </button>
-                            ))}
+                            )})}
                         </div>
                     </div>
 
@@ -517,13 +553,22 @@ const Copiloto = () => {
                           <AlertTriangle size={14}/> Pendências Antigas ({acoesAnteriores.length})
                         </h3>
                         <div className="space-y-2">
-                            {acoesAnteriores.map(acao => (
+                            {acoesAnteriores.map(acao => {
+                                const statusAcao = getStatusAcao(acao);
+                                return (
                                 <button
                                   key={acao.id}
                                   onClick={() => abrirDetalheAcao(acao)}
                                   className="w-full text-left bg-slate-800/30 border border-slate-700 p-3 rounded-lg opacity-80 hover:bg-slate-800/60 transition-colors"
                                 >
-                                    <p className="text-sm text-slate-400">{acao.descricao}</p>
+                                    <div className="flex justify-between items-start gap-2">
+                                      <p className="text-sm text-slate-400 flex-1">{acao.descricao}</p>
+                                      <span
+                                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${getBadgeClasseAcao(statusAcao)}`}
+                                      >
+                                        {statusAcao}
+                                      </span>
+                                    </div>
                                     <div className="flex justify-between mt-1">
                                       <span className="text-[10px] text-slate-600">
                                         {new Date(acao.data_criacao).toLocaleDateString()}
@@ -533,7 +578,7 @@ const Copiloto = () => {
                                       </span>
                                     </div>
                                 </button>
-                            ))}
+                            )})}
                         </div>
                     </div>
                 </div>
