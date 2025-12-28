@@ -1,17 +1,41 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { CheckCircle, Clock, AlertCircle, Camera, ExternalLink } from 'lucide-react';
+import { CheckCircle, ExternalLink, Search, Filter, X } from 'lucide-react';
 
 const GestaoAcoes = () => {
   const [acoes, setAcoes] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Estados dos Filtros
+  const [filtroTexto, setFiltroTexto] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Aberta, Concluída
+  const [filtroResponsavel, setFiltroResponsavel] = useState('Todos');
+  const [filtroOrigem, setFiltroOrigem] = useState('Todas');
 
-  useEffect(() => { fetchAcoes(); }, []);
+  // Listas para os Selects (Preenchidas dinamicamente)
+  const [listaResponsaveis, setListaResponsaveis] = useState([]);
+  const [listaOrigens, setListaOrigens] = useState([]);
+
+  useEffect(() => {
+    fetchAcoes();
+  }, []);
 
   const fetchAcoes = async () => {
-    const { data } = await supabase.from('acoes').select('*, reunioes(titulo)').order('created_at', { ascending: false });
-    setAcoes(data || []);
+    setLoading(true);
+    const { data } = await supabase
+      .from('acoes')
+      .select('*, reunioes(titulo)')
+      .order('created_at', { ascending: false });
+    
+    if (data) {
+      setAcoes(data);
+      // Extrair valores únicos para os filtros
+      const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
+      const origens = [...new Set(data.map(item => item.tipo_reuniao).filter(Boolean))].sort();
+      setListaResponsaveis(resps);
+      setListaOrigens(origens);
+    }
     setLoading(false);
   };
 
@@ -21,57 +45,178 @@ const GestaoAcoes = () => {
     fetchAcoes();
   };
 
+  // Lógica de Filtragem
+  const acoesFiltradas = useMemo(() => {
+    return acoes.filter(acao => {
+      // 1. Texto (Descrição)
+      const matchTexto = acao.descricao.toLowerCase().includes(filtroTexto.toLowerCase());
+      
+      // 2. Status
+      const matchStatus = filtroStatus === 'Todas' ? true : acao.status === filtroStatus;
+
+      // 3. Responsável
+      const matchResp = filtroResponsavel === 'Todos' ? true : acao.responsavel === filtroResponsavel;
+
+      // 4. Origem (Tipo Reunião)
+      const matchOrigem = filtroOrigem === 'Todas' ? true : acao.tipo_reuniao === filtroOrigem;
+
+      return matchTexto && matchStatus && matchResp && matchOrigem;
+    });
+  }, [acoes, filtroTexto, filtroStatus, filtroResponsavel, filtroOrigem]);
+
+  const limparFiltros = () => {
+    setFiltroTexto('');
+    setFiltroStatus('Todas');
+    setFiltroResponsavel('Todos');
+    setFiltroOrigem('Todas');
+  };
+
   return (
     <Layout>
-      <div className="p-8 h-full font-sans">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Central de Ações e Pendências</h1>
+      <div className="p-8 h-full font-sans flex flex-col bg-gray-50">
         
-        <div className="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-gray-500 uppercase text-xs">
-                    <tr>
-                        <th className="p-4">Status</th>
-                        <th className="p-4">Descrição</th>
-                        <th className="p-4">Responsável</th>
-                        <th className="p-4">Origem</th>
-                        <th className="p-4">Evidência</th>
-                        <th className="p-4 text-center">Ações</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                    {acoes.map(acao => (
-                        <tr key={acao.id} className="hover:bg-gray-50">
-                            <td className="p-4">
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                    acao.status === 'Concluída' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                }`}>
-                                    {acao.status}
-                                </span>
-                            </td>
-                            <td className="p-4 font-medium text-gray-800">{acao.descricao}</td>
-                            <td className="p-4 flex items-center gap-2">
-                                <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-xs font-bold text-blue-700">
-                                    {acao.responsavel.charAt(0)}
-                                </div>
-                                {acao.responsavel}
-                            </td>
-                            <td className="p-4 text-gray-500 text-xs">{acao.reunioes?.titulo || 'N/A'}</td>
-                            <td className="p-4">
-                                {acao.evidencia_url ? (
-                                    <a href={acao.evidencia_url} target="_blank" className="text-blue-600 hover:underline flex items-center gap-1"><ExternalLink size={14}/> Ver</a>
-                                ) : <span className="text-gray-300">-</span>}
-                            </td>
-                            <td className="p-4 text-center">
-                                {acao.status !== 'Concluída' && (
-                                    <button onClick={() => handleConcluir(acao.id)} className="text-green-600 hover:bg-green-50 p-2 rounded-full" title="Concluir">
-                                        <CheckCircle size={18} />
-                                    </button>
-                                )}
-                            </td>
-                        </tr>
+        {/* Header */}
+        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-800">Central de Ações e Pendências</h1>
+            <div className="text-sm text-gray-500">
+                Total: <b>{acoesFiltradas.length}</b> ações encontradas
+            </div>
+        </div>
+
+        {/* Barra de Filtros */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            
+            {/* Busca Texto */}
+            <div className="col-span-2">
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Buscar Descrição</label>
+                <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-gray-400" size={16} />
+                    <input 
+                        type="text"
+                        value={filtroTexto}
+                        onChange={(e) => setFiltroTexto(e.target.value)}
+                        placeholder="Digite para buscar..."
+                        className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-100 outline-none"
+                    />
+                </div>
+            </div>
+
+            {/* Filtro Status */}
+            <div>
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Status</label>
+                <select 
+                    value={filtroStatus}
+                    onChange={(e) => setFiltroStatus(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-100 outline-none"
+                >
+                    <option value="Todas">Todos</option>
+                    <option value="Aberta">Aberta</option>
+                    <option value="Concluída">Concluída</option>
+                </select>
+            </div>
+
+            {/* Filtro Responsável */}
+            <div>
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Responsável</label>
+                <select 
+                    value={filtroResponsavel}
+                    onChange={(e) => setFiltroResponsavel(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-100 outline-none"
+                >
+                    <option value="Todos">Todos</option>
+                    {listaResponsaveis.map(resp => (
+                        <option key={resp} value={resp}>{resp}</option>
                     ))}
-                </tbody>
-            </table>
+                </select>
+            </div>
+
+            {/* Filtro Origem */}
+            <div>
+                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem (Reunião)</label>
+                <select 
+                    value={filtroOrigem}
+                    onChange={(e) => setFiltroOrigem(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-100 outline-none"
+                >
+                    <option value="Todas">Todas</option>
+                    {listaOrigens.map(origem => (
+                        <option key={origem} value={origem}>{origem}</option>
+                    ))}
+                </select>
+            </div>
+        </div>
+
+        {/* Tabela */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col">
+            <div className="overflow-auto">
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-50 text-gray-500 uppercase text-xs font-semibold border-b border-gray-200 sticky top-0">
+                        <tr>
+                            <th className="p-4 w-24">Status</th>
+                            <th className="p-4">Descrição</th>
+                            <th className="p-4 w-48">Responsável</th>
+                            <th className="p-4 w-48">Origem</th>
+                            <th className="p-4 w-32">Data</th>
+                            <th className="p-4 w-24 text-center">Evidência</th>
+                            <th className="p-4 w-20 text-center">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {loading ? (
+                            <tr><td colSpan="7" className="p-10 text-center text-gray-400">Carregando...</td></tr>
+                        ) : acoesFiltradas.length === 0 ? (
+                            <tr><td colSpan="7" className="p-10 text-center text-gray-400">Nenhuma ação encontrada.</td></tr>
+                        ) : (
+                            acoesFiltradas.map(acao => (
+                                <tr key={acao.id} className="hover:bg-blue-50/30 transition-colors group">
+                                    <td className="p-4">
+                                        <span className={`px-2.5 py-1 rounded text-[10px] uppercase font-bold border ${
+                                            acao.status === 'Concluída' 
+                                            ? 'bg-green-50 text-green-700 border-green-200' 
+                                            : 'bg-red-50 text-red-700 border-red-200'
+                                        }`}>
+                                            {acao.status}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 font-medium text-gray-800">{acao.descricao}</td>
+                                    <td className="p-4">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center text-xs font-bold text-gray-600 uppercase border border-gray-200">
+                                                {acao.responsavel.charAt(0)}
+                                            </div>
+                                            <span className="text-gray-600">{acao.responsavel}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-gray-500 text-xs font-mono bg-gray-50/50 rounded px-2">
+                                        {acao.tipo_reuniao || 'Geral'}
+                                    </td>
+                                    <td className="p-4 text-gray-500 text-xs">
+                                        {new Date(acao.created_at).toLocaleDateString()}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        {acao.evidencia_url ? (
+                                            <a href={acao.evidencia_url} target="_blank" className="text-blue-600 hover:text-blue-800 flex justify-center" title="Ver Evidência">
+                                                <ExternalLink size={16}/>
+                                            </a>
+                                        ) : <span className="text-gray-300">-</span>}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        {acao.status !== 'Concluída' && (
+                                            <button 
+                                                onClick={() => handleConcluir(acao.id)} 
+                                                className="text-gray-400 hover:text-green-600 hover:bg-green-50 p-1.5 rounded-full transition-all" 
+                                                title="Concluir"
+                                            >
+                                                <CheckCircle size={20} />
+                                            </button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </div>
       </div>
     </Layout>
