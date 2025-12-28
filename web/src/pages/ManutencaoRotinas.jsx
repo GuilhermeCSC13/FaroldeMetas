@@ -72,6 +72,8 @@ const ManutencaoRotinas = () => {
           <thead className="sticky top-0 z-20 shadow-sm">
             <tr className="bg-[#d9ead3] text-gray-900 font-bold text-center border-b border-gray-400 uppercase">
               <th className="p-3 border-r border-gray-400 w-64 sticky left-0 bg-[#d9ead3] z-10 text-left pl-4">Descrição</th>
+              <th className="p-3 border-r border-gray-400 w-16">Alvo</th>
+              <th className="p-3 border-r border-gray-400 w-10">Tipo</th>
               {MESES.map(mes => <th key={mes.id} className="p-3 border-r border-gray-400 min-w-[70px]">{mes.label}</th>)}
             </tr>
           </thead>
@@ -81,6 +83,12 @@ const ManutencaoRotinas = () => {
                 <td className="p-2 border-r border-gray-300 text-left font-bold text-gray-800 sticky left-0 bg-[#f4fce8] z-10">
                    {row.indicador}
                 </td>
+                <td className="p-2 border-r border-gray-300 bg-[#d9ead3]/50 text-center font-bold">
+                   {/* Mostra o alvo da rotina */}
+                   {row.meses[1]?.meta ? Number(row.meses[1].meta).toFixed(row.formato === 'percent' ? 0 : 2) : '-'}
+                   {row.formato === 'percent' ? '%' : ''}
+                </td>
+                <td className="p-2 border-r border-gray-300 text-center font-mono text-[9px]">{row.tipo_comparacao}</td>
                 
                 {MESES.map(mes => {
                   const dados = row.meses[mes.id];
@@ -93,11 +101,6 @@ const ManutencaoRotinas = () => {
                             defaultValue={dados.realizado}
                             onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
                          />
-                         {dados.meta && (
-                           <div className="absolute bottom-1 right-1 text-[8px] text-gray-500 font-medium opacity-60 flex items-center gap-0.5 pointer-events-none">
-                              <Target size={6} /> {Number(dados.meta).toFixed(row.formato === 'percent' ? 0 : 0)}
-                           </div>
-                        )}
                       </div>
                     </td>
                   );
