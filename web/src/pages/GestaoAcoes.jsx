@@ -23,10 +23,10 @@ const GestaoAcoes = () => {
 
   const fetchAcoes = async () => {
     setLoading(true);
+
     const { data, error } = await supabase
       .from('acoes')
-      // pega também dados da reunião para origem
-      .select('*, reunioes ( titulo, tipo_reuniao )')
+      .select('*')
       .order('data_criacao', { ascending: false });
 
     if (error) {
@@ -35,23 +35,16 @@ const GestaoAcoes = () => {
       setLoading(false);
       return;
     }
-    
+
     if (data) {
-      // Normaliza para ter os campos direto no objeto da ação
-      const normalizadas = data.map((item) => ({
-        ...item,
-        titulo_reuniao: item.reunioes?.titulo || '',
-        tipo_reuniao: item.reunioes?.tipo_reuniao || 'Geral',
-      }));
-
-      setAcoes(normalizadas);
-
-      // Extrair valores únicos para os filtros
-      const resps = [...new Set(normalizadas.map(item => item.responsavel).filter(Boolean))].sort();
-      const origens = [...new Set(normalizadas.map(item => item.tipo_reuniao).filter(Boolean))].sort();
+      setAcoes(data);
+      // Extrair valores únicos para os filtros (se no futuro tiver tipo_reuniao na tabela)
+      const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
+      const origens = [...new Set(data.map(item => item.tipo_reuniao).filter(Boolean))].sort();
       setListaResponsaveis(resps);
       setListaOrigens(origens);
     }
+
     setLoading(false);
   };
 
@@ -74,16 +67,20 @@ const GestaoAcoes = () => {
   // Lógica de Filtragem
   const acoesFiltradas = useMemo(() => {
     return acoes.filter(acao => {
-      const matchTexto = acao.descricao
-        ?.toLowerCase()
+      // 1. Texto (Descrição)
+      const matchTexto = (acao.descricao || '')
+        .toLowerCase()
         .includes(filtroTexto.toLowerCase());
-
+      
+      // 2. Status
       const matchStatus =
         filtroStatus === 'Todas' ? true : acao.status === filtroStatus;
 
+      // 3. Responsável
       const matchResp =
         filtroResponsavel === 'Todos' ? true : acao.responsavel === filtroResponsavel;
 
+      // 4. Origem (se um dia tiver tipo_reuniao na tabela)
       const matchOrigem =
         filtroOrigem === 'Todas' ? true : acao.tipo_reuniao === filtroOrigem;
 
@@ -150,7 +147,7 @@ const GestaoAcoes = () => {
             </select>
           </div>
 
-          {/* Filtro Origem */}
+          {/* Filtro Origem (por enquanto vai ficar vazio até ligarmos com a tabela de reuniões) */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem (Reunião)</label>
             <select 
@@ -225,7 +222,7 @@ const GestaoAcoes = () => {
                             <span className="text-gray-600">{acao.responsavel}</span>
                           </div>
                         </td>
-                        <td className="p-4 text-gray-500 text-xs font-mono bg-gray-50/50 rounded px-2" title={acao.titulo_reuniao}>
+                        <td className="p-4 text-gray-500 text-xs font-mono bg-gray-50/50 rounded px-2">
                           {acao.tipo_reuniao || 'Geral'}
                         </td>
                         <td className="p-4 text-gray-500 text-xs">
