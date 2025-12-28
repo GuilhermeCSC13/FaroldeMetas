@@ -3,7 +3,7 @@ import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import { 
-  Calendar, ArrowRight, Zap, TrendingUp, BrainCircuit, Loader2, ExternalLink, Layers, CheckCircle, XCircle, Activity, RefreshCw
+  Calendar, ArrowRight, Zap, TrendingUp, BrainCircuit, Loader2, ExternalLink, Layers, RefreshCw
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -63,24 +63,13 @@ const Inicio = () => {
     try {
       const model = getGeminiFlash();
 
-      // PROMPT "DIRETOR DE OPERAÇÕES" (Rico em contexto, zero invenção)
+      // PROMPT "DIRETOR DE OPERAÇÕES"
       const prompt = `
-        Aja como um Diretor de Operações Sênior analisando o Farol Tático da empresa.
+        Aja como um Diretor de Operações Sênior analisando o Farol Tático.
+        DADOS HOJE (${dataHoje}): Agenda: ${JSON.stringify(dados.agendaHoje)}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(dados.ultimasRealizadas)}.
         
-        DADOS REAIS DO DIA (${dataHoje}):
-        1. AGENDA DE HOJE: ${dados.agendaHoje.length > 0 ? JSON.stringify(dados.agendaHoje) : "Nenhuma reunião agendada."}
-        2. PENDÊNCIAS: ${dados.acoesAbertas} ações em aberto no CRM.
-        3. HISTÓRICO RECENTE: ${JSON.stringify(dados.ultimasRealizadas)}
-        
-        MISSÃO:
-        Escreva um resumo executivo de 3 a 4 linhas (formato markdown).
-        
-        DIRETRIZES DE RESPOSTA:
-        - Se a agenda estiver vazia, diga algo positivo como: "Dia livre de reuniões. Recomendado foco total na execução e limpeza das ${dados.acoesAbertas} pendências."
-        - Se houver reuniões hoje, liste-as brevemente e peça preparação.
-        - Se houver muitas pendências (>5), dê um alerta de gargalo.
-        - NÃO invente reuniões passadas. Se o histórico for vazio, ignore-o.
-        - Use emojis moderados (🎯, ⚠️, ✅).
+        MISSÃO: Escreva um resumo executivo curto (máx 4 linhas).
+        DIRETRIZES: Destaque pontos de atenção ou oportunidades de foco. Não invente dados. Use markdown simples (negrito **texto**).
       `;
 
       const result = await model.generateContent(prompt);
@@ -105,7 +94,7 @@ const Inicio = () => {
   const forcarAtualizacao = () => {
     setLoadingIA(true);
     localStorage.removeItem('farol_ia_date');
-    carregarDados(); // Recarrega tudo
+    carregarDados();
   };
 
   return (
@@ -119,7 +108,7 @@ const Inicio = () => {
             <p className="text-gray-500 text-sm mt-1">Visão Estratégica & Tática Unificada</p>
           </div>
 
-          {/* STATUS DA IA (REDESENHADO) */}
+          {/* STATUS DA IA */}
           <div className="flex items-center gap-3 bg-white p-2 pr-4 rounded-full border border-gray-200 shadow-sm">
             <div className={`w-3 h-3 rounded-full ${iaStatus === 'active' ? 'bg-green-500 animate-pulse' : iaStatus === 'checking' ? 'bg-yellow-400 animate-bounce' : 'bg-red-500'}`}></div>
             <div className="flex flex-col">
@@ -165,7 +154,7 @@ const Inicio = () => {
         {/* ÁREA CENTRAL: IA E ATALHOS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-10">
           
-          {/* CARTÃO DE INTELIGÊNCIA (O CÉREBRO) */}
+          {/* CARTÃO DE INTELIGÊNCIA (CORRIGIDO) */}
           <div className="lg:col-span-2">
             <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 shadow-xl relative overflow-hidden h-full flex flex-col justify-between group">
               {/* Efeitos de Fundo */}
@@ -193,15 +182,25 @@ const Inicio = () => {
                     <p className="text-sm animate-pulse">Processando dados operacionais...</p>
                   </div>
                 ) : (
-                  <div className="prose prose-invert prose-p:text-slate-200 prose-p:leading-relaxed prose-strong:text-white prose-sm max-w-none">
-                     {/* Renderização segura do Markdown da IA */}
-                     {resumoIA.split('\n').map((line, idx) => (
-                        <p key={idx} className="mb-2">
+                  <div className="text-slate-300 text-sm leading-relaxed space-y-3">
+                     {/* RENDERIZAÇÃO CORRIGIDA: Títulos brancos, texto claro */}
+                     {resumoIA.split('\n').map((line, idx) => {
+                        // Se for título (começa com #)
+                        if (line.startsWith('#')) {
+                            return <h3 key={idx} className="text-white font-bold text-base mt-4 mb-2">{line.replace(/^#+\s/, '')}</h3>;
+                        }
+                        // Se linha vazia, ignora
+                        if (!line.trim()) return null;
+                        
+                        // Parágrafo normal com negrito
+                        return (
+                        <p key={idx}>
                             {line.replace(/\*\*(.*?)\*\*/g, (match, p1) => `<strong>${p1}</strong>`).split(/<strong>(.*?)<\/strong>/g).map((part, i) => 
-                                i % 2 === 1 ? <strong key={i} className="text-white font-semibold bg-white/10 px-1 rounded">{part}</strong> : part
+                                i % 2 === 1 ? <strong key={i} className="text-white font-semibold">{part}</strong> : part
                             )}
                         </p>
-                     ))}
+                        );
+                     })}
                   </div>
                 )}
               </div>
