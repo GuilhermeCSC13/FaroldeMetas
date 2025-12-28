@@ -1,13 +1,12 @@
 // src/components/tatico/ModalDetalhesAcao.jsx
 import React, { useEffect, useState } from "react";
-import { CheckCircle, X, Trash2, UploadCloud } from "lucide-react";
+import { CheckCircle, X, Trash2, UploadCloud, RotateCw } from "lucide-react";
 import { supabase } from "../../supabaseClient";
 
 const ModalDetalhesAcao = ({
   aberto,
   acao,
   status,
-  // podeConcluir,  // agora ignoramos esse valor externo
   onClose,
   onConcluir,
   onAfterSave,
@@ -16,8 +15,10 @@ const ModalDetalhesAcao = ({
   if (!aberto || !acao) return null;
 
   // ---------------------------------------------------------------------------
-  // ESTADOS LOCAIS (edição)
+  // ESTADOS LOCAIS
   // ---------------------------------------------------------------------------
+  const [statusLocal, setStatusLocal] = useState(status || "Aberta");
+
   const [obsAcao, setObsAcao] = useState("");
   const [resultado, setResultado] = useState("");
   const [fotosAcao, setFotosAcao] = useState([]);
@@ -26,16 +27,18 @@ const ModalDetalhesAcao = ({
   const [novosArquivosAcao, setNovosArquivosAcao] = useState([]);
   const [novosArquivosConclusao, setNovosArquivosConclusao] = useState([]);
 
-  // Novos: edição de responsável e vencimento
   const [responsavel, setResponsavel] = useState("");
-  const [vencimento, setVencimento] = useState(""); // YYYY-MM-DD
+  const [vencimento, setVencimento] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reabrindo, setReabrindo] = useState(false);
 
-  // Quando abrir ou trocar a ação, sincroniza o estado local
+  // Quando abrir / mudar ação / mudar status vindo de fora
   useEffect(() => {
     if (!acao || !aberto) return;
+
+    setStatusLocal(status || acao.status || "Aberta");
 
     setObsAcao(acao.observacao || "");
     setResultado(acao.resultado || "");
@@ -55,21 +58,16 @@ const ModalDetalhesAcao = ({
     setNovosArquivosAcao([]);
     setNovosArquivosConclusao([]);
 
-    // Responsável
     setResponsavel(acao.responsavel || "");
 
-    // Vencimento -> string yyyy-mm-dd
     if (acao.data_vencimento) {
       const d = new Date(acao.data_vencimento);
       setVencimento(d.toISOString().split("T")[0]);
     } else {
       setVencimento("");
     }
-  }, [acao, aberto]);
+  }, [acao, aberto, status]);
 
-  // ---------------------------------------------------------------------------
-  // HELPERS
-  // ---------------------------------------------------------------------------
   const uploadArquivos = async (files) => {
     const urls = [];
     for (const file of files) {
@@ -93,6 +91,9 @@ const ModalDetalhesAcao = ({
     return urls;
   };
 
+  // ---------------------------------------------------------------------------
+  // SALVAR ALTERAÇÕES
+  // ---------------------------------------------------------------------------
   const handleSalvar = async () => {
     if (!acao) return;
     setSaving(true);
@@ -115,7 +116,7 @@ const ModalDetalhesAcao = ({
         data_vencimento: vencimento || null,
       };
 
-      // Compatibilidade: se a tabela ainda usa só "fotos"
+      // Compatibilidade com tabela antiga (só "fotos")
       if (!acao.fotos_acao && !acao.fotos_conclusao) {
         payload.fotos = payload.fotos_acao;
       }
@@ -140,18 +141,19 @@ const ModalDetalhesAcao = ({
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // EXCLUIR
+  // ---------------------------------------------------------------------------
   const handleExcluir = async () => {
     if (!acao) return;
     const senha = window.prompt(
       "Para excluir a ação, digite a senha de autorização:"
     );
-
     if (senha === null) return;
     if (senha !== "Excluir") {
       alert("Senha incorreta. A ação não será excluída.");
       return;
     }
-
     if (!window.confirm("Tem certeza que deseja excluir esta ação?")) return;
 
     setDeleting(true);
@@ -172,17 +174,43 @@ const ModalDetalhesAcao = ({
     }
   };
 
-  // Regra local para poder concluir:
-  // – status != Concluída
-  // – há texto de conclusão
-  // – há pelo menos 1 evidência de conclusão (já salva ou nova)
+  // ---------------------------------------------------------------------------
+  // REABRIR
+  // ---------------------------------------------------------------------------
+  const handleReabrir = async () => {
+    if (!acao) return;
+    if (
+      !window.confirm(
+        "Reabrir a ação permitirá novas alterações e uma nova conclusão. Deseja continuar?"
+      )
+    )
+      return;
+
+    setReabrindo(true);
+    try {
+      const { error } = await supabase
+        .from("acoes")
+        .update({ status: "Aberta", data_conclusao: null })
+        .eq("id", acao.id);
+
+      if (error) throw error;
+
+      setStatusLocal("Aberta");
+      if (typeof onAfterSave === "function") onAfterSave(acao.id);
+    } catch (err) {
+      alert("Erro ao reabrir ação: " + err.message);
+    } finally {
+      setReabrindo(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // FINALIZAR (concluir)
+  // ---------------------------------------------------------------------------
   const podeConcluirLocal =
-    status !== "Concluída" &&
+    statusLocal !== "Concluída" &&
     resultado.trim().length > 0 &&
     (fotosConclusao.length + novosArquivosConclusao.length) > 0;
-
-  // Agora ignoramos o boolean externo e usamos apenas o estado atual do popup
-  const podeConcluirFinal = podeConcluirLocal;
 
   const handleFinalizarClick = async () => {
     if (!podeConcluirLocal) {
@@ -192,11 +220,13 @@ const ModalDetalhesAcao = ({
       return;
     }
 
-    // Primeiro salva o que está no popup
-    await handleSalvar();
+    await handleSalvar(); // garante persistência dos campos
 
-    // Depois marca como concluída
-    if (typeof onConcluir === "function") onConcluir();
+    if (typeof onConcluir === "function") {
+      await onConcluir(); // parent marca como Concluída e recarrega lista
+    }
+
+    setStatusLocal("Concluída");
   };
 
   const dataCriacao =
@@ -207,6 +237,8 @@ const ModalDetalhesAcao = ({
   const dataVencimentoLabel = vencimento
     ? new Date(vencimento).toLocaleDateString()
     : "-";
+
+  const inputsDesabilitados = statusLocal === "Concluída";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -237,10 +269,11 @@ const ModalDetalhesAcao = ({
               Ação
             </h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-              {/* Linha de status / criação / vencimento / responsável (legível) */}
+              {/* Linha informativa */}
               <div className="flex flex-wrap gap-4 text-xs sm:text-sm text-gray-600">
                 <span>
-                  <strong className="font-semibold">Status:</strong> {status}
+                  <strong className="font-semibold">Status:</strong>{" "}
+                  {statusLocal}
                 </span>
                 <span>
                   <strong className="font-semibold">Criação:</strong>{" "}
@@ -256,7 +289,7 @@ const ModalDetalhesAcao = ({
                 </span>
               </div>
 
-              {/* Inputs de edição de responsável e vencimento */}
+              {/* Edição Responsável / Vencimento */}
               <div className="mt-3 flex flex-wrap gap-4 text-xs sm:text-sm">
                 <div className="flex flex-col">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase">
@@ -266,7 +299,8 @@ const ModalDetalhesAcao = ({
                     type="text"
                     value={responsavel}
                     onChange={(e) => setResponsavel(e.target.value)}
-                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-56"
+                    disabled={inputsDesabilitados}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-56 disabled:bg-gray-100"
                     placeholder="Nome do responsável"
                   />
                 </div>
@@ -278,7 +312,8 @@ const ModalDetalhesAcao = ({
                     type="date"
                     value={vencimento}
                     onChange={(e) => setVencimento(e.target.value)}
-                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-40"
+                    disabled={inputsDesabilitados}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-40 disabled:bg-gray-100"
                   />
                 </div>
               </div>
@@ -289,10 +324,11 @@ const ModalDetalhesAcao = ({
                   Observações
                 </span>
                 <textarea
-                  className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100"
                   rows={3}
                   value={obsAcao}
                   onChange={(e) => setObsAcao(e.target.value)}
+                  disabled={inputsDesabilitados}
                   placeholder="Descreva detalhes da ação..."
                 />
               </div>
@@ -324,31 +360,38 @@ const ModalDetalhesAcao = ({
                   </div>
                 )}
 
-                <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
-                  <UploadCloud size={16} />
-                  <span>Anexar evidências da ação</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) =>
-                      setNovosArquivosAcao(Array.from(e.target.files || []))
-                    }
-                  />
-                </label>
-                {novosArquivosAcao.length > 0 && (
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    {novosArquivosAcao.length} arquivo(s) novo(s) selecionado(s)
-                    para a ação.
-                  </div>
+                {!inputsDesabilitados && (
+                  <>
+                    <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
+                      <UploadCloud size={16} />
+                      <span>Anexar evidências da ação</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          setNovosArquivosAcao(
+                            Array.from(e.target.files || [])
+                          )
+                        }
+                      />
+                    </label>
+                    {novosArquivosAcao.length > 0 && (
+                      <div className="mt-1 text-[11px] text-gray-500">
+                        {novosArquivosAcao.length} arquivo(s) novo(s)
+                        selecionado(s) para a ação.
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {fotosAcao.length === 0 && novosArquivosAcao.length === 0 && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Nenhuma evidência anexada à ação.
-                  </p>
-                )}
+                {fotosAcao.length === 0 &&
+                  novosArquivosAcao.length === 0 && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Nenhuma evidência anexada à ação.
+                    </p>
+                  )}
               </div>
             </div>
           </div>
@@ -364,10 +407,11 @@ const ModalDetalhesAcao = ({
                   Observação do que foi realizado
                 </span>
                 <textarea
-                  className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100"
                   rows={3}
                   value={resultado}
                   onChange={(e) => setResultado(e.target.value)}
+                  disabled={inputsDesabilitados}
                   placeholder="Descreva o que foi feito para concluir a ação..."
                 />
               </div>
@@ -398,26 +442,30 @@ const ModalDetalhesAcao = ({
                   </div>
                 )}
 
-                <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
-                  <UploadCloud size={16} />
-                  <span>Anexar evidências da conclusão</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) =>
-                      setNovosArquivosConclusao(
-                        Array.from(e.target.files || [])
-                      )
-                    }
-                  />
-                </label>
-                {novosArquivosConclusao.length > 0 && (
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    {novosArquivosConclusao.length} arquivo(s) novo(s)
-                    selecionado(s) para a conclusão.
-                  </div>
+                {!inputsDesabilitados && (
+                  <>
+                    <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
+                      <UploadCloud size={16} />
+                      <span>Anexar evidências da conclusão</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          setNovosArquivosConclusao(
+                            Array.from(e.target.files || [])
+                          )
+                        }
+                      />
+                    </label>
+                    {novosArquivosConclusao.length > 0 && (
+                      <div className="mt-1 text-[11px] text-gray-500">
+                        {novosArquivosConclusao.length} arquivo(s) novo(s)
+                        selecionado(s) para a conclusão.
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {fotosConclusao.length === 0 &&
@@ -440,14 +488,26 @@ const ModalDetalhesAcao = ({
             </span>
             <button
               onClick={handleSalvar}
-              disabled={saving}
-              className="mt-1 self-start px-4 py-1.5 rounded-md text-xs font-semibold border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+              disabled={saving || inputsDesabilitados}
+              className="mt-1 self-start px-4 py-1.5 rounded-md text-xs font-semibold border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {saving ? "Salvando..." : "Salvar alterações"}
             </button>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Botão REABRIR quando concluída */}
+            {statusLocal === "Concluída" && (
+              <button
+                onClick={handleReabrir}
+                disabled={reabrindo}
+                className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 disabled:opacity-60"
+              >
+                <RotateCw size={16} />
+                {reabrindo ? "Reabrindo..." : "Reabrir ação"}
+              </button>
+            )}
+
             <button
               onClick={handleExcluir}
               disabled={deleting}
@@ -457,16 +517,16 @@ const ModalDetalhesAcao = ({
               {deleting ? "Excluindo..." : "Excluir ação"}
             </button>
 
-            {status === "Concluída" ? (
+            {statusLocal === "Concluída" ? (
               <span className="text-xs font-semibold text-green-600 ml-2">
                 Ação já finalizada.
               </span>
             ) : (
               <button
                 onClick={handleFinalizarClick}
-                disabled={!podeConcluirFinal || saving || deleting}
+                disabled={!podeConcluirLocal || saving || deleting}
                 className={`px-5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 ${
-                  podeConcluirFinal && !saving && !deleting
+                  podeConcluirLocal && !saving && !deleting
                     ? "bg-green-600 text-white hover:bg-green-700"
                     : "bg-gray-200 text-gray-500 cursor-not-allowed"
                 }`}
