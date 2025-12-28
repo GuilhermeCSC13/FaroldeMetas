@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { getGeminiFlash } from '../../services/gemini'; // <--- IMPORT CENTRALIZADO
+import { getGeminiFlash } from '../../services/gemini';
 import { MessageSquare, X, Send, Bot, Loader2 } from 'lucide-react';
 
 const TacticalAssistant = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: 'Olá! Sou seu Copiloto Tático. Pode me perguntar sobre metas, resultados ou o que foi decidido nas reuniões.' }
+    { role: 'assistant', text: 'Olá! Sou seu Copiloto Tático. Pode me perguntar sobre reuniões antigas, ações pendentes ou indicadores.' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,23 +17,31 @@ const TacticalAssistant = () => {
   }, [messages]);
 
   const fetchContexto = async () => {
-    const { data: metas } = await supabase.from('metas_farol').select('indicador, peso, realizado_atual (resultados_farol(valor_realizado, mes))');
-    const { data: reunioes } = await supabase.from('reunioes').select('titulo, data_hora, pauta, status').order('data_hora', { ascending: false }).limit(5);
+    // AUMENTADO: Busca as últimas 10 reuniões (antes era 5) para achar as de Teste
+    const { data: reunioes } = await supabase.from('reunioes').select('titulo, data_hora, pauta, status').order('data_hora', { ascending: false }).limit(10);
     const { data: acoes } = await supabase.from('acoes').select('descricao, responsavel, status, data_abertura').eq('status', 'Aberta');
+    const { data: metas } = await supabase.from('metas_farol').select('indicador, peso, realizado_atual');
 
-    let contexto = "DADOS ATUAIS DO SISTEMA:\n\n";
-    if(metas) {
-      contexto += "--- INDICADORES E METAS ---\n";
-      metas.forEach(m => { contexto += `- Indicador: ${m.indicador} (Peso: ${m.peso}).\n`; });
-    }
+    let contexto = "DADOS DO SISTEMA:\n";
+    
     if(reunioes) {
-      contexto += "\n--- ÚLTIMAS REUNIÕES ---\n";
-      reunioes.forEach(r => { contexto += `- ${new Date(r.data_hora).toLocaleDateString()} [${r.titulo}]: ${r.pauta ? 'Tem resumo.' : 'Sem resumo.'} Status: ${r.status}\n`; });
+      contexto += "\n--- HISTÓRICO DE REUNIÕES ---\n";
+      reunioes.forEach(r => { 
+        contexto += `- Data: ${new Date(r.data_hora).toLocaleDateString()} | Título: "${r.titulo}" | Status: ${r.status}\n`; 
+        if(r.pauta) contexto += `  Resumo da Ata: ${r.pauta.substring(0, 150)}...\n`;
+      });
     }
+
     if(acoes) {
       contexto += "\n--- AÇÕES PENDENTES ---\n";
-      acoes.forEach(a => { contexto += `- [${a.responsavel}] deve resolver: "${a.descricao}" (Desde: ${a.data_abertura})\n`; });
+      acoes.forEach(a => { contexto += `- ${a.responsavel}: ${a.descricao}\n`; });
     }
+
+    if(metas) {
+      contexto += "\n--- METAS ---\n";
+      metas.forEach(m => { contexto += `- ${m.indicador}: ${m.realizado_atual}\n`; });
+    }
+
     return contexto;
   };
 
@@ -47,26 +55,29 @@ const TacticalAssistant = () => {
 
     try {
       const dadosContexto = await fetchContexto();
-      const model = getGeminiFlash(); // <--- USA O SERVIÇO
+      const model = getGeminiFlash();
 
       const prompt = `
-        Você é o Copiloto Tático.
-        Dados reais:
+        Você é o Copiloto Tático da Quatai.
+        
+        CONTEXTO DE DADOS (Use isso para responder):
         ${dadosContexto}
 
-        Usuário: "${userMsg}"
-        Responda com base nos dados.
+        PERGUNTA DO USUÁRIO: "${userMsg}"
+
+        IMPORTANTE: 
+        1. Se o usuário perguntar de uma reunião específica (ex: "reunião de teste"), procure na lista acima por nomes parecidos (ex: "Teste de Gravação").
+        2. Se achar a reunião, fale o que tem no resumo dela.
+        3. Se não achar, diga que não encontrou nos registros das últimas 10 reuniões.
       `;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      const text = response.text();
-
-      setMessages(prev => [...prev, { role: 'assistant', text: text }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: response.text() }]);
 
     } catch (error) {
       console.error(error);
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Erro ao processar. Verifique a chave.' }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: 'Erro de conexão com a IA.' }]);
     } finally {
       setLoading(false);
     }
@@ -75,43 +86,35 @@ const TacticalAssistant = () => {
   return (
     <>
       {!isOpen && (
-        <button 
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 z-50 animate-bounce-slow"
-        >
+        <button onClick={() => setIsOpen(true)} className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 z-50 animate-bounce-slow">
           <Bot size={28} />
         </button>
       )}
 
       {isOpen && (
         <div className="fixed bottom-6 right-6 w-96 h-[500px] bg-white rounded-2xl shadow-2xl flex flex-col z-50 border border-gray-200 overflow-hidden font-sans animate-in slide-in-from-bottom-10 fade-in duration-300">
-          <div className="bg-gradient-to-r from-blue-700 to-blue-600 p-4 flex justify-between items-center text-white">
+          <div className="bg-blue-600 p-4 flex justify-between items-center text-white">
             <div className="flex items-center gap-2">
-              <div className="bg-white/20 p-1.5 rounded-lg"><Bot size={18} /></div>
-              <div>
-                <h3 className="font-bold text-sm">Copiloto Tático</h3>
-                <p className="text-[10px] text-blue-200 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> Online</p>
-              </div>
+              <Bot size={18} />
+              <h3 className="font-bold text-sm">Copiloto Tático</h3>
             </div>
-            <button onClick={() => setIsOpen(false)} className="hover:bg-white/20 p-1 rounded transition-colors"><X size={18} /></button>
+            <button onClick={() => setIsOpen(false)}><X size={18} /></button>
           </div>
-
           <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-gray-800 border border-gray-100 rounded-bl-none'}`}>
+                <div className={`max-w-[85%] p-3 rounded-2xl text-sm shadow-sm ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-gray-800 border border-gray-100 rounded-bl-none'}`}>
                   {msg.text.split('\n').map((line, i) => <p key={i} className="mb-1">{line}</p>)}
                 </div>
               </div>
             ))}
-            {loading && <div className="flex justify-start"><div className="bg-white p-3 rounded-2xl rounded-bl-none border border-gray-100 shadow-sm flex items-center gap-2 text-gray-400 text-xs"><Loader2 size={14} className="animate-spin" /> Analisando dados...</div></div>}
+            {loading && <div className="text-gray-400 text-xs flex items-center gap-2"><Loader2 size={12} className="animate-spin"/> Consultando banco...</div>}
             <div ref={messagesEndRef} />
           </div>
-
-          <div className="p-3 bg-white border-t border-gray-100">
-            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-full px-4 py-2 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
-              <input className="flex-1 bg-transparent outline-none text-sm text-gray-700" placeholder="Ex: Como estão as metas?" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
-              <button onClick={handleSend} disabled={loading || !input.trim()} className="text-blue-600 hover:text-blue-700 disabled:opacity-50 transition-colors"><Send size={18} /></button>
+          <div className="p-3 bg-white border-t">
+            <div className="flex gap-2">
+              <input className="flex-1 bg-gray-100 rounded-full px-4 py-2 text-sm outline-none" placeholder="Digite sua pergunta..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
+              <button onClick={handleSend} disabled={loading} className="text-blue-600"><Send size={20} /></button>
             </div>
           </div>
         </div>
