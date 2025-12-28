@@ -3,7 +3,7 @@ import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
 import { 
   Mic, Square, Loader2, Cpu, CheckCircle, Search, Calendar, Clock, ExternalLink, 
-  Plus, ListTodo, User, FileText
+  Plus, ListTodo, User, FileText, AlertTriangle, Trash2, Camera, Image as ImageIcon, X
 } from 'lucide-react';
 import { getGeminiFlash } from '../services/gemini';
 import { useNavigate } from 'react-router-dom';
@@ -19,9 +19,18 @@ const Copiloto = () => {
   const [loadingList, setLoadingList] = useState(false);
 
   // --- ESTADOS DE AÇÕES ---
-  const [acoesPendentes, setAcoesPendentes] = useState([]);
-  const [novaAcao, setNovaAcao] = useState({ descricao: '', responsavel: '' });
+  const [acoesAnteriores, setAcoesAnteriores] = useState([]); // Pendências antigas
+  const [acoesCriadasAgora, setAcoesCriadasAgora] = useState([]); // Criadas nesta sessão
   const [loadingAcoes, setLoadingAcoes] = useState(false);
+  
+  // Form Nova Ação
+  const [novaAcao, setNovaAcao] = useState({ 
+    descricao: '', 
+    responsavel: '', 
+    vencimento: '' 
+  });
+  const [fotosAcao, setFotosAcao] = useState([]); // Arquivos locais para upload
+  const [uploadingFotos, setUploadingFotos] = useState(false);
 
   // --- ESTADOS DE GRAVAÇÃO/IA ---
   const [isRecording, setIsRecording] = useState(false);
@@ -32,22 +41,24 @@ const Copiloto = () => {
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const intervalRef = useRef(null);
+  const timerIntervalRef = useRef(null);
+  const startTimeRef = useRef(null); // Para calcular tempo real mesmo trocando de aba
 
   // 1. Carrega reuniões ao mudar data
   useEffect(() => {
     fetchReunioesPorData();
   }, [dataFiltro]);
 
-  // 2. Ao selecionar reunião, carrega ata e busca AÇÕES RELACIONADAS
+  // 2. Ao selecionar reunião
   useEffect(() => {
     if (reuniaoSelecionada) {
       setPautaExistente(reuniaoSelecionada.pauta || null);
-      // Só busca ações se tiver um tipo definido, senão busca geral ou nada
-      fetchAcoesDoTipo(reuniaoSelecionada.tipo_reuniao);
+      fetchAcoesCompletas(reuniaoSelecionada);
+      setAcoesCriadasAgora([]); // Limpa as criadas visualmente ao trocar de reunião
     } else {
       setPautaExistente(null);
-      setAcoesPendentes([]);
+      setAcoesAnteriores([]);
+      setAcoesCriadasAgora([]);
     }
   }, [reuniaoSelecionada]);
 
@@ -56,7 +67,7 @@ const Copiloto = () => {
     const handleBeforeUnload = (e) => {
       if (isRecording) {
         e.preventDefault();
-        e.returnValue = '';
+        e.returnValue = 'Gravação em andamento. Deseja sair?';
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -87,84 +98,113 @@ const Copiloto = () => {
     }
   };
 
-  const fetchAcoesDoTipo = async (tipo) => {
-    // Se não tiver tipo, não busca para não dar erro
-    if (!tipo) {
-        setAcoesPendentes([]);
-        return;
-    }
-
+  const fetchAcoesCompletas = async (reuniao) => {
     setLoadingAcoes(true);
     try {
-      // 1. Pega IDs de reuniões desse tipo
-      const { data: idsReunioes, error } = await supabase
-        .from('reunioes')
-        .select('id')
-        .eq('tipo_reuniao', tipo);
-      
-      if (error) throw error;
+        // 1. Buscar Ações Anteriores (Do mesmo TIPO, mas de outras datas)
+        if (reuniao.tipo_reuniao) {
+            const { data: idsDoTipo } = await supabase
+                .from('reunioes')
+                .select('id')
+                .eq('tipo_reuniao', reuniao.tipo_reuniao)
+                .neq('id', reuniao.id); // Não pega a atual
+            
+            const listaIds = (idsDoTipo || []).map(r => r.id);
+            
+            if (listaIds.length > 0) {
+                const { data: pendencias } = await supabase
+                    .from('acoes')
+                    .select('*')
+                    .in('reuniao_id', listaIds)
+                    .eq('status', 'Aberta')
+                    .order('data_criacao', { ascending: false });
+                setAcoesAnteriores(pendencias || []);
+            } else {
+                setAcoesAnteriores([]);
+            }
+        }
 
-      // CORREÇÃO: Adicionado (|| []) para garantir que não quebre se vier null
-      const listaIds = (idsReunioes || []).map(r => r.id);
-
-      if (listaIds.length > 0) {
-          const { data: acoes } = await supabase
+        // 2. Buscar Ações DESTA reunião (já salvas no banco)
+        const { data: criadasHoje } = await supabase
             .from('acoes')
             .select('*')
-            .in('reuniao_id', listaIds)
-            .eq('status', 'Aberta')
+            .eq('reuniao_id', reuniao.id)
             .order('data_criacao', { ascending: false });
-            
-          setAcoesPendentes(acoes || []);
-      } else {
-          setAcoesPendentes([]);
-      }
+        
+        setAcoesCriadasAgora(criadasHoje || []);
+
     } catch (e) {
       console.error("Erro ao buscar ações:", e);
-      setAcoesPendentes([]); // Garante lista vazia em caso de erro
     } finally {
       setLoadingAcoes(false);
     }
   };
 
+  // --- GESTÃO DE AÇÕES ---
+  const handlePhotoSelect = (e) => {
+    if (e.target.files) {
+        setFotosAcao(prev => [...prev, ...Array.from(e.target.files)]);
+    }
+  };
+
+  const uploadFotos = async () => {
+    const urls = [];
+    for (const file of fotosAcao) {
+        const fileName = `evidencia-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
+        const { error } = await supabase.storage.from('evidencias').upload(fileName, file);
+        if (!error) {
+            const { data } = supabase.storage.from('evidencias').getPublicUrl(fileName);
+            urls.push(data.publicUrl);
+        }
+    }
+    return urls;
+  };
+
   const salvarNovaAcao = async () => {
-    if (!novaAcao.descricao || !reuniaoSelecionada) return;
+    if (!novaAcao.descricao || !reuniaoSelecionada) return alert("Descreva a ação.");
     
+    setUploadingFotos(true);
     try {
+        const urlsFotos = await uploadFotos();
+
         const payload = {
             descricao: novaAcao.descricao,
-            responsavel: novaAcao.responsavel || 'Geral',
+            responsavel: novaAcao.responsavel || 'A Definir',
+            data_vencimento: novaAcao.vencimento || null,
             reuniao_id: reuniaoSelecionada.id,
             status: 'Aberta',
-            data_criacao: new Date().toISOString()
+            data_criacao: new Date().toISOString(),
+            fotos: urlsFotos // Salva array de URLs
         };
 
         const { data, error } = await supabase.from('acoes').insert([payload]).select();
         if (error) throw error;
 
         if (data) {
-            setAcoesPendentes([data[0], ...acoesPendentes]);
-            setNovaAcao({ descricao: '', responsavel: '' });
+            setAcoesCriadasAgora([data[0], ...acoesCriadasAgora]);
+            setNovaAcao({ descricao: '', responsavel: '', vencimento: '' });
+            setFotosAcao([]);
         }
     } catch (error) {
         alert("Erro ao salvar ação: " + error.message);
+    } finally {
+        setUploadingFotos(false);
     }
   };
 
-  const concluirAcao = async (id) => {
-      try {
-          const { error } = await supabase.from('acoes').update({ status: 'Concluída' }).eq('id', id);
-          if (!error) {
-              setAcoesPendentes(prev => prev.filter(a => a.id !== id));
-          }
-      } catch (e) {
-          console.error(e);
-      }
-  };
-
-  // --- LÓGICA DE GRAVAÇÃO ---
+  // --- LÓGICA DE GRAVAÇÃO ROBUSTA ---
   const startRecording = async () => {
     if (!reuniaoSelecionada) return alert("⚠️ Selecione uma reunião primeiro.");
+
+    // Verifica se já foi realizada
+    if (reuniaoSelecionada.status === 'Realizada') {
+        const confirmar = window.confirm(
+            `ATENÇÃO: Esta reunião já consta como REALIZADA.\n\n` +
+            `Início registrado: ${new Date(reuniaoSelecionada.horario_inicio).toLocaleTimeString()}\n` +
+            `Deseja realmente iniciar uma NOVA gravação e sobrescrever a ata?`
+        );
+        if (!confirmar) return;
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -176,19 +216,35 @@ const Copiloto = () => {
       
       mediaRecorderRef.current.start(1000);
       setIsRecording(true);
+      
+      // Timer seguro contra troca de abas
+      startTimeRef.current = Date.now();
       setTimer(0);
-      intervalRef.current = setInterval(() => setTimer(t => t + 1), 1000);
+      timerIntervalRef.current = setInterval(() => {
+        setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }, 1000);
+
+      // Salva Horário de Início no Banco
+      await supabase.from('reunioes')
+        .update({ horario_inicio: new Date().toISOString(), status: 'Em Andamento' })
+        .eq('id', reuniaoSelecionada.id);
+
     } catch (err) {
       alert("Erro Mic: " + err.message);
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      clearInterval(intervalRef.current);
+      clearInterval(timerIntervalRef.current);
       mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+
+      // Salva Horário de Fim no Banco
+      await supabase.from('reunioes')
+        .update({ horario_fim: new Date().toISOString() })
+        .eq('id', reuniaoSelecionada.id);
     }
   };
 
@@ -215,17 +271,24 @@ const Copiloto = () => {
       const model = getGeminiFlash();
       const audioPart = await blobToGenerativePart(audioBlob, "audio/webm");
 
+      // PROMPT ANTI-ALUCINAÇÃO
       const prompt = `
-        Gere uma ATA DE REUNIÃO Executiva.
-        Contexto: Reunião do tipo "${reuniaoSelecionada.tipo_reuniao || 'Geral'}" - Título: "${reuniaoSelecionada.titulo}".
-        
-        # ATA DE REUNIÃO
-        ## 1. Resumo
-        [Resumo conciso]
-        ## 2. Decisões
-        * ✅ [Decisão]
-        ## 3. Ações Definidas (Importante)
-        * [Quem] -> [O que]
+        Você é uma IA de auditoria de reuniões.
+        Analise o áudio da reunião: "${reuniaoSelecionada.titulo}".
+
+        REGRAS DE OURO (ANTI-ALUCINAÇÃO):
+        1. Se o áudio for silêncio, ruído, ou apenas "teste", "som", "123":
+           RESPONDA APENAS: "Gravação de teste identificada. Sem conteúdo relevante."
+           NÃO INVENTE PAUTA. NÃO CRIE NOMES FICTÍCIOS.
+
+        2. Se houver conteúdo real, gere a ata em Markdown:
+           # ATA DE REUNIÃO
+           ## 1. Resumo
+           [Resumo real do que foi dito]
+           ## 2. Decisões
+           * ✅ [Decisões reais]
+           ## 3. Ações
+           * [Quem] -> [O que]
       `;
 
       const result = await model.generateContent([prompt, audioPart]);
@@ -234,15 +297,18 @@ const Copiloto = () => {
       await supabase.from('reunioes').update({ 
           audio_url: urlData.publicUrl, 
           pauta: texto, 
-          status: 'Realizada' 
+          status: 'Realizada',
+          duracao_segundos: timer
       }).eq('id', reuniaoSelecionada.id);
 
       setPautaExistente(texto);
-      // Atualiza lista local para mostrar o check verde
-      setListaReunioes(prev => prev.map(r => r.id === reuniaoSelecionada.id ? {...r, pauta: texto} : r));
+      
+      // Atualiza lista local
+      setListaReunioes(prev => prev.map(r => r.id === reuniaoSelecionada.id ? {...r, pauta: texto, status: 'Realizada'} : r));
       setStatusText("Salvo!");
+
     } catch (error) {
-      alert("Erro: " + error.message);
+      alert("Erro IA: " + error.message);
     } finally {
       setIsProcessing(false);
     }
@@ -250,197 +316,166 @@ const Copiloto = () => {
 
   const formatTime = (s) => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
 
-  // Filtro visual
   const listaFiltrada = listaReunioes.filter(r => r.titulo.toLowerCase().includes(buscaTexto.toLowerCase()));
 
   return (
     <Layout>
       <div className="h-screen bg-slate-900 text-white font-sans flex overflow-hidden">
         
-        {/* --- COLUNA ESQUERDA (60%) - GRAVADOR E AGENDA --- */}
+        {/* --- ESQUERDA: LISTA E GRAVADOR --- */}
         <div className="w-7/12 flex flex-col p-6 border-r border-slate-800 relative">
-            
-            {/* Header */}
             <div className="flex justify-between items-center mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <Cpu className="text-blue-400" /> Copiloto Tático
-                    </h1>
-                    <p className="text-slate-400 text-xs">Inteligência Artificial de Gravação</p>
-                </div>
-                <div className="bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
-                    <span className="text-xs font-mono text-green-400 flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></div>
-                        {isRecording ? 'GRAVANDO' : 'ONLINE'}
-                    </span>
+                <h1 className="text-2xl font-bold flex items-center gap-2"><Cpu className="text-blue-400" /> Copiloto Tático</h1>
+                <div className={`px-3 py-1 rounded-full border text-xs font-mono font-bold ${isRecording ? 'bg-red-900/50 border-red-500 text-red-400 animate-pulse' : 'bg-slate-800 border-slate-700 text-green-400'}`}>
+                    {isRecording ? '● REC' : '● ONLINE'}
                 </div>
             </div>
 
             {/* Filtros */}
-            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 transition-opacity ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className={`grid grid-cols-2 gap-3 mb-4 transition-opacity ${isRecording ? 'opacity-40 pointer-events-none' : ''}`}>
                 <div className="bg-slate-800 border border-slate-700 rounded-lg flex items-center px-3 py-2">
                     <Calendar size={16} className="text-slate-400 mr-2" />
-                    <input type="date" className="bg-transparent text-white text-sm outline-none w-full cursor-pointer" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
+                    <input type="date" className="bg-transparent text-white text-sm w-full outline-none" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
                 </div>
                 <div className="bg-slate-800 border border-slate-700 rounded-lg flex items-center px-3 py-2">
                     <Search size={16} className="text-slate-400 mr-2" />
-                    <input type="text" placeholder="Filtrar..." className="bg-transparent text-white text-sm outline-none w-full" value={buscaTexto} onChange={e => setBuscaTexto(e.target.value)} />
+                    <input type="text" placeholder="Filtrar..." className="bg-transparent text-white text-sm w-full outline-none" value={buscaTexto} onChange={e => setBuscaTexto(e.target.value)} />
                 </div>
             </div>
 
-            {/* Lista de Reuniões */}
-            <div className={`flex-1 bg-slate-800/50 border border-slate-700 rounded-xl mb-6 overflow-y-auto custom-scrollbar ${isRecording ? 'opacity-80 pointer-events-none' : ''}`}>
-                {loadingList ? (
-                    <div className="flex items-center justify-center h-full text-slate-500 gap-2"><Loader2 className="animate-spin"/> Carregando...</div>
-                ) : listaFiltrada.length > 0 ? listaFiltrada.map(r => (
-                    <div 
-                        key={r.id} 
-                        onClick={() => setReuniaoSelecionada(r)}
+            {/* Lista */}
+            <div className={`flex-1 bg-slate-800/50 border border-slate-700 rounded-xl mb-6 overflow-y-auto custom-scrollbar ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
+                {loadingList ? <div className="p-4 text-center"><Loader2 className="animate-spin inline mr-2"/> Carregando...</div> :
+                 listaFiltrada.map(r => (
+                    <div key={r.id} onClick={() => setReuniaoSelecionada(r)}
                         className={`p-4 border-b border-slate-700 cursor-pointer transition-colors ${reuniaoSelecionada?.id === r.id ? 'bg-blue-600/20 border-l-4 border-l-blue-500' : 'hover:bg-slate-700 border-l-4 border-l-transparent'}`}
                     >
                         <div className="flex justify-between items-start">
                             <div>
                                 <h3 className="font-bold text-sm">{r.titulo}</h3>
-                                <p className="text-xs text-slate-400 flex items-center gap-2 mt-1">
-                                    <Clock size={12}/> {new Date(r.data_hora).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} • {r.tipo_reuniao}
+                                <p className="text-xs text-slate-400 mt-1 flex gap-2">
+                                    <Clock size={12}/> {new Date(r.data_hora).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                    <span className="bg-slate-700 px-1 rounded">{r.tipo_reuniao || 'Geral'}</span>
                                 </p>
                             </div>
                             {r.pauta && <CheckCircle size={16} className="text-green-500" />}
                         </div>
                     </div>
-                )) : (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-500 p-8 text-center">
-                        <Calendar size={32} className="mb-2 opacity-30"/>
-                        <p className="text-sm">Sem reuniões nesta data.</p>
-                        <button onClick={() => navigate('/central-reunioes')} className="text-blue-400 text-xs mt-2 hover:underline flex items-center gap-1">
-                            Agendar na Agenda <ExternalLink size={10}/>
-                        </button>
-                    </div>
-                )}
+                ))}
             </div>
 
-            {/* Área de Gravação */}
+            {/* Gravador */}
             <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-center relative overflow-hidden shrink-0">
                 {isProcessing ? (
-                    <div className="flex flex-col items-center gap-2">
-                        <Loader2 className="animate-spin text-blue-400"/>
-                        <span className="text-xs font-bold animate-pulse">{statusText}</span>
-                    </div>
+                    <div className="text-center"><Loader2 className="animate-spin text-blue-400 mb-2 mx-auto"/><span className="text-xs animate-pulse">{statusText}</span></div>
                 ) : (
                     <div className="flex flex-col items-center z-10">
                         {isRecording ? (
-                            <div className="flex items-center gap-4">
-                                <span className="text-4xl font-mono font-bold text-white tracking-widest">{formatTime(timer)}</span>
-                                <button onClick={stopRecording} className="w-14 h-14 bg-white text-red-600 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform animate-pulse">
-                                    <Square size={24} fill="currentColor"/>
-                                </button>
+                            <div className="flex items-center gap-6">
+                                <span className="text-4xl font-mono font-bold text-white">{formatTime(timer)}</span>
+                                <button onClick={stopRecording} className="w-16 h-16 bg-white text-red-600 rounded-full flex items-center justify-center hover:scale-105 transition-transform"><Square size={24} fill="currentColor"/></button>
                             </div>
                         ) : (
                             <div className="flex items-center gap-4">
-                                <span className="text-xs text-slate-400 uppercase tracking-wide">
-                                    {reuniaoSelecionada ? `Pronto: ${reuniaoSelecionada.titulo}` : 'Selecione uma reunião'}
-                                </span>
-                                <button 
-                                    onClick={startRecording} 
-                                    disabled={!reuniaoSelecionada}
-                                    className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all ${!reuniaoSelecionada ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-red-600 text-white hover:scale-110 hover:bg-red-500'}`}
-                                >
+                                <div className="text-right">
+                                    <p className="text-xs text-slate-400 font-bold uppercase">{reuniaoSelecionada ? 'Reunião Selecionada' : 'Selecione acima'}</p>
+                                    <p className="text-sm font-bold text-white max-w-[200px] truncate">{reuniaoSelecionada?.titulo || '--'}</p>
+                                </div>
+                                <button onClick={startRecording} disabled={!reuniaoSelecionada} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${!reuniaoSelecionada ? 'bg-slate-700 opacity-50' : 'bg-red-600 hover:scale-110 shadow-lg shadow-red-900/50'}`}>
                                     <Mic size={24}/>
                                 </button>
                             </div>
                         )}
                     </div>
                 )}
-                {/* Visualizer Background */}
-                {isRecording && (
-                    <div className="absolute bottom-0 left-0 w-full flex items-end justify-center gap-1 h-full opacity-20 pointer-events-none px-4 pb-2">
-                        {[...Array(30)].map((_, i) => (
-                            <div key={i} className="flex-1 bg-red-500 rounded-t-sm transition-all duration-100" style={{ height: `${Math.random() * 80 + 10}%` }}></div>
-                        ))}
-                    </div>
-                )}
             </div>
         </div>
 
-        {/* --- COLUNA DIREITA (40%) - AÇÕES E ATA --- */}
-        <div className="w-5/12 bg-slate-800/30 flex flex-col border-l border-slate-800">
+        {/* --- DIREITA: GESTÃO COMPLETA --- */}
+        <div className="w-5/12 bg-slate-900 flex flex-col border-l border-slate-800">
             
-            {/* Seção 1: Nova Ação */}
-            <div className="p-6 border-b border-slate-800">
-                <h2 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <ListTodo size={16}/> Ações da Reunião
-                </h2>
-                
-                <div className={`bg-slate-800 p-4 rounded-xl border border-slate-700 ${!reuniaoSelecionada ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <input 
-                        className="w-full bg-transparent border-b border-slate-600 pb-2 mb-3 text-sm outline-none focus:border-blue-500 transition-colors placeholder:text-slate-500 text-white"
-                        placeholder="Descreva a ação..."
+            {/* 1. Criar Ação */}
+            <div className="p-5 border-b border-slate-800 bg-slate-800/30">
+                <h2 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Plus size={14}/> Nova Ação / Pendência</h2>
+                <div className={`space-y-2 ${!reuniaoSelecionada ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <textarea 
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none resize-none h-20"
+                        placeholder="Descreva o que precisa ser feito..."
                         value={novaAcao.descricao}
                         onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})}
                     />
                     <div className="flex gap-2">
-                        <div className="flex-1 flex items-center bg-slate-900 rounded-lg px-3 border border-slate-700">
-                            <User size={14} className="text-slate-500 mr-2"/>
-                            <input 
-                                className="bg-transparent py-2 text-xs outline-none w-full text-white"
-                                placeholder="Responsável"
-                                value={novaAcao.responsavel}
-                                onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})}
-                            />
-                        </div>
-                        <button onClick={salvarNovaAcao} className="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-lg flex items-center justify-center transition-colors">
-                            <Plus size={18}/>
+                        <input className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white w-1/3 outline-none" placeholder="Responsável" value={novaAcao.responsavel} onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})} />
+                        <input type="date" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white w-1/3 outline-none" value={novaAcao.vencimento} onChange={e => setNovaAcao({...novaAcao, vencimento: e.target.value})} />
+                        
+                        {/* Upload Foto */}
+                        <label className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex items-center justify-center cursor-pointer hover:bg-slate-700">
+                            <Camera size={16} />
+                            <input type="file" multiple accept="image/*" className="hidden" onChange={handlePhotoSelect} />
+                            {fotosAcao.length > 0 && <span className="ml-1 text-green-400 font-bold">({fotosAcao.length})</span>}
+                        </label>
+                        
+                        <button onClick={salvarNovaAcao} disabled={uploadingFotos} className="bg-blue-600 text-white px-4 rounded-lg flex items-center justify-center hover:bg-blue-500 disabled:opacity-50">
+                            {uploadingFotos ? <Loader2 size={16} className="animate-spin"/> : <Plus size={18}/>}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* Seção 2: Lista de Ações */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase">
-                        Pendências {reuniaoSelecionada ? `(${reuniaoSelecionada.tipo_reuniao || 'Geral'})` : ''}
+            {/* 2. Listas de Ações (Scrollável) */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
+                
+                {/* Ações Criadas HOJE */}
+                <div>
+                    <h3 className="text-xs font-bold text-green-500 uppercase mb-2 flex items-center gap-2">
+                        <CheckCircle size={14}/> Criadas Nesta Reunião ({acoesCriadasAgora.length})
                     </h3>
-                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-300">{acoesPendentes.length}</span>
-                </div>
-
-                {loadingAcoes ? (
-                    <div className="text-center py-4"><Loader2 className="animate-spin mx-auto text-slate-500"/></div>
-                ) : acoesPendentes.length > 0 ? (
                     <div className="space-y-2">
-                        {acoesPendentes.map(acao => (
-                            <div key={acao.id} className="bg-slate-800 p-3 rounded-lg border border-slate-700 flex gap-3 hover:border-slate-500 transition-colors group">
-                                <button onClick={() => concluirAcao(acao.id)} className="mt-1 w-4 h-4 rounded border border-slate-500 hover:bg-green-500 hover:border-green-500 transition-colors shrink-0"></button>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-200 leading-tight truncate">{acao.descricao}</p>
-                                    <div className="flex justify-between items-center mt-2">
-                                        <span className="text-[10px] text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full truncate max-w-[100px]">{acao.responsavel}</span>
-                                        <span className="text-[10px] text-slate-500">{new Date(acao.data_criacao).toLocaleDateString()}</span>
-                                    </div>
+                        {acoesCriadasAgora.map(acao => (
+                            <div key={acao.id} className="bg-slate-800/50 border border-green-900/30 p-3 rounded-lg">
+                                <div className="flex justify-between items-start">
+                                    <p className="text-sm text-slate-200">{acao.descricao}</p>
+                                    <span className="text-[10px] bg-green-900 text-green-300 px-1.5 py-0.5 rounded ml-2">Nova</span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-500">
+                                    <span className="flex items-center gap-1"><User size={10}/> {acao.responsavel}</span>
+                                    {acao.data_vencimento && <span className="flex items-center gap-1 text-red-400"><Clock size={10}/> Vence: {new Date(acao.data_vencimento).toLocaleDateString()}</span>}
+                                    {acao.fotos && acao.fotos.length > 0 && <span className="flex items-center gap-1 text-blue-400"><ImageIcon size={10}/> {acao.fotos.length} fotos</span>}
                                 </div>
                             </div>
                         ))}
-                    </div>
-                ) : (
-                    <div className="text-center text-slate-600 py-10 border-2 border-dashed border-slate-800 rounded-xl">
-                        <CheckCircle size={24} className="mx-auto mb-2 opacity-20"/>
-                        <p className="text-xs">Nenhuma pendência.</p>
-                    </div>
-                )}
-            </div>
-
-            {/* Seção 3: Preview da ATA */}
-            {pautaExistente && (
-                <div className="h-1/3 border-t border-slate-800 bg-slate-900 p-6 overflow-hidden flex flex-col shrink-0">
-                    <h3 className="text-xs font-bold text-green-500 uppercase mb-2 flex items-center gap-2">
-                        <FileText size={14}/> Ata Registrada
-                    </h3>
-                    <div className="flex-1 overflow-y-auto custom-scrollbar text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">
-                        {pautaExistente}
+                        {acoesCriadasAgora.length === 0 && <p className="text-xs text-slate-600 italic">Nenhuma ação criada ainda.</p>}
                     </div>
                 </div>
-            )}
 
+                {/* Pendências ANTERIORES */}
+                <div>
+                    <h3 className="text-xs font-bold text-amber-500 uppercase mb-2 flex items-center gap-2">
+                        <AlertTriangle size={14}/> Pendências Anteriores ({acoesAnteriores.length})
+                    </h3>
+                    <div className="space-y-2">
+                        {loadingAcoes ? <Loader2 className="animate-spin text-slate-500"/> : 
+                         acoesAnteriores.map(acao => (
+                            <div key={acao.id} className="bg-slate-800/30 border border-slate-700 p-3 rounded-lg opacity-80 hover:opacity-100 transition-opacity">
+                                <p className="text-sm text-slate-400 line-through- decoration-transparent">{acao.descricao}</p>
+                                <div className="flex justify-between mt-1">
+                                    <span className="text-[10px] text-slate-600">Criado em: {new Date(acao.data_criacao).toLocaleDateString()}</span>
+                                    <span className="text-[10px] text-amber-600 font-bold">{acao.responsavel}</span>
+                                </div>
+                            </div>
+                        ))}
+                        {!loadingAcoes && acoesAnteriores.length === 0 && <p className="text-xs text-slate-600 italic">Nada pendente no histórico.</p>}
+                    </div>
+                </div>
+            </div>
+
+            {/* 3. Preview da Ata (Bottom) */}
+            {pautaExistente && (
+                <div className="h-40 border-t border-slate-800 bg-slate-900 p-4 overflow-y-auto custom-scrollbar">
+                    <h3 className="text-xs font-bold text-blue-400 uppercase mb-2">Resumo da Ata</h3>
+                    <div className="text-xs text-slate-400 whitespace-pre-line">{pautaExistente}</div>
+                </div>
+            )}
         </div>
       </div>
     </Layout>
