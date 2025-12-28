@@ -6,14 +6,12 @@ import {
   FaCogs,
   FaChevronDown,
   FaChevronRight,
+  FaCalendarAlt, // <--- Ícone novo para Reuniões
 } from "react-icons/fa";
 
 const setores = [
   { key: "operacao", label: "Operação", path: "/planejamento/operacao" },
-  
-  // CORREÇÃO: O caminho deve ser apenas "/manutencao" conforme o App.jsx
   { key: "manutencao", label: "Manutenção", path: "/manutencao" },
-  
   { key: "moov", label: "Moov", path: "/moov" },
   { key: "financeiro", label: "Financeiro", path: "/planejamento/financeiro" },
   { key: "pessoas", label: "Pessoas", path: "/planejamento/pessoas" },
@@ -123,7 +121,6 @@ export default function Sidebar() {
                   {openSetores[setor.key] && (
                     <div className="mt-1 ml-4 space-y-1">
                       {subMenus.map((sub) => {
-                        // se não tiver hash na URL, consideramos "#resumo" como padrão
                         const currentHash =
                           location.hash && location.hash !== ""
                             ? location.hash
@@ -161,13 +158,26 @@ export default function Sidebar() {
           )}
         </div>
 
+        {/* --- NOVO MENU: Reuniões Periódicas --- */}
+        <NavLink
+          to="/reunioes-periodicas"
+          className={({ isActive }) =>
+            `${linkBaseClasses} ${
+              isActive ? linkActiveClasses : linkInactiveClasses
+            } mt-2`
+          }
+        >
+          <FaCalendarAlt className="text-sm" />
+          <span>Reuniões</span>
+        </NavLink>
+
         {/* Configurações */}
         <NavLink
           to="/configuracoes"
           className={({ isActive }) =>
             `${linkBaseClasses} ${
               isActive ? linkActiveClasses : linkInactiveClasses
-            } mt-4`
+            } mt-2`
           }
         >
           <FaCogs className="text-sm" />
