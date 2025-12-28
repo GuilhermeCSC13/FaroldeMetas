@@ -107,11 +107,32 @@ const Copiloto = () => {
       const audioPart = await blobToGenerativePart(audioBlob, "audio/webm");
 
       const prompt = `
-        Gere uma ATA DE REUNIÃO Executiva.
-        Formato:
-        - Tópicos Principais
-        - Decisões
-        - Ações (Quem/O Que)
+        Atue como uma Secretária Executiva de Alta Performance.
+        Analise o áudio e gere uma ATA DETALHADA e ESTRUTURADA.
+
+        Use seu conhecimento neural para inferir o contexto mesmo se o áudio for confuso.
+        
+        FORMATO DE SAÍDA OBRIGATÓRIO:
+        
+        ## 📋 ATA DE REUNIÃO EXECUTIVA
+        **Data:** ${new Date().toLocaleDateString()}
+        
+        ### 1. Contexto e Objetivo
+        [Explique em 2 linhas o motivo da reunião baseado no que foi dito]
+
+        ### 2. Principais Discussões
+        * [Ponto 1 detalhado]
+        * [Ponto 2 detalhado]
+        
+        ### 3. Decisões Definidas (Ouro)
+        * ✅ [Decisão 1]
+        * ✅ [Decisão 2]
+
+        ### 4. Plano de Ação (Quem / O Que / Quando)
+        * [Responsável] -> [Ação] (Prazo sugerido: [Data])
+        
+        ---
+        *Obs: Se for apenas um teste de áudio, ignore o formato acima e responda apenas: "Teste de sistema realizado com sucesso."*
       `;
 
       const result = await model.generateContent([prompt, audioPart]);
