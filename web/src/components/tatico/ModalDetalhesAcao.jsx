@@ -7,11 +7,11 @@ const ModalDetalhesAcao = ({
   aberto,
   acao,
   status,
-  podeConcluir,          // opcional (do pai)
+  // podeConcluir,  // agora ignoramos esse valor externo
   onClose,
-  onConcluir,           // chamado para marcar como Concluída
-  onAfterSave,          // opcional: pai recarrega lista
-  onAfterDelete,        // opcional: pai recarrega lista
+  onConcluir,
+  onAfterSave,
+  onAfterDelete,
 }) => {
   if (!aberto || !acao) return null;
 
@@ -20,11 +20,15 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const [obsAcao, setObsAcao] = useState("");
   const [resultado, setResultado] = useState("");
-  const [fotosAcao, setFotosAcao] = useState([]);        // já salvas
-  const [fotosConclusao, setFotosConclusao] = useState([]); // já salvas
+  const [fotosAcao, setFotosAcao] = useState([]);
+  const [fotosConclusao, setFotosConclusao] = useState([]);
 
   const [novosArquivosAcao, setNovosArquivosAcao] = useState([]);
   const [novosArquivosConclusao, setNovosArquivosConclusao] = useState([]);
+
+  // Novos: edição de responsável e vencimento
+  const [responsavel, setResponsavel] = useState("");
+  const [vencimento, setVencimento] = useState(""); // YYYY-MM-DD
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -50,6 +54,17 @@ const ModalDetalhesAcao = ({
     setFotosConclusao(baseConclusao);
     setNovosArquivosAcao([]);
     setNovosArquivosConclusao([]);
+
+    // Responsável
+    setResponsavel(acao.responsavel || "");
+
+    // Vencimento -> string yyyy-mm-dd
+    if (acao.data_vencimento) {
+      const d = new Date(acao.data_vencimento);
+      setVencimento(d.toISOString().split("T")[0]);
+    } else {
+      setVencimento("");
+    }
   }, [acao, aberto]);
 
   // ---------------------------------------------------------------------------
@@ -82,9 +97,10 @@ const ModalDetalhesAcao = ({
     if (!acao) return;
     setSaving(true);
     try {
-      // Faz upload das novas evidências (se houver)
       const novasUrlsAcao =
-        novosArquivosAcao.length > 0 ? await uploadArquivos(novosArquivosAcao) : [];
+        novosArquivosAcao.length > 0
+          ? await uploadArquivos(novosArquivosAcao)
+          : [];
       const novasUrlsConclusao =
         novosArquivosConclusao.length > 0
           ? await uploadArquivos(novosArquivosConclusao)
@@ -95,9 +111,11 @@ const ModalDetalhesAcao = ({
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
         fotos_conclusao: [...fotosConclusao, ...novasUrlsConclusao],
+        responsavel: responsavel || null,
+        data_vencimento: vencimento || null,
       };
 
-      // Compatibilidade: se a tabela ainda usa "fotos" apenas
+      // Compatibilidade: se a tabela ainda usa só "fotos"
       if (!acao.fotos_acao && !acao.fotos_conclusao) {
         payload.fotos = payload.fotos_acao;
       }
@@ -109,7 +127,6 @@ const ModalDetalhesAcao = ({
 
       if (error) throw error;
 
-      // Atualiza estados locais com o que foi salvo
       setFotosAcao(payload.fotos_acao);
       setFotosConclusao(payload.fotos_conclusao);
       setNovosArquivosAcao([]);
@@ -129,7 +146,7 @@ const ModalDetalhesAcao = ({
       "Para excluir a ação, digite a senha de autorização:"
     );
 
-    if (senha === null) return; // cancelou
+    if (senha === null) return;
     if (senha !== "Excluir") {
       alert("Senha incorreta. A ação não será excluída.");
       return;
@@ -156,13 +173,16 @@ const ModalDetalhesAcao = ({
   };
 
   // Regra local para poder concluir:
+  // – status != Concluída
+  // – há texto de conclusão
+  // – há pelo menos 1 evidência de conclusão (já salva ou nova)
   const podeConcluirLocal =
     status !== "Concluída" &&
     resultado.trim().length > 0 &&
     (fotosConclusao.length + novosArquivosConclusao.length) > 0;
 
-  const podeConcluirFinal =
-    typeof podeConcluir === "boolean" ? podeConcluir : podeConcluirLocal;
+  // Agora ignoramos o boolean externo e usamos apenas o estado atual do popup
+  const podeConcluirFinal = podeConcluirLocal;
 
   const handleFinalizarClick = async () => {
     if (!podeConcluirLocal) {
@@ -172,10 +192,10 @@ const ModalDetalhesAcao = ({
       return;
     }
 
-    // Primeiro salva o que foi editado
+    // Primeiro salva o que está no popup
     await handleSalvar();
 
-    // Depois dispara o fluxo de conclusão (status = Concluída)
+    // Depois marca como concluída
     if (typeof onConcluir === "function") onConcluir();
   };
 
@@ -184,8 +204,8 @@ const ModalDetalhesAcao = ({
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
-  const dataVencimento = acao.data_vencimento
-    ? new Date(acao.data_vencimento).toLocaleDateString()
+  const dataVencimentoLabel = vencimento
+    ? new Date(vencimento).toLocaleDateString()
     : "-";
 
   return (
@@ -217,7 +237,7 @@ const ModalDetalhesAcao = ({
               Ação
             </h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-              {/* Linha de status / datas (maior) */}
+              {/* Linha de status / criação / vencimento / responsável (legível) */}
               <div className="flex flex-wrap gap-4 text-xs sm:text-sm text-gray-600">
                 <span>
                   <strong className="font-semibold">Status:</strong> {status}
@@ -228,16 +248,43 @@ const ModalDetalhesAcao = ({
                 </span>
                 <span>
                   <strong className="font-semibold">Vencimento:</strong>{" "}
-                  {dataVencimento}
+                  {dataVencimentoLabel}
                 </span>
                 <span>
                   <strong className="font-semibold">Responsável:</strong>{" "}
-                  {acao.responsavel || "-"}
+                  {responsavel || "-"}
                 </span>
               </div>
 
+              {/* Inputs de edição de responsável e vencimento */}
+              <div className="mt-3 flex flex-wrap gap-4 text-xs sm:text-sm">
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                    Responsável
+                  </span>
+                  <input
+                    type="text"
+                    value={responsavel}
+                    onChange={(e) => setResponsavel(e.target.value)}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-56"
+                    placeholder="Nome do responsável"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                    Vencimento
+                  </span>
+                  <input
+                    type="date"
+                    value={vencimento}
+                    onChange={(e) => setVencimento(e.target.value)}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-40"
+                  />
+                </div>
+              </div>
+
               {/* Observações da ação */}
-              <div className="mt-2">
+              <div className="mt-3">
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
                   Observações
                 </span>
@@ -251,7 +298,7 @@ const ModalDetalhesAcao = ({
               </div>
 
               {/* Evidências da ação */}
-              <div className="mt-2">
+              <div className="mt-3">
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
                   Evidências (registro da ação)
                 </span>
@@ -312,7 +359,6 @@ const ModalDetalhesAcao = ({
               Conclusão da ação
             </h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-              {/* Resultado */}
               <div>
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
                   Observação do que foi realizado
@@ -326,7 +372,6 @@ const ModalDetalhesAcao = ({
                 />
               </div>
 
-              {/* Evidências de conclusão */}
               <div>
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
                   Evidências do que foi feito
