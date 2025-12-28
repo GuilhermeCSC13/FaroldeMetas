@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { Mic, Square, Calendar, Loader2, Cpu } from 'lucide-react';
+import { Mic, Square, Calendar, Loader2, Cpu, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getGeminiFlash } from '../services/gemini'; // <--- IMPORT CENTRALIZADO
+import { getGeminiFlash } from '../services/gemini';
 
 const Copiloto = () => {
   const navigate = useNavigate();
@@ -24,13 +24,13 @@ const Copiloto = () => {
   }, []);
 
   const fetchReunioesHoje = async () => {
+    // Busca reuniões de hoje ou futuras próximas para teste
     const hoje = new Date().toISOString().split('T')[0];
     const { data } = await supabase
       .from('reunioes')
       .select('*')
-      .gte('data_hora', `${hoje}T00:00:00`)
-      .lte('data_hora', `${hoje}T23:59:59`)
-      .order('data_hora');
+      .order('data_hora', { ascending: false }) // Pega as mais recentes primeiro
+      .limit(10);
     
     setReunioesHoje(data || []);
     if (data && data.length > 0) setReuniaoSelecionada(data[0].id);
@@ -43,13 +43,9 @@ const Copiloto = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
       
-      if (MediaRecorder.isTypeSupported(options.mimeType)) {
-        mediaRecorderRef.current = new MediaRecorder(stream, options);
-      } else {
-        mediaRecorderRef.current = new MediaRecorder(stream);
-      }
-
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
       audioChunksRef.current = [];
+      
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
@@ -77,15 +73,7 @@ const Copiloto = () => {
   const blobToGenerativePart = async (blob, mimeType) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64data = reader.result.split(',')[1];
-        resolve({
-          inlineData: {
-            data: base64data,
-            mimeType
-          },
-        });
-      };
+      reader.onloadend = () => resolve({ inlineData: { data: reader.result.split(',')[1], mimeType } });
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
@@ -93,68 +81,57 @@ const Copiloto = () => {
 
   const processarAudioComIA = async () => {
     setIsProcessing(true);
-    setStatusText("Preparando áudio...");
+    setStatusText("Enviando áudio...");
     
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const fileName = `reuniao-${reuniaoSelecionada}-${Date.now()}.webm`;
 
     try {
-      // A. Upload Supabase
-      setStatusText("Salvando áudio na nuvem...");
+      // 1. Upload
       const { error: uploadError } = await supabase.storage.from('gravacoes').upload(fileName, audioBlob);
-      if (uploadError) throw uploadError;
+      if (uploadError) console.error("Erro upload:", uploadError); // Continua mesmo se der erro de upload, para tentar gerar a ata
 
       const { data: urlData } = supabase.storage.from('gravacoes').getPublicUrl(fileName);
-      const publicUrl = urlData.publicUrl;
 
-      // B. IA Gemini
-      setStatusText("A IA está ouvindo e transcrevendo...");
-      
-      const model = getGeminiFlash(); // <--- USA O SERVIÇO
+      // 2. Transcrição IA
+      setStatusText("Gerando Ata com IA...");
+      const model = getGeminiFlash(); 
       const audioPart = await blobToGenerativePart(audioBlob, "audio/webm");
 
       const prompt = `
-        Você é um secretário executivo tático.
-        Ouça o áudio desta reunião e gere uma ATA FORMAL.
+        Gere uma ATA DE REUNIÃO profissional com base neste áudio.
         
-        Estrutura obrigatória:
-        DATA: ${new Date().toLocaleDateString()}
-        DURAÇÃO: ${Math.floor(timer / 60)} min e ${timer % 60} seg
+        FORMATO OBRIGATÓRIO:
+        - Tópicos Discutidos: (Lista bullet points)
+        - Decisões Tomadas: (O que ficou decidido)
+        - Próximos Passos: (Ações futuras)
         
-        RESUMO DOS TÓPICOS:
-        - [Lista]
-        
-        DECISÕES TOMADAS:
-        - [Lista]
-        
-        AÇÕES E PENDÊNCIAS:
-        - [Ação] (Responsável: [Nome])
+        Se o áudio for apenas um teste, diga: "Gravação de teste realizada com sucesso."
       `;
 
       const result = await model.generateContent([prompt, audioPart]);
-      const response = await result.response;
-      const textoGerado = response.text();
+      const textoGerado = result.response.text();
 
-      setStatusText("Finalizando...");
+      setStatusText("Salvando...");
 
-      // C. Atualizar Banco
+      // 3. Atualizar Banco - FORÇANDO ATUALIZAÇÃO
       const { error: updateError } = await supabase
         .from('reunioes')
         .update({ 
-            audio_url: publicUrl,
-            pauta: textoGerado,
+            audio_url: urlData.publicUrl,
+            pauta: textoGerado, // <--- Aqui entra o texto da IA
             status: 'Realizada'
         })
         .eq('id', reuniaoSelecionada);
 
       if (updateError) throw updateError;
 
-      alert("Ata gerada com sucesso!");
+      alert("Ata gerada e salva com sucesso!");
       navigate(`/reunioes/${reuniaoSelecionada}`);
 
     } catch (error) {
       console.error(error);
-      alert("Erro: " + error.message);
+      alert("Erro ao processar: " + error.message);
     } finally {
       setIsProcessing(false);
       setStatusText("");
@@ -185,25 +162,19 @@ const Copiloto = () => {
             </div>
 
             <div className="mb-10 text-left bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Vincular à Reunião de Hoje</label>
-                {reunioesHoje.length > 0 ? (
-                    <select 
-                        value={reuniaoSelecionada} 
-                        onChange={(e) => setReuniaoSelecionada(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-600 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        disabled={isRecording || isProcessing}
-                    >
-                        {reunioesHoje.map(r => (
-                            <option key={r.id} value={r.id}>
-                                {new Date(r.data_hora).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - {r.titulo}
-                            </option>
-                        ))}
-                    </select>
-                ) : (
-                    <div className="text-yellow-400 text-sm flex items-center gap-2 bg-yellow-400/10 p-2 rounded border border-yellow-400/20">
-                        <Calendar size={16}/> Nenhuma reunião agendada para hoje.
-                    </div>
-                )}
+                <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Selecione a Reunião</label>
+                <select 
+                    value={reuniaoSelecionada} 
+                    onChange={(e) => setReuniaoSelecionada(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-600 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    disabled={isRecording || isProcessing}
+                >
+                    {reunioesHoje.map(r => (
+                        <option key={r.id} value={r.id}>
+                            {new Date(r.data_hora).toLocaleDateString()} - {r.titulo} ({r.status})
+                        </option>
+                    ))}
+                </select>
             </div>
 
             <div className="mb-8 h-24 flex flex-col items-center justify-center relative">
@@ -238,7 +209,6 @@ const Copiloto = () => {
                     </button>
                 )}
             </div>
-            <p className="mt-8 text-xs text-slate-500">{isRecording ? "Gravando (16kbps)..." : "Pressione para iniciar."}</p>
         </div>
       </div>
     </Layout>
