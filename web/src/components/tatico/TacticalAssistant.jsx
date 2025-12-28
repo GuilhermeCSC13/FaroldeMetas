@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { getGeminiFlash } from '../../services/gemini';
-import { MessageSquare, X, Send, Bot, Loader2, Check, Trash2, CalendarClock, WifiOff } from 'lucide-react';
+import { MessageSquare, X, Send, Bot, Loader2, Check, Trash2, CalendarClock, Ban } from 'lucide-react'; // Adicionei Ban icon
 import { salvarReuniao } from '../../services/agendaService';
 
 const TacticalAssistant = () => {
@@ -63,14 +63,13 @@ const TacticalAssistant = () => {
     } catch (err) { return " (Erro ao ler agenda. Responda com base no chat.)"; }
   };
 
-  // --- 3. PROCESSAMENTO DA IA (COM MEMÓRIA DE CONVERSA) ---
+  // --- 3. PROCESSAMENTO DA IA ---
   const handleSend = async () => {
     if (!input.trim()) return;
     if (!navigator.onLine) { setMessages(prev => [...prev, { role: 'assistant', text: "⚠️ Sem internet." }]); return; }
 
     const userMsg = input;
     setInput('');
-    // Atualiza estado local imediatamente para feedback visual
     const newMessages = [...messages, { role: 'user', text: userMsg }];
     setMessages(newMessages);
     setLoading(true);
@@ -79,35 +78,26 @@ const TacticalAssistant = () => {
       const dadosContexto = await buscarContextoDados();
       const model = getGeminiFlash();
 
-      // --- CRIAÇÃO DO HISTÓRICO PARA O PROMPT ---
-      // Pegamos as últimas 6 mensagens para a IA entender o contexto da conversa (perguntas e respostas anteriores)
       const historicoChat = newMessages.slice(-6).map(m => 
         `${m.role === 'user' ? 'USUÁRIO' : 'IA'}: ${m.text}`
       ).join('\n');
 
       const prompt = `
         Você é o Copiloto do Farol Tático.
-        
-        DADOS DO SISTEMA:
-        ${dadosContexto}
-
-        HISTÓRICO DA CONVERSA RECENTE:
-        ${historicoChat}
-        
+        DADOS: ${dadosContexto}
+        HISTÓRICO: ${historicoChat}
         HOJE: ${new Date().toLocaleString('pt-BR')}
 
         INSTRUÇÕES:
-        1. Analise o "HISTÓRICO DA CONVERSA". Se eu estava no meio de um agendamento e acabei de responder uma pergunta (ex: título), USE essa resposta para finalizar.
-        2. Se tiver todos os dados (Data, Hora, Título), retorne APENAS o JSON.
-        3. Se faltar dados, pergunte apenas o que falta.
+        1. Analise o histórico. Se eu respondi um horário ou título pendente, use para finalizar.
+        2. Se tiver todos os dados, retorne JSON.
+        3. Se faltar algo, pergunte.
 
-        FORMATO JSON OBRIGATÓRIO (Para agendar):
-        { "intent": "schedule", "titulo": "...", "data": "YYYY-MM-DD", "hora": "HH:MM", "recorrencia": "unica" }
+        FORMATO JSON (Agendar): { "intent": "schedule", "titulo": "...", "data": "YYYY-MM-DD", "hora": "HH:MM", "recorrencia": "unica" }
       `;
 
       const result = await model.generateContent(prompt);
       const text = result.response.text();
-
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
       if (cleanText.startsWith('{') && cleanText.includes('"intent": "schedule"')) {
@@ -117,8 +107,7 @@ const TacticalAssistant = () => {
       }
 
     } catch (error) {
-      console.error(error);
-      setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ Erro: ${error.message || 'Falha na IA'}` }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ Erro na IA: ${error.message}` }]);
     } finally {
       setLoading(false);
     }
@@ -128,7 +117,6 @@ const TacticalAssistant = () => {
   const handleCreateMeetingIntent = async (dadosJSON) => {
     try {
         const dados = JSON.parse(dadosJSON);
-        // Fallbacks de segurança
         if (!dados.hora) dados.hora = "09:00"; 
         if (!dados.titulo) dados.titulo = "Reunião";
 
@@ -152,15 +140,20 @@ const TacticalAssistant = () => {
             cor: '#2563EB',
             area_id: 4,
             responsavel: 'IA Copiloto',
-            pauta: `Agendado via IA.\nSolicitação: ${dados.intent || 'Chat'}`
+            pauta: `Agendado via IA.`
         }, dados.recorrencia || 'unica');
 
-        setMessages(prev => [...prev, { role: 'assistant', text: `✅ Agendado: ${dados.titulo} em ${dados.data} às ${dados.hora}.` }]);
+        setMessages(prev => [...prev, { role: 'assistant', text: `✅ Confirmado! Reunião "${dados.titulo}" agendada.` }]);
     } catch (error) {
         setMessages(prev => [...prev, { role: 'assistant', text: "Erro ao gravar no banco." }]);
     } finally {
         setLoading(false);
     }
+  };
+
+  // --- NOVA FUNÇÃO: CANCELAR ---
+  const cancelarAgendamento = () => {
+    setMessages(prev => [...prev, { role: 'assistant', text: "🚫 Operação cancelada. Como mais posso ajudar?" }]);
   };
 
   return (
@@ -173,6 +166,7 @@ const TacticalAssistant = () => {
 
       {isOpen && (
         <div className="fixed bottom-6 right-6 w-96 h-[550px] bg-white rounded-2xl shadow-2xl flex flex-col z-50 border border-slate-200 overflow-hidden font-sans animate-in slide-in-from-bottom-10 fade-in duration-300">
+          {/* Header */}
           <div className="bg-slate-900 p-4 flex justify-between items-center text-white border-b border-blue-900">
             <div className="flex items-center gap-2">
                 <div className="bg-blue-600 p-1.5 rounded-lg"><Bot size={16} /></div>
@@ -184,20 +178,35 @@ const TacticalAssistant = () => {
             </div>
           </div>
           
+          {/* Chat Body */}
           <div className="flex-1 overflow-y-auto p-4 bg-slate-50 space-y-4 custom-scrollbar">
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 {msg.type === 'confirmation' ? (
-                    <div className="bg-white border border-blue-200 p-4 rounded-xl shadow-lg w-[95%]">
-                        <div className="flex items-center gap-2 mb-3 text-blue-700 font-bold text-xs uppercase border-b pb-2"><CalendarClock size={14}/> Agendamento</div>
-                        <div className="mb-4 text-sm text-slate-700 space-y-1">
+                    <div className="bg-white border border-blue-200 p-4 rounded-xl shadow-md w-[95%] animate-in zoom-in-95">
+                        <div className="flex items-center gap-2 mb-3 text-blue-700 font-bold text-xs uppercase border-b border-blue-50 pb-2">
+                            <CalendarClock size={14}/> Validação de Agenda
+                        </div>
+                        <div className="mb-4 text-sm text-slate-700 space-y-1.5">
                             <p><span className="text-slate-400 font-medium w-16 inline-block">Evento:</span> <strong>{msg.data.titulo}</strong></p>
                             <p><span className="text-slate-400 font-medium w-16 inline-block">Data:</span> {msg.data.data}</p>
                             <p><span className="text-slate-400 font-medium w-16 inline-block">Hora:</span> {msg.data.hora}</p>
                         </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => confirmarAgendamento(msg.data)} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-lg"><Check size={16}/> Confirmar</button>
-                            <button className="flex-1 bg-white border hover:bg-slate-50 text-slate-600 text-xs font-bold py-3 rounded-lg">Cancelar</button>
+                        
+                        {/* --- BOTÕES AJUSTADOS --- */}
+                        <div className="flex gap-3 mt-2">
+                            <button 
+                                onClick={() => confirmarAgendamento(msg.data)} 
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-sm active:scale-95"
+                            >
+                                <Check size={16} className="stroke-[3]" /> Confirmar
+                            </button>
+                            <button 
+                                onClick={cancelarAgendamento} // Agora funciona!
+                                className="flex-1 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-bold py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-1"
+                            >
+                                <Ban size={14} /> Cancelar
+                            </button>
                         </div>
                     </div>
                 ) : (
