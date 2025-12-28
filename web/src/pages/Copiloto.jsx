@@ -3,36 +3,38 @@ import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
 import { 
   Mic, Square, Loader2, Cpu, CheckCircle, Search, Calendar, Clock, ExternalLink, 
-  Plus, ListTodo, User, FileText, AlertTriangle, Trash2, Camera, Image as ImageIcon, X
+  Plus, ListTodo, User, FileText, AlertTriangle, Trash2, Camera, Image as ImageIcon
 } from 'lucide-react';
 import { getGeminiFlash } from '../services/gemini';
 import { useNavigate } from 'react-router-dom';
 
+// --- VARIÁVEIS GLOBAIS (Persistem entre navegações) ---
+// Elas mantêm a gravação viva mesmo se você sair da tela
+let globalRecorder = null;
+let globalChunks = [];
+let globalReuniao = null;
+let globalStartTime = null;
+
 const Copiloto = () => {
   const navigate = useNavigate();
   
-  // --- ESTADOS GERAIS ---
+  // Estados Gerais
   const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split('T')[0]);
   const [listaReunioes, setListaReunioes] = useState([]);
   const [reuniaoSelecionada, setReuniaoSelecionada] = useState(null);
   const [buscaTexto, setBuscaTexto] = useState('');
   const [loadingList, setLoadingList] = useState(false);
 
-  // --- ESTADOS DE AÇÕES ---
-  const [acoesAnteriores, setAcoesAnteriores] = useState([]); // Pendências antigas
-  const [acoesCriadasAgora, setAcoesCriadasAgora] = useState([]); // Criadas nesta sessão
+  // Estados Ações
+  const [acoesAnteriores, setAcoesAnteriores] = useState([]);
+  const [acoesCriadasAgora, setAcoesCriadasAgora] = useState([]);
   const [loadingAcoes, setLoadingAcoes] = useState(false);
   
-  // Form Nova Ação
-  const [novaAcao, setNovaAcao] = useState({ 
-    descricao: '', 
-    responsavel: '', 
-    vencimento: '' 
-  });
-  const [fotosAcao, setFotosAcao] = useState([]); // Arquivos locais para upload
+  const [novaAcao, setNovaAcao] = useState({ descricao: '', responsavel: '', vencimento: '' });
+  const [fotosAcao, setFotosAcao] = useState([]);
   const [uploadingFotos, setUploadingFotos] = useState(false);
 
-  // --- ESTADOS DE GRAVAÇÃO/IA ---
+  // Estados Gravação
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusText, setStatusText] = useState("");
@@ -42,19 +44,48 @@ const Copiloto = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
-  const startTimeRef = useRef(null); // Para calcular tempo real mesmo trocando de aba
 
-  // 1. Carrega reuniões ao mudar data
+  // --- 1. RESTAURAÇÃO DE SESSÃO (O SEGREDO) ---
   useEffect(() => {
-    fetchReunioesPorData();
-  }, [dataFiltro]);
+    // Se existe uma gravação global rodando ao entrar na tela:
+    if (globalRecorder && globalRecorder.state === 'recording') {
+        console.log("Restaurando sessão de gravação...");
+        
+        // 1. Reconecta as referências
+        mediaRecorderRef.current = globalRecorder;
+        audioChunksRef.current = globalChunks;
+        
+        // 2. Restaura o estado visual
+        setIsRecording(true);
+        setReuniaoSelecionada(globalReuniao);
+        
+        // 3. Recalcula e reinicia o timer visual
+        if (globalStartTime) {
+            const elapsed = Math.floor((Date.now() - globalStartTime) / 1000);
+            setTimer(elapsed);
+            
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = setInterval(() => {
+                setTimer(Math.floor((Date.now() - globalStartTime) / 1000));
+            }, 1000);
+        }
+    }
 
-  // 2. Ao selecionar reunião
+    fetchReunioesPorData();
+    
+    // Cleanup ao desmontar (mas NÃO para a gravação global)
+    return () => clearInterval(timerIntervalRef.current);
+  }, []); // Roda apenas uma vez ao montar o componente
+
+  // --- Monitora Reunião Selecionada ---
   useEffect(() => {
     if (reuniaoSelecionada) {
       setPautaExistente(reuniaoSelecionada.pauta || null);
       fetchAcoesCompletas(reuniaoSelecionada);
-      setAcoesCriadasAgora([]); // Limpa as criadas visualmente ao trocar de reunião
+      // Se não estivermos restaurando uma sessão, limpa as criadas agora
+      if (globalReuniao?.id !== reuniaoSelecionada.id) {
+          setAcoesCriadasAgora([]);
+      }
     } else {
       setPautaExistente(null);
       setAcoesAnteriores([]);
@@ -62,91 +93,52 @@ const Copiloto = () => {
     }
   }, [reuniaoSelecionada]);
 
-  // --- PROTEÇÃO CONTRA SAÍDA ACIDENTAL ---
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (isRecording) {
-        e.preventDefault();
-        e.returnValue = 'Gravação em andamento. Deseja sair?';
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isRecording]);
-
-  // --- BUSCAS DE DADOS ---
+  // --- BUSCAS (Mantidas iguais) ---
   const fetchReunioesPorData = async () => {
     setLoadingList(true);
-    if (!isRecording) setReuniaoSelecionada(null); 
+    // Só limpa a seleção se NÃO estiver gravando
+    if (!globalRecorder) setReuniaoSelecionada(null); 
+    
     try {
       const inicioDia = `${dataFiltro}T00:00:00`;
       const fimDia = `${dataFiltro}T23:59:59`;
-
       const { data, error } = await supabase
         .from('reunioes')
         .select('*')
         .gte('data_hora', inicioDia)
         .lte('data_hora', fimDia)
         .order('data_hora', { ascending: true });
-
       if (error) throw error;
       setListaReunioes(data || []);
-    } catch (error) {
-      console.error("Erro agenda:", error);
-    } finally {
-      setLoadingList(false);
-    }
+      
+      // Se estiver restaurando, garante que a reunião selecionada apareça na lista visualmente
+      if (globalReuniao) {
+          const existe = data.find(r => r.id === globalReuniao.id);
+          if (!existe) setListaReunioes(prev => [...prev, globalReuniao]);
+      }
+
+    } catch (error) { console.error(error); } finally { setLoadingList(false); }
   };
 
   const fetchAcoesCompletas = async (reuniao) => {
     setLoadingAcoes(true);
     try {
-        // 1. Buscar Ações Anteriores (Do mesmo TIPO, mas de outras datas)
         if (reuniao.tipo_reuniao) {
-            const { data: idsDoTipo } = await supabase
-                .from('reunioes')
-                .select('id')
-                .eq('tipo_reuniao', reuniao.tipo_reuniao)
-                .neq('id', reuniao.id); // Não pega a atual
-            
+            const { data: idsDoTipo } = await supabase.from('reunioes').select('id').eq('tipo_reuniao', reuniao.tipo_reuniao).neq('id', reuniao.id);
             const listaIds = (idsDoTipo || []).map(r => r.id);
-            
             if (listaIds.length > 0) {
-                const { data: pendencias } = await supabase
-                    .from('acoes')
-                    .select('*')
-                    .in('reuniao_id', listaIds)
-                    .eq('status', 'Aberta')
-                    .order('data_criacao', { ascending: false });
+                const { data: pendencias } = await supabase.from('acoes').select('*').in('reuniao_id', listaIds).eq('status', 'Aberta').order('data_criacao', { ascending: false });
                 setAcoesAnteriores(pendencias || []);
-            } else {
-                setAcoesAnteriores([]);
-            }
+            } else { setAcoesAnteriores([]); }
         }
-
-        // 2. Buscar Ações DESTA reunião (já salvas no banco)
-        const { data: criadasHoje } = await supabase
-            .from('acoes')
-            .select('*')
-            .eq('reuniao_id', reuniao.id)
-            .order('data_criacao', { ascending: false });
-        
+        const { data: criadasHoje } = await supabase.from('acoes').select('*').eq('reuniao_id', reuniao.id).order('data_criacao', { ascending: false });
         setAcoesCriadasAgora(criadasHoje || []);
-
-    } catch (e) {
-      console.error("Erro ao buscar ações:", e);
-    } finally {
-      setLoadingAcoes(false);
-    }
+    } catch (e) { console.error(e); } finally { setLoadingAcoes(false); }
   };
 
-  // --- GESTÃO DE AÇÕES ---
-  const handlePhotoSelect = (e) => {
-    if (e.target.files) {
-        setFotosAcao(prev => [...prev, ...Array.from(e.target.files)]);
-    }
-  };
-
+  // --- LÓGICA DE AÇÕES (Upload e Save) ---
+  const handlePhotoSelect = (e) => { if (e.target.files) setFotosAcao(prev => [...prev, ...Array.from(e.target.files)]); };
+  
   const uploadFotos = async () => {
     const urls = [];
     for (const file of fotosAcao) {
@@ -162,11 +154,9 @@ const Copiloto = () => {
 
   const salvarNovaAcao = async () => {
     if (!novaAcao.descricao || !reuniaoSelecionada) return alert("Descreva a ação.");
-    
     setUploadingFotos(true);
     try {
         const urlsFotos = await uploadFotos();
-
         const payload = {
             descricao: novaAcao.descricao,
             responsavel: novaAcao.responsavel || 'A Definir',
@@ -174,77 +164,75 @@ const Copiloto = () => {
             reuniao_id: reuniaoSelecionada.id,
             status: 'Aberta',
             data_criacao: new Date().toISOString(),
-            fotos: urlsFotos // Salva array de URLs
+            fotos: urlsFotos
         };
-
         const { data, error } = await supabase.from('acoes').insert([payload]).select();
         if (error) throw error;
-
         if (data) {
             setAcoesCriadasAgora([data[0], ...acoesCriadasAgora]);
             setNovaAcao({ descricao: '', responsavel: '', vencimento: '' });
             setFotosAcao([]);
         }
-    } catch (error) {
-        alert("Erro ao salvar ação: " + error.message);
-    } finally {
-        setUploadingFotos(false);
-    }
+    } catch (error) { alert("Erro ao salvar ação: " + error.message); } finally { setUploadingFotos(false); }
   };
 
-  // --- LÓGICA DE GRAVAÇÃO ROBUSTA ---
+  // --- LÓGICA DE GRAVAÇÃO (COM PERSISTÊNCIA GLOBAL) ---
   const startRecording = async () => {
     if (!reuniaoSelecionada) return alert("⚠️ Selecione uma reunião primeiro.");
-
-    // Verifica se já foi realizada
-    if (reuniaoSelecionada.status === 'Realizada') {
-        const confirmar = window.confirm(
-            `ATENÇÃO: Esta reunião já consta como REALIZADA.\n\n` +
-            `Início registrado: ${new Date(reuniaoSelecionada.horario_inicio).toLocaleTimeString()}\n` +
-            `Deseja realmente iniciar uma NOVA gravação e sobrescrever a ata?`
-        );
-        if (!confirmar) return;
-    }
+    if (reuniaoSelecionada.status === 'Realizada' && !window.confirm("Esta reunião já foi realizada. Deseja sobrescrever a ata?")) return;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
+      audioChunksRef.current = []; // Reseta local
       
-      mediaRecorderRef.current.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      // Configura eventos
+      mediaRecorderRef.current.ondataavailable = e => { 
+          if (e.data.size > 0) {
+              audioChunksRef.current.push(e.data);
+              globalChunks.push(e.data); // Salva no global também
+          }
+      };
+      
       mediaRecorderRef.current.onstop = processarAudioComIA;
-      
       mediaRecorderRef.current.start(1000);
+
+      // --- SALVA NO GLOBAL PARA PERSISTIR ---
+      globalRecorder = mediaRecorderRef.current;
+      globalChunks = []; // Limpa o global antigo
+      globalReuniao = reuniaoSelecionada;
+      globalStartTime = Date.now();
+
       setIsRecording(true);
-      
-      // Timer seguro contra troca de abas
-      startTimeRef.current = Date.now();
       setTimer(0);
+      
+      // Timer visual
+      clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = setInterval(() => {
-        setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
+        setTimer(Math.floor((Date.now() - globalStartTime) / 1000));
       }, 1000);
 
-      // Salva Horário de Início no Banco
-      await supabase.from('reunioes')
-        .update({ horario_inicio: new Date().toISOString(), status: 'Em Andamento' })
-        .eq('id', reuniaoSelecionada.id);
+      // Marca inicio no banco
+      await supabase.from('reunioes').update({ horario_inicio: new Date().toISOString(), status: 'Em Andamento' }).eq('id', reuniaoSelecionada.id);
 
-    } catch (err) {
-      alert("Erro Mic: " + err.message);
-    }
+    } catch (err) { alert("Erro Mic: " + err.message); }
   };
 
   const stopRecording = async () => {
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stop(); // Isso dispara o onstop -> processarAudioComIA
+      
+      // Limpa Globais
+      globalRecorder = null;
+      globalChunks = [];
+      globalReuniao = null;
+      globalStartTime = null;
+      
       setIsRecording(false);
       clearInterval(timerIntervalRef.current);
       mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
 
-      // Salva Horário de Fim no Banco
-      await supabase.from('reunioes')
-        .update({ horario_fim: new Date().toISOString() })
-        .eq('id', reuniaoSelecionada.id);
+      await supabase.from('reunioes').update({ horario_fim: new Date().toISOString() }).eq('id', reuniaoSelecionada.id);
     }
   };
 
@@ -260,6 +248,7 @@ const Copiloto = () => {
     setIsProcessing(true);
     setStatusText("Processando áudio...");
     
+    // Usa o ref local que está sincronizado
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const fileName = `rec-${reuniaoSelecionada.id}-${Date.now()}.webm`;
 
@@ -271,24 +260,15 @@ const Copiloto = () => {
       const model = getGeminiFlash();
       const audioPart = await blobToGenerativePart(audioBlob, "audio/webm");
 
-      // PROMPT ANTI-ALUCINAÇÃO
       const prompt = `
         Você é uma IA de auditoria de reuniões.
         Analise o áudio da reunião: "${reuniaoSelecionada.titulo}".
-
-        REGRAS DE OURO (ANTI-ALUCINAÇÃO):
-        1. Se o áudio for silêncio, ruído, ou apenas "teste", "som", "123":
-           RESPONDA APENAS: "Gravação de teste identificada. Sem conteúdo relevante."
-           NÃO INVENTE PAUTA. NÃO CRIE NOMES FICTÍCIOS.
-
-        2. Se houver conteúdo real, gere a ata em Markdown:
+        1. Se for ruído/teste, responda APENAS: "Gravação de teste identificada."
+        2. Se for real, gere Markdown:
            # ATA DE REUNIÃO
            ## 1. Resumo
-           [Resumo real do que foi dito]
            ## 2. Decisões
-           * ✅ [Decisões reais]
            ## 3. Ações
-           * [Quem] -> [O que]
       `;
 
       const result = await model.generateContent([prompt, audioPart]);
@@ -302,27 +282,20 @@ const Copiloto = () => {
       }).eq('id', reuniaoSelecionada.id);
 
       setPautaExistente(texto);
-      
-      // Atualiza lista local
       setListaReunioes(prev => prev.map(r => r.id === reuniaoSelecionada.id ? {...r, pauta: texto, status: 'Realizada'} : r));
       setStatusText("Salvo!");
 
-    } catch (error) {
-      alert("Erro IA: " + error.message);
-    } finally {
-      setIsProcessing(false);
-    }
+    } catch (error) { alert("Erro IA: " + error.message); } finally { setIsProcessing(false); }
   };
 
   const formatTime = (s) => `${Math.floor(s / 60).toString().padStart(2,'0')}:${(s % 60).toString().padStart(2,'0')}`;
-
   const listaFiltrada = listaReunioes.filter(r => r.titulo.toLowerCase().includes(buscaTexto.toLowerCase()));
 
   return (
     <Layout>
       <div className="h-screen bg-slate-900 text-white font-sans flex overflow-hidden">
         
-        {/* --- ESQUERDA: LISTA E GRAVADOR --- */}
+        {/* --- COLUNA ESQUERDA --- */}
         <div className="w-7/12 flex flex-col p-6 border-r border-slate-800 relative">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-2xl font-bold flex items-center gap-2"><Cpu className="text-blue-400" /> Copiloto Tático</h1>
@@ -331,7 +304,6 @@ const Copiloto = () => {
                 </div>
             </div>
 
-            {/* Filtros */}
             <div className={`grid grid-cols-2 gap-3 mb-4 transition-opacity ${isRecording ? 'opacity-40 pointer-events-none' : ''}`}>
                 <div className="bg-slate-800 border border-slate-700 rounded-lg flex items-center px-3 py-2">
                     <Calendar size={16} className="text-slate-400 mr-2" />
@@ -343,7 +315,6 @@ const Copiloto = () => {
                 </div>
             </div>
 
-            {/* Lista */}
             <div className={`flex-1 bg-slate-800/50 border border-slate-700 rounded-xl mb-6 overflow-y-auto custom-scrollbar ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
                 {loadingList ? <div className="p-4 text-center"><Loader2 className="animate-spin inline mr-2"/> Carregando...</div> :
                  listaFiltrada.map(r => (
@@ -364,7 +335,6 @@ const Copiloto = () => {
                 ))}
             </div>
 
-            {/* Gravador */}
             <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-center relative overflow-hidden shrink-0">
                 {isProcessing ? (
                     <div className="text-center"><Loader2 className="animate-spin text-blue-400 mb-2 mx-auto"/><span className="text-xs animate-pulse">{statusText}</span></div>
@@ -388,88 +358,67 @@ const Copiloto = () => {
                         )}
                     </div>
                 )}
+                 {isRecording && (
+                    <div className="absolute bottom-0 left-0 w-full flex items-end justify-center gap-1 h-full opacity-20 pointer-events-none px-4 pb-2">
+                        {[...Array(30)].map((_, i) => (
+                            <div key={i} className="flex-1 bg-red-500 rounded-t-sm transition-all duration-100" style={{ height: `${Math.random() * 80 + 10}%` }}></div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
 
-        {/* --- DIREITA: GESTÃO COMPLETA --- */}
+        {/* --- COLUNA DIREITA --- */}
         <div className="w-5/12 bg-slate-900 flex flex-col border-l border-slate-800">
-            
-            {/* 1. Criar Ação */}
             <div className="p-5 border-b border-slate-800 bg-slate-800/30">
-                <h2 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Plus size={14}/> Nova Ação / Pendência</h2>
+                <h2 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Plus size={14}/> Nova Ação</h2>
                 <div className={`space-y-2 ${!reuniaoSelecionada ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <textarea 
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none resize-none h-20"
-                        placeholder="Descreva o que precisa ser feito..."
-                        value={novaAcao.descricao}
-                        onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})}
-                    />
+                    <textarea className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none resize-none h-20" placeholder="O que precisa ser feito?" value={novaAcao.descricao} onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})} />
                     <div className="flex gap-2">
-                        <input className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white w-1/3 outline-none" placeholder="Responsável" value={novaAcao.responsavel} onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})} />
+                        <input className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white w-1/3 outline-none" placeholder="Quem?" value={novaAcao.responsavel} onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})} />
                         <input type="date" className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white w-1/3 outline-none" value={novaAcao.vencimento} onChange={e => setNovaAcao({...novaAcao, vencimento: e.target.value})} />
-                        
-                        {/* Upload Foto */}
-                        <label className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex items-center justify-center cursor-pointer hover:bg-slate-700">
+                         <label className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex items-center justify-center cursor-pointer hover:bg-slate-700">
                             <Camera size={16} />
                             <input type="file" multiple accept="image/*" className="hidden" onChange={handlePhotoSelect} />
-                            {fotosAcao.length > 0 && <span className="ml-1 text-green-400 font-bold">({fotosAcao.length})</span>}
+                            {fotosAcao.length > 0 && <span className="ml-1 text-green-400">({fotosAcao.length})</span>}
                         </label>
-                        
                         <button onClick={salvarNovaAcao} disabled={uploadingFotos} className="bg-blue-600 text-white px-4 rounded-lg flex items-center justify-center hover:bg-blue-500 disabled:opacity-50">
-                            {uploadingFotos ? <Loader2 size={16} className="animate-spin"/> : <Plus size={18}/>}
+                             {uploadingFotos ? <Loader2 size={16} className="animate-spin"/> : <Plus size={18}/>}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* 2. Listas de Ações (Scrollável) */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
-                
-                {/* Ações Criadas HOJE */}
                 <div>
-                    <h3 className="text-xs font-bold text-green-500 uppercase mb-2 flex items-center gap-2">
-                        <CheckCircle size={14}/> Criadas Nesta Reunião ({acoesCriadasAgora.length})
-                    </h3>
+                    <h3 className="text-xs font-bold text-green-500 uppercase mb-2 flex items-center gap-2"><CheckCircle size={14}/> Criadas Agora ({acoesCriadasAgora.length})</h3>
                     <div className="space-y-2">
                         {acoesCriadasAgora.map(acao => (
                             <div key={acao.id} className="bg-slate-800/50 border border-green-900/30 p-3 rounded-lg">
-                                <div className="flex justify-between items-start">
-                                    <p className="text-sm text-slate-200">{acao.descricao}</p>
-                                    <span className="text-[10px] bg-green-900 text-green-300 px-1.5 py-0.5 rounded ml-2">Nova</span>
-                                </div>
+                                <p className="text-sm text-slate-200">{acao.descricao}</p>
                                 <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-500">
                                     <span className="flex items-center gap-1"><User size={10}/> {acao.responsavel}</span>
-                                    {acao.data_vencimento && <span className="flex items-center gap-1 text-red-400"><Clock size={10}/> Vence: {new Date(acao.data_vencimento).toLocaleDateString()}</span>}
-                                    {acao.fotos && acao.fotos.length > 0 && <span className="flex items-center gap-1 text-blue-400"><ImageIcon size={10}/> {acao.fotos.length} fotos</span>}
+                                    {acao.data_vencimento && <span className="flex items-center gap-1 text-red-400"><Clock size={10}/> {new Date(acao.data_vencimento).toLocaleDateString()}</span>}
+                                    {acao.fotos && acao.fotos.length > 0 && <span className="flex items-center gap-1 text-blue-400"><ImageIcon size={10}/> {acao.fotos.length}</span>}
                                 </div>
                             </div>
                         ))}
-                        {acoesCriadasAgora.length === 0 && <p className="text-xs text-slate-600 italic">Nenhuma ação criada ainda.</p>}
                     </div>
                 </div>
 
-                {/* Pendências ANTERIORES */}
                 <div>
-                    <h3 className="text-xs font-bold text-amber-500 uppercase mb-2 flex items-center gap-2">
-                        <AlertTriangle size={14}/> Pendências Anteriores ({acoesAnteriores.length})
-                    </h3>
+                    <h3 className="text-xs font-bold text-amber-500 uppercase mb-2 flex items-center gap-2"><AlertTriangle size={14}/> Pendências Antigas ({acoesAnteriores.length})</h3>
                     <div className="space-y-2">
-                        {loadingAcoes ? <Loader2 className="animate-spin text-slate-500"/> : 
-                         acoesAnteriores.map(acao => (
-                            <div key={acao.id} className="bg-slate-800/30 border border-slate-700 p-3 rounded-lg opacity-80 hover:opacity-100 transition-opacity">
-                                <p className="text-sm text-slate-400 line-through- decoration-transparent">{acao.descricao}</p>
-                                <div className="flex justify-between mt-1">
-                                    <span className="text-[10px] text-slate-600">Criado em: {new Date(acao.data_criacao).toLocaleDateString()}</span>
-                                    <span className="text-[10px] text-amber-600 font-bold">{acao.responsavel}</span>
-                                </div>
+                        {acoesAnteriores.map(acao => (
+                            <div key={acao.id} className="bg-slate-800/30 border border-slate-700 p-3 rounded-lg opacity-80">
+                                <p className="text-sm text-slate-400">{acao.descricao}</p>
+                                <div className="flex justify-between mt-1"><span className="text-[10px] text-slate-600">{new Date(acao.data_criacao).toLocaleDateString()}</span><span className="text-[10px] text-amber-600 font-bold">{acao.responsavel}</span></div>
                             </div>
                         ))}
-                        {!loadingAcoes && acoesAnteriores.length === 0 && <p className="text-xs text-slate-600 italic">Nada pendente no histórico.</p>}
                     </div>
                 </div>
             </div>
-
-            {/* 3. Preview da Ata (Bottom) */}
+            
             {pautaExistente && (
                 <div className="h-40 border-t border-slate-800 bg-slate-900 p-4 overflow-y-auto custom-scrollbar">
                     <h3 className="text-xs font-bold text-blue-400 uppercase mb-2">Resumo da Ata</h3>
