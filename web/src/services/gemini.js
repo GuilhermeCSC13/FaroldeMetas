@@ -14,5 +14,5 @@ const genAI = new GoogleGenerativeAI(API_KEY || "");
 
 // 4. Exporta a função que seus componentes (Inicio e Copiloto) estão chamando
 export const getGeminiFlash = () => {
-  return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  return genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 };
