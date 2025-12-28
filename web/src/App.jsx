@@ -12,7 +12,10 @@ import Manutencao from "./pages/Manutencao";
 import ReunioesCalendario from "./pages/ReunioesCalendario";
 import DetalheReuniao from "./pages/DetalheReuniao";
 import GestaoAcoes from "./pages/GestaoAcoes";
-import CentralReunioes from "./pages/CentralReunioes"; // <--- NOVO IMPORT
+
+// Novos Módulos de Gestão
+import CentralReunioes from "./pages/CentralReunioes";
+import CentralAtas from "./pages/CentralAtas"; // <--- NOVO IMPORT
 
 // Inteligência Artificial
 import Copiloto from "./pages/Copiloto";
@@ -32,11 +35,15 @@ export default function App() {
         <Route path="/moov" element={<Moov />} />
         <Route path="/manutencao" element={<Manutencao />} />
 
-        {/* --- MÓDULO REUNIÕES --- */}
-        <Route path="/central-reunioes" element={<CentralReunioes />} /> {/* <--- NOVA ROTA PRINCIPAL */}
+        {/* --- MÓDULO REUNIÕES & ATAS --- */}
+        <Route path="/central-reunioes" element={<CentralReunioes />} /> {/* Agenda Tática */}
+        <Route path="/central-atas" element={<CentralAtas />} />         {/* Banco de Atas (NOVO) */}
+        
+        <Route path="/gestao-acoes" element={<GestaoAcoes />} />
+
+        {/* Rotas Legado/Específicas */}
         <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
         <Route path="/reunioes/:id" element={<DetalheReuniao />} />
-        <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
         {/* --- COPILOTO IA --- */}
         <Route path="/copiloto" element={<Copiloto />} />
