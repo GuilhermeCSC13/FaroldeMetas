@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { Mic, Square, Calendar, Loader2, Cpu, FileText, RefreshCw, CheckCircle } from 'lucide-react';
+import { Mic, Square, Loader2, Cpu, FileText, RefreshCw, CheckCircle, Search, Radio } from 'lucide-react';
 import { getGeminiFlash } from '../services/gemini';
 
 const Copiloto = () => {
   const [reunioesHoje, setReunioesHoje] = useState([]);
   const [reuniaoSelecionada, setReuniaoSelecionada] = useState('');
-  const [pautaExistente, setPautaExistente] = useState(null); // Cache local da ata
-  
+  const [pautaExistente, setPautaExistente] = useState(null);
+  const [busca, setBusca] = useState(''); // Estado para o filtro
+
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusText, setStatusText] = useState("");
@@ -22,7 +23,6 @@ const Copiloto = () => {
     fetchReunioesHoje();
   }, []);
 
-  // Monitora a troca de reunião para ver se já tem ata salva (Cache)
   useEffect(() => {
     if (reuniaoSelecionada) {
       const reuniao = reunioesHoje.find(r => r.id === reuniaoSelecionada);
@@ -35,21 +35,27 @@ const Copiloto = () => {
   }, [reuniaoSelecionada, reunioesHoje]);
 
   const fetchReunioesHoje = async () => {
+    // Aumentei o limite para 50 para o filtro fazer sentido
     const { data } = await supabase
       .from('reunioes')
       .select('*')
       .order('data_hora', { ascending: false })
-      .limit(10);
+      .limit(50);
     
     setReunioesHoje(data || []);
-    // Seleciona a primeira automaticamente se houver
     if (data && data.length > 0 && !reuniaoSelecionada) {
         setReuniaoSelecionada(data[0].id);
     }
   };
 
+  // Lógica de Filtro
+  const reunioesFiltradas = reunioesHoje.filter(r => 
+    r.titulo.toLowerCase().includes(busca.toLowerCase()) ||
+    new Date(r.data_hora).toLocaleDateString().includes(busca)
+  );
+
   const startRecording = async () => {
-    if (!reuniaoSelecionada) return alert("Selecione uma reunião.");
+    if (!reuniaoSelecionada) return alert("Selecione uma reunião para vincular a gravação.");
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -65,7 +71,7 @@ const Copiloto = () => {
       setTimer(0);
       intervalRef.current = setInterval(() => setTimer(t => t + 1), 1000);
     } catch (err) {
-      alert("Erro microfone: " + err.message);
+      alert("Erro ao acessar microfone. Verifique as permissões.");
     }
   };
 
@@ -89,56 +95,52 @@ const Copiloto = () => {
 
   const processarAudioComIA = async () => {
     setIsProcessing(true);
-    setStatusText("Processando áudio...");
+    setStatusText("Enviando áudio seguro...");
     
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const fileName = `reuniao-${reuniaoSelecionada}-${Date.now()}.webm`;
 
     try {
-      // 1. Upload Supabase (Backup do Áudio)
+      // 1. Upload
       const { error: uploadError } = await supabase.storage.from('gravacoes').upload(fileName, audioBlob);
-      if (uploadError) console.error("Upload falhou, seguindo com transcrição...", uploadError);
+      if (uploadError) console.warn("Backup de áudio falhou (mas a transcrição continuará).");
 
       const { data: urlData } = supabase.storage.from('gravacoes').getPublicUrl(fileName);
 
-      // 2. Transcrição IA
-      setStatusText("IA Gerando Ata...");
+      // 2. IA
+      setStatusText("Gemini processando transcrição...");
       const model = getGeminiFlash();
       const audioPart = await blobToGenerativePart(audioBlob, "audio/webm");
 
       const prompt = `
-        Atue como uma Secretária Executiva de Alta Performance.
-        Analise o áudio e gere uma ATA DETALHADA e ESTRUTURADA.
+        Atue como uma Secretária Executiva Sênior.
+        Analise o áudio da reunião e gere uma ATA ESTRUTURADA.
 
-        Use seu conhecimento neural para inferir o contexto mesmo se o áudio for confuso.
-        
-        FORMATO DE SAÍDA OBRIGATÓRIO:
-        
-        ## 📋 ATA DE REUNIÃO EXECUTIVA
+        FORMATO MARKDOWN OBRIGATÓRIO:
+        ## 📋 ATA DE REUNIÃO
         **Data:** ${new Date().toLocaleDateString()}
         
-        ### 1. Contexto e Objetivo
-        [Explique em 2 linhas o motivo da reunião baseado no que foi dito]
+        ### 1. Resumo Executivo
+        [Resumo breve do objetivo e tom da reunião]
 
-        ### 2. Principais Discussões
-        * [Ponto 1 detalhado]
-        * [Ponto 2 detalhado]
+        ### 2. Tópicos Discutidos
+        * [Detalhe 1]
+        * [Detalhe 2]
         
-        ### 3. Decisões Definidas (Ouro)
-        * ✅ [Decisão 1]
-        * ✅ [Decisão 2]
+        ### 3. Decisões e Definições (Importante)
+        * ✅ [Decisão tomada]
 
-        ### 4. Plano de Ação (Quem / O Que / Quando)
-        * [Responsável] -> [Ação] (Prazo sugerido: [Data])
+        ### 4. Próximos Passos (Action Plan)
+        * [Responsável] -> [Ação] (Prazo: [Data])
         
         ---
-        *Obs: Se for apenas um teste de áudio, ignore o formato acima e responda apenas: "Teste de sistema realizado com sucesso."*
+        *Nota: Se o áudio for apenas teste ou silêncio, responda: "Gravação de teste identificada."*
       `;
 
       const result = await model.generateContent([prompt, audioPart]);
       const textoGerado = result.response.text();
 
-      // 3. Salvar no Banco
+      // 3. Update Banco
       const { error } = await supabase.from('reunioes').update({ 
           audio_url: urlData.publicUrl,
           pauta: textoGerado,
@@ -147,16 +149,12 @@ const Copiloto = () => {
 
       if (error) throw error;
 
-      // 4. Atualiza a tela sem recarregar
       setPautaExistente(textoGerado);
-      
-      // Atualiza a lista local para o cache ficar sincronizado
       setReunioesHoje(prev => prev.map(r => r.id === reuniaoSelecionada ? {...r, pauta: textoGerado} : r));
-
       setStatusText("Concluído!");
 
     } catch (error) {
-      alert("Erro: " + error.message);
+      alert("Erro no processamento: " + error.message);
     } finally {
       setIsProcessing(false);
       setStatusText("");
@@ -171,115 +169,139 @@ const Copiloto = () => {
 
   return (
     <Layout>
-      <div className="h-full flex flex-col items-center justify-center bg-slate-900 text-white font-sans relative overflow-hidden">
+      <div className="h-full flex flex-col items-center justify-center bg-slate-900 text-white font-sans relative overflow-hidden p-4">
         
-        {/* Fundo */}
+        {/* Fundo Decorativo */}
         <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-500 rounded-full blur-[100px]"></div>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-500 rounded-full blur-[120px]"></div>
         </div>
 
-        <div className="z-10 w-full max-w-2xl p-8 flex flex-col items-center">
+        <div className="z-10 w-full max-w-3xl flex flex-col items-center">
             
-            {/* Header */}
-            <div className="mb-6 text-center">
-                <div className="inline-flex items-center gap-2 bg-slate-800 px-4 py-1.5 rounded-full border border-slate-700 mb-4">
-                    <Cpu size={16} className="text-blue-400" />
-                    <span className="text-xs font-bold uppercase tracking-widest text-blue-200">Gemini 1.5 Flash</span>
+            {/* Cabeçalho */}
+            <div className="mb-8 text-center">
+                <div className="inline-flex items-center gap-2 bg-slate-800/80 backdrop-blur-md px-4 py-1.5 rounded-full border border-slate-700 mb-4 shadow-lg">
+                    <Cpu size={14} className="text-blue-400" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-blue-100">IA Ativa • Gemini 1.5 Flash</span>
                 </div>
-                <h1 className="text-3xl font-bold">Copiloto Tático</h1>
+                <h1 className="text-4xl font-bold tracking-tight mb-2">Copiloto Tático</h1>
+                <p className="text-slate-400 text-sm">Selecione uma reunião e inicie a gravação para gerar a ata automática.</p>
             </div>
 
-            {/* Seletor */}
-            <div className="w-full mb-8 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-                <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Reunião Selecionada</label>
-                <select 
-                    value={reuniaoSelecionada} 
-                    onChange={(e) => setReuniaoSelecionada(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 text-white p-3 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    disabled={isRecording || isProcessing}
-                >
-                    {reunioesHoje.map(r => (
-                        <option key={r.id} value={r.id}>
-                            {new Date(r.data_hora).toLocaleDateString()} - {r.titulo} {r.pauta ? '✅' : ''}
-                        </option>
-                    ))}
-                </select>
-            </div>
+            {/* CARD DE CONTROLE */}
+            <div className="w-full bg-slate-800/60 backdrop-blur-sm p-6 rounded-2xl border border-slate-700 shadow-2xl">
+                
+                {/* --- SEÇÃO DE BUSCA E SELEÇÃO --- */}
+                <div className="mb-8 space-y-3">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-3 text-slate-500" size={18} />
+                        <input 
+                            type="text" 
+                            placeholder="Filtrar reunião por nome ou data..." 
+                            className="w-full bg-slate-900/50 border border-slate-600 text-slate-200 pl-10 pr-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600 transition-all"
+                            value={busca}
+                            onChange={(e) => setBusca(e.target.value)}
+                            disabled={isRecording || isProcessing}
+                        />
+                    </div>
 
-            {/* --- LÓGICA DE EXIBIÇÃO: ATA PRONTA vs GRAVADOR --- */}
-            
-            {pautaExistente && !isRecording && !isProcessing ? (
-                // MODO LEITURA (CACHE)
-                <div className="w-full bg-white text-slate-800 rounded-xl p-6 shadow-2xl animate-in fade-in slide-in-from-bottom-4">
-                    <div className="flex justify-between items-start mb-4 border-b border-gray-100 pb-4">
-                        <div className="flex items-center gap-2 text-green-600 font-bold">
-                            <CheckCircle size={20} />
-                            <span>Ata Gerada</span>
-                        </div>
-                        <button 
-                            onClick={() => {
-                                if(window.confirm("Isso irá apagar a ata atual e gravar uma nova. Continuar?")) {
-                                    setPautaExistente(null);
-                                }
-                            }}
-                            className="text-xs flex items-center gap-1 text-slate-400 hover:text-red-500 transition-colors"
-                        >
-                            <RefreshCw size={12} /> Gerar Novamente
-                        </button>
-                    </div>
-                    
-                    <div className="prose prose-sm max-w-none text-slate-600 max-h-[300px] overflow-y-auto custom-scrollbar">
-                        {pautaExistente.split('\n').map((line, i) => (
-                            <p key={i} className="mb-1">{line}</p>
-                        ))}
-                    </div>
-                </div>
-            ) : (
-                // MODO GRAVAÇÃO
-                <div className="flex flex-col items-center w-full">
-                    <div className="mb-8 h-24 flex flex-col items-center justify-center relative w-full">
-                        {isRecording ? (
-                            <>
-                                <div className="flex gap-1 items-end h-12">
-                                    {[...Array(15)].map((_, i) => (
-                                        <div key={i} className="w-2 bg-red-500 rounded-full animate-pulse" style={{ height: `${Math.random() * 100}%`, animationDuration: `${0.5 + Math.random()}s` }}></div>
-                                    ))}
-                                </div>
-                                <div className="text-4xl font-mono text-white mt-4">{formatTime(timer)}</div>
-                            </>
-                        ) : isProcessing ? (
-                            <div className="flex flex-col items-center gap-2 text-blue-300">
-                                <Loader2 size={40} className="animate-spin text-blue-500" />
-                                <span className="text-sm font-bold animate-pulse">{statusText}</span>
-                            </div>
+                    <select 
+                        value={reuniaoSelecionada} 
+                        onChange={(e) => setReuniaoSelecionada(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-600 text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none appearance-none cursor-pointer hover:bg-slate-900/80 transition-colors"
+                        disabled={isRecording || isProcessing}
+                    >
+                        <option value="" disabled>Selecione uma reunião na lista...</option>
+                        {reunioesFiltradas.length > 0 ? (
+                            reunioesFiltradas.map(r => (
+                                <option key={r.id} value={r.id}>
+                                    {new Date(r.data_hora).toLocaleDateString()} - {r.titulo} {r.pauta ? '(Ata Pronta ✅)' : ''}
+                                </option>
+                            ))
                         ) : (
-                            <div className="text-center text-slate-500">
-                                <FileText size={48} className="mx-auto mb-2 opacity-20" />
-                                <p className="text-sm">Nenhuma ata encontrada.</p>
-                                <p className="text-xs">Grave para gerar o resumo.</p>
+                            <option disabled>Nenhuma reunião encontrada com esse filtro.</option>
+                        )}
+                    </select>
+                </div>
+
+                {/* --- ÁREA DE AÇÃO --- */}
+                
+                {pautaExistente && !isRecording && !isProcessing ? (
+                    // MODO: ATA PRONTA (Visualização)
+                    <div className="bg-white text-slate-800 rounded-xl p-6 animate-in zoom-in-95 duration-300">
+                        <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-3">
+                            <div className="flex items-center gap-2 text-green-700 font-bold">
+                                <CheckCircle size={20} />
+                                <span>Ata Registrada</span>
+                            </div>
+                            <button 
+                                onClick={() => { if(window.confirm("Regravar irá substituir a ata atual. Confirmar?")) setPautaExistente(null); }}
+                                className="text-xs flex items-center gap-1 text-slate-400 hover:text-red-500 transition-colors bg-slate-50 px-2 py-1 rounded hover:bg-red-50"
+                            >
+                                <RefreshCw size={12} /> Regravar
+                            </button>
+                        </div>
+                        <div className="prose prose-sm max-w-none text-slate-600 max-h-[250px] overflow-y-auto custom-scrollbar leading-relaxed">
+                            {pautaExistente.split('\n').map((line, i) => (
+                                <p key={i} className="mb-1">{line}</p>
+                            ))}
+                        </div>
+                    </div>
+                ) : (
+                    // MODO: GRAVAÇÃO
+                    <div className="flex flex-col items-center justify-center py-4">
+                        
+                        {/* Visualizer / Timer */}
+                        <div className="mb-8 h-20 flex flex-col items-center justify-end w-full">
+                            {isRecording ? (
+                                <>
+                                    <div className="flex gap-1 items-end h-8 mb-2">
+                                        {[...Array(20)].map((_, i) => (
+                                            <div key={i} className="w-1.5 bg-red-500 rounded-full animate-pulse" style={{ height: `${Math.random() * 100}%`, animationDuration: `${0.3 + Math.random()}s` }}></div>
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-red-400 animate-pulse">
+                                        <Radio size={12} className="fill-current" />
+                                        <span className="font-mono text-3xl font-bold tracking-wider text-white">{formatTime(timer)}</span>
+                                    </div>
+                                </>
+                            ) : isProcessing ? (
+                                <div className="flex flex-col items-center gap-3">
+                                    <Loader2 size={36} className="animate-spin text-blue-400" />
+                                    <span className="text-sm font-bold text-blue-200 animate-pulse uppercase tracking-wide">{statusText}</span>
+                                </div>
+                            ) : (
+                                <div className="text-center text-slate-500 flex flex-col items-center">
+                                    <FileText size={40} className="mb-2 opacity-20" />
+                                    <span className="text-sm">Aguardando início</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Botão Principal */}
+                        {!isProcessing && (
+                            <div className="relative group">
+                                <div className={`absolute inset-0 bg-red-500 rounded-full blur-xl opacity-20 group-hover:opacity-40 transition-opacity ${isRecording ? 'animate-pulse' : ''}`}></div>
+                                <button 
+                                    onClick={isRecording ? stopRecording : startRecording} 
+                                    disabled={!reuniaoSelecionada}
+                                    className={`relative w-24 h-24 rounded-full flex items-center justify-center border-4 shadow-2xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        isRecording 
+                                        ? 'bg-slate-800 border-slate-600 text-white hover:bg-slate-700' 
+                                        : 'bg-gradient-to-br from-red-600 to-red-700 border-red-900 text-white hover:scale-105'
+                                    }`}
+                                >
+                                    {isRecording ? <Square size={32} fill="currentColor" /> : <Mic size={40} />}
+                                </button>
                             </div>
                         )}
-                    </div>
 
-                    <div className="flex justify-center mt-4">
-                        {!isRecording && !isProcessing && (
-                            <button onClick={startRecording} disabled={!reuniaoSelecionada} className="w-20 h-20 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(220,38,38,0.4)] transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed group border-4 border-red-800">
-                                <Mic size={32} className="group-hover:scale-110 transition-transform text-white" />
-                            </button>
-                        )}
-                        {isRecording && (
-                            <button onClick={stopRecording} className="w-20 h-20 bg-slate-200 hover:bg-white text-slate-900 rounded-full flex items-center justify-center shadow-lg transition-all active:scale-95 border-4 border-slate-400 animate-pulse">
-                                <Square size={24} fill="currentColor" />
-                            </button>
-                        )}
+                        <p className="mt-8 text-xs text-slate-500 font-medium uppercase tracking-wider">
+                            {isRecording ? 'Clique para Encerrar e Gerar Ata' : 'Clique no Microfone para Iniciar'}
+                        </p>
                     </div>
-                    
-                    {!isRecording && !isProcessing && (
-                        <p className="mt-6 text-xs text-slate-500">Clique no microfone para iniciar a transcrição.</p>
-                    )}
-                </div>
-            )}
-
+                )}
+            </div>
         </div>
       </div>
     </Layout>
