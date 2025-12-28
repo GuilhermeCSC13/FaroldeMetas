@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
+import { getGeminiFlash } from '../services/gemini'; // Importando a IA
 import { 
   FileText, Calendar, User, Search, CheckCircle, 
   Clock, AlertTriangle, Layers, Download, Share2, 
-  Save, Edit3, Trash2, Plus, X, Image as ImageIcon, Loader2
+  Save, Edit3, Trash2, Plus, X, Image as ImageIcon, Loader2,
+  Cpu, PlayCircle, Headphones // Novos ícones
 } from 'lucide-react';
 
 export default function CentralAtas() {
@@ -20,9 +22,10 @@ export default function CentralAtas() {
   // Estados de Edição e UI
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState('');
-  const [viewingAction, setViewingAction] = useState(null); // Para ver evidências
+  const [viewingAction, setViewingAction] = useState(null);
+  const [isGenerating, setIsGenerating] = useState(false); // Estado de carregamento da IA
   
-  // Nova Ação (Mini formulário)
+  // Nova Ação
   const [novaAcao, setNovaAcao] = useState({ descricao: '', responsavel: '' });
   const [loadingAction, setLoadingAction] = useState(false);
 
@@ -50,7 +53,7 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    // 1. Busca Ações Criadas NESTA reunião
+    // 1. Busca Ações Criadas
     const { data: criadas } = await supabase
       .from('acoes')
       .select('*')
@@ -58,7 +61,7 @@ export default function CentralAtas() {
       .order('data_criacao', { ascending: false });
     setAcoesCriadas(criadas || []);
 
-    // 2. Busca Pendências Anteriores (Mesmo tipo, reuniões passadas)
+    // 2. Busca Pendências Anteriores
     if (ata.tipo_reuniao) {
         const { data: idsDoTipo } = await supabase
             .from('reunioes')
@@ -93,6 +96,7 @@ export default function CentralAtas() {
     if (!error) {
         setIsEditing(false);
         setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: editedPauta, observacoes} : a));
+        setSelectedAta(prev => ({...prev, pauta: editedPauta, observacoes})); // Atualiza local
         alert("Alterações salvas com sucesso!");
     } else {
         alert("Erro ao salvar.");
@@ -136,14 +140,71 @@ export default function CentralAtas() {
 
   const toggleStatusAcao = async (acao) => {
     const novoStatus = acao.status === 'Aberta' ? 'Concluída' : 'Aberta';
-    
-    // Atualiza visualmente primeiro (Otimista)
     const updateList = (lista) => lista.map(a => a.id === acao.id ? {...a, status: novoStatus} : a);
     setAcoesCriadas(updateList(acoesCriadas));
     setAcoesAnteriores(updateList(acoesAnteriores));
-
-    // Atualiza no banco
     await supabase.from('acoes').update({ status: novoStatus }).eq('id', acao.id);
+  };
+
+  // --- NOVA LÓGICA: IA RESUMIR ÁUDIO ---
+  const handleRegenerateIA = async () => {
+    if (!selectedAta.audio_url) return alert("Não há gravação de áudio disponível para esta reunião.");
+    
+    if(!window.confirm("Isso irá reprocessar o áudio e substituir o resumo atual. Deseja continuar?")) return;
+
+    setIsGenerating(true);
+    try {
+        // 1. Baixar o áudio da URL
+        const response = await fetch(selectedAta.audio_url);
+        const blob = await response.blob();
+
+        // 2. Preparar para Gemini
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+            const base64data = reader.result.split(',')[1];
+            
+            const model = getGeminiFlash();
+            const prompt = `
+                Atue como uma Secretária Executiva Sênior.
+                Analise o áudio desta reunião: "${selectedAta.titulo}".
+                
+                Gere uma ATA DE REUNIÃO estruturada em Markdown:
+                # ATA DE REUNIÃO
+                ## 1. Resumo Executivo
+                [Resumo claro e direto]
+                ## 2. Decisões Tomadas
+                * ✅ [Decisão]
+                ## 3. Ações e Prazos
+                * [Quem] -> [O que]
+            `;
+
+            const result = await model.generateContent([
+                prompt, 
+                { inlineData: { data: base64data, mimeType: 'audio/webm' } }
+            ]);
+            
+            const textoNovo = result.response.text();
+
+            // 3. Salvar no Banco
+            const { error } = await supabase
+                .from('reunioes')
+                .update({ pauta: textoNovo })
+                .eq('id', selectedAta.id);
+
+            if (!error) {
+                setEditedPauta(textoNovo);
+                setSelectedAta(prev => ({...prev, pauta: textoNovo}));
+                setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: textoNovo} : a));
+                alert("Resumo atualizado com sucesso!");
+            }
+            setIsGenerating(false);
+        };
+
+    } catch (error) {
+        alert("Erro ao processar IA: " + error.message);
+        setIsGenerating(false);
+    }
   };
 
   // Filtro lateral
@@ -193,7 +254,7 @@ export default function CentralAtas() {
           {selectedAta ? (
             <div className="max-w-5xl mx-auto space-y-6">
               
-              {/* HEADER */}
+              {/* HEADER DO DOCUMENTO */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                 <div className="flex justify-between items-start mb-6">
                   <div>
@@ -217,7 +278,7 @@ export default function CentralAtas() {
                             <button onClick={() => setIsEditing(true)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar Ata">
                                 <Edit3 size={20}/>
                             </button>
-                            <button onClick={handleDeleteAta} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir (Senha Requerida)">
+                            <button onClick={handleDeleteAta} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir">
                                 <Trash2 size={20}/>
                             </button>
                         </>
@@ -227,7 +288,43 @@ export default function CentralAtas() {
 
                 <div className="h-px bg-slate-100 w-full mb-6"></div>
 
-                {/* RESUMO DA IA (EDITÁVEL) */}
+                {/* --- ÁREA DE ÁUDIO & IA --- */}
+                <div className="mb-8">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <Headphones className="text-blue-500" size={20}/> Registro de Áudio
+                        </h3>
+                        {/* Botão IA */}
+                        {selectedAta.audio_url && !isEditing && (
+                            <button 
+                                onClick={handleRegenerateIA}
+                                disabled={isGenerating}
+                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"
+                            >
+                                {isGenerating ? <Loader2 size={14} className="animate-spin"/> : <Cpu size={14}/>}
+                                {isGenerating ? 'Analisando Áudio...' : 'Gerar Resumo com IA'}
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Player de Áudio */}
+                    {selectedAta.audio_url ? (
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center gap-4">
+                            <div className="p-3 bg-blue-100 text-blue-600 rounded-full"><PlayCircle size={24}/></div>
+                            <div className="flex-1">
+                                <p className="text-xs text-slate-500 font-bold uppercase mb-1">Arquivo Original</p>
+                                <audio controls src={selectedAta.audio_url} className="w-full h-8" />
+                            </div>
+                            <a href={selectedAta.audio_url} download target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-600 p-2"><Download size={20}/></a>
+                        </div>
+                    ) : (
+                        <div className="bg-slate-50 border border-dashed border-slate-300 p-4 rounded-xl text-center text-slate-400 text-sm italic">
+                            Nenhum áudio gravado para esta reunião.
+                        </div>
+                    )}
+                </div>
+
+                {/* RESUMO DA REUNIÃO */}
                 <div className="prose prose-slate max-w-none">
                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
                     <FileText className="text-blue-500" size={20}/> Resumo da Reunião
@@ -240,7 +337,7 @@ export default function CentralAtas() {
                       />
                   ) : (
                       <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 text-slate-700 leading-relaxed text-sm whitespace-pre-line">
-                         {selectedAta.pauta || "Nenhum resumo registrado."}
+                         {selectedAta.pauta || "Nenhum resumo registrado. Use o botão acima para gerar com IA."}
                       </div>
                   )}
                 </div>
@@ -249,7 +346,7 @@ export default function CentralAtas() {
               {/* GRID DE AÇÕES */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {/* 1. AÇÕES DA REUNIÃO (COM ADICIONAR) */}
+                {/* AÇÕES DEFINIDAS */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -280,7 +377,7 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* 2. PENDÊNCIAS ANTERIORES */}
+                {/* PENDÊNCIAS ANTERIORES */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
