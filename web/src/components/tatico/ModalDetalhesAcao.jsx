@@ -27,7 +27,12 @@ const ModalDetalhesAcao = ({
   const [novosArquivosAcao, setNovosArquivosAcao] = useState([]);
   const [novosArquivosConclusao, setNovosArquivosConclusao] = useState([]);
 
+  // Responsável (via tabela usuarios_sistema)
   const [responsavel, setResponsavel] = useState("");
+  const [responsavelId, setResponsavelId] = useState<string | null>(null);
+  const [listaUsuarios, setListaUsuarios] = useState([]);
+  const [loadingUsuarios, setLoadingUsuarios] = useState(false);
+
   const [vencimento, setVencimento] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -59,6 +64,7 @@ const ModalDetalhesAcao = ({
     setNovosArquivosConclusao([]);
 
     setResponsavel(acao.responsavel || "");
+    setResponsavelId(acao.responsavel_id || null);
 
     if (acao.data_vencimento) {
       const d = new Date(acao.data_vencimento);
@@ -66,6 +72,42 @@ const ModalDetalhesAcao = ({
     } else {
       setVencimento("");
     }
+
+    // Carrega usuários ativos para o select de responsável
+    const carregarUsuarios = async () => {
+      try {
+        setLoadingUsuarios(true);
+        const { data, error } = await supabase
+          .from("usuarios_sistema")
+          .select("id, nome, email, ativo")
+          .eq("ativo", true)
+          .order("nome", { ascending: true });
+
+        if (error) {
+          console.error("Erro ao buscar usuários:", error);
+          setListaUsuarios([]);
+          return;
+        }
+
+        setListaUsuarios(data || []);
+
+        // Se não tiver responsavel_id mas tiver responsavel (nome),
+        // tenta casar pelo nome para pré-selecionar.
+        if (!acao.responsavel_id && acao.responsavel && data?.length) {
+          const encontrado = data.find(
+            (u) => u.nome && u.nome.toLowerCase() === acao.responsavel.toLowerCase()
+          );
+          if (encontrado) {
+            setResponsavelId(encontrado.id);
+            setResponsavel(encontrado.nome);
+          }
+        }
+      } finally {
+        setLoadingUsuarios(false);
+      }
+    };
+
+    carregarUsuarios();
   }, [acao, aberto, status]);
 
   const uploadArquivos = async (files) => {
@@ -107,12 +149,13 @@ const ModalDetalhesAcao = ({
           ? await uploadArquivos(novosArquivosConclusao)
           : [];
 
-      const payload = {
+      const payload: any = {
         observacao: obsAcao,
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
         fotos_conclusao: [...fotosConclusao, ...novasUrlsConclusao],
         responsavel: responsavel || null,
+        responsavel_id: responsavelId || null, // usa a tabela de usuários
         data_vencimento: vencimento || null,
       };
 
@@ -240,6 +283,14 @@ const ModalDetalhesAcao = ({
 
   const inputsDesabilitados = statusLocal === "Concluída";
 
+  // helper para mudança de responsável
+  const handleChangeResponsavel = (id) => {
+    const novoId = id || null;
+    setResponsavelId(novoId);
+    const usuario = listaUsuarios.find((u) => u.id === novoId);
+    setResponsavel(usuario ? usuario.nome : "");
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
@@ -295,14 +346,24 @@ const ModalDetalhesAcao = ({
                   <span className="text-[11px] font-semibold text-gray-400 uppercase">
                     Responsável
                   </span>
-                  <input
-                    type="text"
-                    value={responsavel}
-                    onChange={(e) => setResponsavel(e.target.value)}
-                    disabled={inputsDesabilitados}
-                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-56 disabled:bg-gray-100"
-                    placeholder="Nome do responsável"
-                  />
+                  <select
+                    value={responsavelId || ""}
+                    onChange={(e) => handleChangeResponsavel(e.target.value)}
+                    disabled={inputsDesabilitados || loadingUsuarios}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-64 disabled:bg-gray-100"
+                  >
+                    <option value="">
+                      {loadingUsuarios
+                        ? "Carregando usuários..."
+                        : "Selecione um responsável"}
+                    </option>
+                    {listaUsuarios.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome}
+                        {u.email ? ` (${u.email})` : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex flex-col">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase">
@@ -396,7 +457,7 @@ const ModalDetalhesAcao = ({
             </div>
           </div>
 
-          {/* CONCLUSÃO */}
+          {/* CONCLUSão */}
           <div>
             <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
               Conclusão da ação
