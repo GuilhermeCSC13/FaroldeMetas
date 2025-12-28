@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { getGeminiFlash } from '../../services/gemini';
-import { MessageSquare, X, Send, Bot, Loader2, Check, Trash2, CalendarClock, FileText } from 'lucide-react';
+import { MessageSquare, X, Send, Bot, Loader2, Check, Trash2, CalendarClock, WifiOff } from 'lucide-react';
 import { salvarReuniao } from '../../services/agendaService';
 
 const TacticalAssistant = () => {
@@ -12,13 +12,17 @@ const TacticalAssistant = () => {
 
   const welcomeMsg = { role: 'assistant', text: 'Olá. Tenho acesso total à sua Agenda e Atas. \n\nPosso:\n1. Consultar decisões passadas.\n2. Verificar disponibilidade.\n3. Agendar novas reuniões.' };
 
-  // --- 1. MEMÓRIA LOCAL DO CHAT ---
+  // --- 1. MEMÓRIA LOCAL (Mantém o chat salvo) ---
   const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem('farol_chat_history');
-    const timestamp = localStorage.getItem('farol_chat_time');
-    if (saved && timestamp) {
-      const hoursPassed = (Date.now() - parseInt(timestamp)) / (1000 * 60 * 60);
-      if (hoursPassed < 4) return JSON.parse(saved);
+    try {
+      const saved = localStorage.getItem('farol_chat_history');
+      const timestamp = localStorage.getItem('farol_chat_time');
+      if (saved && timestamp) {
+        const hoursPassed = (Date.now() - parseInt(timestamp)) / (1000 * 60 * 60);
+        if (hoursPassed < 4) return JSON.parse(saved); // Validade de 4h
+      }
+    } catch (e) {
+      console.warn("Erro ao ler cache do chat", e);
     }
     return [welcomeMsg];
   });
@@ -35,93 +39,101 @@ const TacticalAssistant = () => {
     localStorage.removeItem('farol_chat_time');
   };
 
-  // --- 2. CÉREBRO: BUSCA CONTEXTO (COM PROTEÇÃO DE ERRO) ---
+  // --- 2. CÉREBRO: BUSCA DADOS (BLINDADO) ---
   const buscarContextoDados = async () => {
     try {
         const hoje = new Date().toISOString();
         
-        // A. Busca Agenda Futura
-        const { data: agendaFutura, error: erroAgenda } = await supabase
-            .from('reunioes')
-            .select('titulo, data_hora, tipo_reuniao')
-            .gte('data_hora', hoje)
-            .order('data_hora', { ascending: true })
-            .limit(10);
-        
-        if (erroAgenda) console.warn("Aviso Agenda:", erroAgenda);
+        // Executa em paralelo para ser mais rápido
+        const [resAgenda, resHistorico] = await Promise.all([
+            supabase
+                .from('reunioes')
+                .select('titulo, data_hora, tipo_reuniao')
+                .gte('data_hora', hoje)
+                .order('data_hora', { ascending: true })
+                .limit(10),
+            supabase
+                .from('reunioes')
+                .select('titulo, data_hora, pauta')
+                .lte('data_hora', hoje)
+                .eq('status', 'Realizada') // Só pega as realizadas para não confundir
+                .order('data_hora', { ascending: false })
+                .limit(5)
+        ]);
 
-        // B. Busca Histórico Recente
-        const { data: historicoPassado, error: erroHist } = await supabase
-            .from('reunioes')
-            .select('titulo, data_hora, pauta, responsavel')
-            .lte('data_hora', hoje)
-            .order('data_hora', { ascending: false })
-            .limit(5);
-
-        if (erroHist) console.warn("Aviso Histórico:", erroHist);
-
-        // C. Formata para a IA
-        let contexto = `\n--- 📅 AGENDA FUTURA (Use para verificar disponibilidade) ---\n`;
-        if (agendaFutura?.length) {
-            agendaFutura.forEach(r => {
+        // Monta o texto mesmo se der erro parcial (Opcional Chaining ?. previne crash)
+        let contexto = `\n--- 📅 AGENDA FUTURA (Para verificar disponibilidade) ---\n`;
+        if (resAgenda.data && resAgenda.data.length > 0) {
+            resAgenda.data.forEach(r => {
                 const dt = new Date(r.data_hora);
                 contexto += `- ${dt.toLocaleDateString()} às ${dt.toLocaleTimeString().slice(0,5)}: ${r.titulo} (${r.tipo_reuniao})\n`;
             });
         } else { contexto += "(Agenda livre nos próximos dias)\n"; }
 
-        contexto += `\n--- 📚 HISTÓRICO RECENTE (Use para responder sobre o passado) ---\n`;
-        if (historicoPassado?.length) {
-            historicoPassado.forEach(r => {
+        contexto += `\n--- 📚 HISTÓRICO REALIZADO (Para contexto) ---\n`;
+        if (resHistorico.data && resHistorico.data.length > 0) {
+            resHistorico.data.forEach(r => {
                 contexto += `- [Realizada em ${new Date(r.data_hora).toLocaleDateString()}]: ${r.titulo}\n`;
-                if (r.pauta) contexto += `  RESUMO: ${r.pauta.substring(0, 200)}...\n`;
+                if (r.pauta) contexto += `  RESUMO: ${r.pauta.substring(0, 150)}...\n`;
             });
         } else { contexto += "(Nenhuma reunião realizada recentemente)\n"; }
 
         return contexto;
 
     } catch (err) {
-        console.error("Erro não-bloqueante ao buscar contexto:", err);
-        return " (Aviso: Não foi possível acessar a agenda em tempo real. Responda com base no que o usuário informar.)";
+        // Se falhar o banco, não trava a IA. Retorna um aviso para o prompt.
+        console.warn("Aviso: Falha ao buscar contexto no Supabase.", err);
+        return " (Aviso do Sistema: Não foi possível ler a agenda em tempo real devido a uma instabilidade de rede. Responda baseando-se apenas na solicitação do usuário.)";
     }
   };
 
   // --- 3. PROCESSAMENTO DA IA ---
   const handleSend = async () => {
     if (!input.trim()) return;
+    
+    // Verifica conexão básica
+    if (!navigator.onLine) {
+        setMessages(prev => [...prev, { role: 'assistant', text: "⚠️ Sem conexão com a internet." }]);
+        return;
+    }
+
     const userMsg = input;
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setLoading(true);
 
     try {
-      // Busca contexto (agora seguro, não trava se falhar)
+      // 1. Busca contexto (agora seguro)
       const dadosContexto = await buscarContextoDados();
       
+      // 2. Chama o modelo
       const model = getGeminiFlash();
-      
+      if (!model) throw new Error("Serviço de IA não inicializado (Verifique API Key).");
+
       const prompt = `
         Você é o Assistente de Inteligência do Farol Tático.
         
-        CONTEXTO DO SISTEMA:
+        DADOS DO SISTEMA:
         ${dadosContexto}
 
         HOJE: ${new Date().toLocaleString('pt-BR')}
 
         INSTRUÇÕES:
-        1. Responda a pergunta do usuário ou agende a reunião solicitada.
-        2. Se for agendar, verifique conflitos na lista "AGENDA FUTURA".
-        3. Se o usuário confirmar dados de agendamento, retorne APENAS o JSON.
+        1. Responda a pergunta do usuário ou agende a reunião.
+        2. Se for agendar, verifique conflitos na "AGENDA FUTURA".
+        3. Se o usuário confirmar dados de agendamento (título, data, hora), retorne APENAS o JSON.
+        4. Se faltar dados (ex: só disse "marcar reunião"), pergunte os detalhes.
 
         USUÁRIO DISSE: "${userMsg}"
 
-        FORMATO JSON OBRIGATÓRIO (Apenas se for agendar):
+        FORMATO JSON OBRIGATÓRIO (Apenas p/ agendar):
         { "intent": "schedule", "titulo": "...", "data": "YYYY-MM-DD", "hora": "HH:MM", "recorrencia": "unica" }
       `;
 
       const result = await model.generateContent(prompt);
       const text = result.response.text();
 
-      // Limpeza de Markdown
+      // Limpeza de Markdown (Remove ```json e ```)
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
       if (cleanText.startsWith('{') && cleanText.includes('"intent": "schedule"')) {
@@ -131,14 +143,20 @@ const TacticalAssistant = () => {
       }
 
     } catch (error) {
-      console.error("Erro Crítico IA:", error);
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Desculpe, estou com dificuldade de conexão agora. Tente novamente em instantes.' }]);
+      console.error("ERRO DETALHADO DO COPILOTO:", error);
+      
+      // Mensagem amigável dependendo do erro
+      let msgErro = "Desculpe, tive uma instabilidade momentânea.";
+      if (error.message.includes("API Key")) msgErro = "Erro de configuração: Chave de API inválida.";
+      if (error.message.includes("fetch")) msgErro = "Erro de conexão. Verifique sua internet.";
+      
+      setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msgErro} (Tente novamente)` }]);
     } finally {
       setLoading(false);
     }
   };
 
-  // --- 4. FUNÇÕES DE AGENDAMENTO ---
+  // --- 4. FUNÇÕES DE AGENDAMENTO (IGUAIS) ---
   const handleCreateMeetingIntent = async (dadosJSON) => {
     try {
         const dados = JSON.parse(dadosJSON);
@@ -170,8 +188,8 @@ const TacticalAssistant = () => {
 
         setMessages(prev => [...prev, { role: 'assistant', text: `✅ Agendado: ${dados.titulo} em ${dados.data} às ${dados.hora}.` }]);
     } catch (error) {
-        console.error(error);
-        setMessages(prev => [...prev, { role: 'assistant', text: "Erro ao gravar no banco. Verifique sua conexão." }]);
+        console.error("Erro ao salvar:", error);
+        setMessages(prev => [...prev, { role: 'assistant', text: "Erro ao gravar no banco. Tente novamente." }]);
     } finally {
         setLoading(false);
     }
@@ -243,7 +261,7 @@ const TacticalAssistant = () => {
             <div className="flex gap-2 bg-slate-100 p-1.5 rounded-full border border-slate-200 focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
               <input 
                 className="flex-1 bg-transparent px-4 py-2 text-sm outline-none text-slate-700 placeholder:text-slate-400" 
-                placeholder="Ex: Marcar DBO amanhã às 9h..." 
+                placeholder="Digite aqui..." 
                 value={input} 
                 onChange={(e) => setInput(e.target.value)} 
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
