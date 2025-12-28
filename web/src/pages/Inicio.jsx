@@ -19,7 +19,7 @@ const Inicio = () => {
   }, []);
 
   const carregarDados = async () => {
-    // 1. Carrega KPIs (Sempre atualizados)
+    // 1. Carrega KPIs (Dados sempre frescos)
     const hoje = new Date().toISOString().split('T')[0];
     const { count: acoesCount } = await supabase.from('acoes').select('*', { count: 'exact', head: true }).eq('status', 'Aberta');
     const { count: reunioesCount } = await supabase.from('reunioes').select('*', { count: 'exact', head: true }).gte('data_hora', `${hoje}T00:00:00`).lte('data_hora', `${hoje}T23:59:59`);
@@ -27,20 +27,20 @@ const Inicio = () => {
     setStats({
       acoesAbertas: acoesCount || 0,
       reunioesHoje: reunioesCount || 0,
-      metasCriticas: 3
+      metasCriticas: 3 // Exemplo estático
     });
 
-    // 2. Lógica de Cache da IA (Para não carregar toda hora)
+    // 2. Cache da IA (Para não gastar cota e ser rápido)
     const cacheDate = localStorage.getItem('farol_ia_date');
     const cacheText = localStorage.getItem('farol_ia_text');
 
     if (cacheDate === hoje && cacheText) {
-      // Se já gerou hoje, usa o cache e não chama a IA
+      // Se já tem resumo de hoje, usa ele
       setResumoIA(cacheText);
       setIaStatus("active");
       setLoadingIA(false);
     } else {
-      // Se não tem cache de hoje, gera novo
+      // Se é um dia novo, gera novo resumo
       await gerarResumoIA(hoje);
     }
   };
@@ -52,22 +52,24 @@ const Inicio = () => {
       const { data: ultimasReunioes } = await supabase.from('reunioes').select('titulo, pauta, data_hora').order('data_hora', { ascending: false }).limit(3);
       const { data: acoesPendentes } = await supabase.from('acoes').select('descricao, responsavel').eq('status', 'Aberta').limit(5);
 
+      // --- DEBUG: Veja no console o que a IA está lendo ---
+      console.log("🔍 DADOS PARA IA:", { ultimasReunioes, acoesPendentes });
+
       const model = getGeminiFlash();
 
-      // PROMPT ANTI-ALUCINAÇÃO
+      // PROMPT BLINDADO
       const prompt = `
-        Atue como um Diretor de Operações analisando este painel.
+        Atue como um Diretor de Operações. Analise este painel:
         
-        DADOS REAIS (Use APENAS estes dados, não invente nada):
+        DADOS REAIS:
         - Reuniões Recentes: ${JSON.stringify(ultimasReunioes)}
         - Pendências Críticas: ${JSON.stringify(acoesPendentes)}
 
-        INSTRUÇÕES:
-        1. Se a lista de reuniões estiver vazia, diga: "Não houve reuniões registradas recentemente."
-        2. Se não houver pendências, diga: "Operação rodando sem pendências críticas no momento."
-        3. NÃO crie reuniões fictícias (como "DBO" ou "Oferta x Demanda") se não estiverem na lista acima.
-        4. Seja breve (máximo 3 parágrafos).
-        5. Use markdown para negrito.
+        REGRAS:
+        1. Baseie-se APENAS nos dados acima. Se não houver reuniões, diga "Sem reuniões recentes registradas".
+        2. Não invente nomes de reuniões que não estão na lista (como "DBO" ou "Oferta x Demanda" se não existirem).
+        3. Seja breve (máximo 3 parágrafos curtos).
+        4. Use negrito para destacar pontos chave.
       `;
 
       const result = await model.generateContent(prompt);
@@ -90,10 +92,9 @@ const Inicio = () => {
     }
   };
 
-  // Botão para forçar atualização (caso o usuário queira)
   const forcarAtualizacao = () => {
     setLoadingIA(true);
-    localStorage.removeItem('farol_ia_date'); // Limpa cache
+    localStorage.removeItem('farol_ia_date');
     const hoje = new Date().toISOString().split('T')[0];
     gerarResumoIA(hoje);
   };
@@ -102,7 +103,7 @@ const Inicio = () => {
     <Layout>
       <div className="p-8 max-w-7xl mx-auto font-sans pb-20">
         
-        {/* Header */}
+        {/* Header e Status IA */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Painel de Comando</h1>
@@ -132,7 +133,7 @@ const Inicio = () => {
             </div>
             <h3 className="font-semibold text-gray-700">Ações Pendentes</h3>
           </div>
-          <div onClick={() => navigate('/reunioes-calendario')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all cursor-pointer group">
+          <div onClick={() => navigate('/central-reunioes')} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all cursor-pointer group">
             <div className="flex justify-between items-start mb-4">
               <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors"><Calendar size={24} /></div>
               <span className="text-3xl font-bold text-gray-800">{stats.reunioesHoje}</span>
@@ -151,7 +152,7 @@ const Inicio = () => {
         {/* Grid Principal */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-10">
           
-          {/* IA Resumo */}
+          {/* Card IA */}
           <div className="lg:col-span-2">
             <div className={`rounded-2xl p-8 shadow-xl relative overflow-hidden h-full transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-slate-800' : 'bg-gradient-to-br from-slate-900 to-slate-800'}`}>
               <div className={`absolute top-0 right-0 w-64 h-64 rounded-full blur-[100px] opacity-20 pointer-events-none transition-colors duration-500 ${iaStatus === 'inactive' ? 'bg-red-500' : 'bg-blue-500'}`}></div>
@@ -181,7 +182,7 @@ const Inicio = () => {
                 
                 <div className="mt-6 pt-6 border-t border-white/10 flex justify-between items-center">
                     <p className="text-xs text-slate-400">
-                        {iaStatus === 'active' ? 'Inteligência Ativa • Gemini 1.5 Pro' : 'Modo Offline'}
+                        {iaStatus === 'active' ? 'Inteligência Ativa • Gemini 1.5' : 'Modo Offline'}
                     </p>
                     <button onClick={forcarAtualizacao} className="text-xs text-blue-400 hover:text-white transition-colors flex items-center gap-1">
                         <Activity size={12}/> Atualizar Análise
@@ -212,7 +213,7 @@ const Inicio = () => {
           </div>
         </div>
 
-        {/* Banner CRM */}
+        {/* Banner CRM Externo */}
         <div className="mt-8 bg-gradient-to-r from-indigo-900 to-indigo-800 rounded-xl p-8 text-white flex flex-col md:flex-row items-center justify-between shadow-lg border border-indigo-700 relative overflow-hidden group hover:shadow-2xl transition-all">
             <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500 rounded-full blur-[100px] opacity-20 pointer-events-none group-hover:opacity-30 transition-opacity"></div>
             <div className="z-10 mb-6 md:mb-0 max-w-2xl">
