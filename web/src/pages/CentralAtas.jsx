@@ -23,7 +23,7 @@ export default function CentralAtas() {
   const [editedPauta, setEditedPauta] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // --- MODAL DE AÇÃO (NOVO) ---
+  // --- MODAL DE AÇÃO ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
   const [actionForm, setActionForm] = useState({
@@ -32,9 +32,9 @@ export default function CentralAtas() {
     responsavel: '',
     data_vencimento: '',
     observacao: '',
-    fotos: [] // URLs existentes
+    fotos: [] 
   });
-  const [newFiles, setNewFiles] = useState([]); // Arquivos novos para upload
+  const [newFiles, setNewFiles] = useState([]); 
 
   useEffect(() => {
     fetchAtas();
@@ -94,7 +94,7 @@ export default function CentralAtas() {
     }
   };
 
-  // --- MANIPULAÇÃO DO MODAL DE AÇÃO ---
+  // --- FUNÇÕES DO MODAL ---
 
   const openNewActionModal = () => {
     setActionForm({ id: null, descricao: '', responsavel: '', data_vencimento: '', observacao: '', fotos: [] });
@@ -124,7 +124,7 @@ export default function CentralAtas() {
     setModalLoading(true);
 
     try {
-        // 1. Upload de novas fotos (se houver)
+        // 1. Upload de fotos (se houver)
         let uploadedUrls = [];
         if (newFiles.length > 0) {
             for (const file of newFiles) {
@@ -143,10 +143,9 @@ export default function CentralAtas() {
             descricao: actionForm.descricao,
             responsavel: actionForm.responsavel || 'Geral',
             data_vencimento: actionForm.data_vencimento || null,
-            observacao: actionForm.observacao,
+            observacao: actionForm.observacao, // Campo que estava dando erro
             fotos: finalFotos,
-            reuniao_id: selectedAta.id, // Sempre vincula a esta ata se for nova
-            // Se for edição, mantém o ID original, se nova, cria.
+            reuniao_id: selectedAta.id,
         };
 
         if (actionForm.id) {
@@ -156,12 +155,12 @@ export default function CentralAtas() {
         } else {
             // CRIAR NOVA
             payload.status = 'Aberta';
-            payload.data_criacao = new Date().toISOString(); // Importante para o erro que deu
+            payload.data_criacao = new Date().toISOString(); // Campo que estava dando erro
             const { error } = await supabase.from('acoes').insert([payload]);
             if (error) throw error;
         }
 
-        await carregarDetalhes(selectedAta); // Recarrega listas
+        await carregarDetalhes(selectedAta); // Atualiza a tela
         setIsModalOpen(false);
 
     } catch (error) {
@@ -172,10 +171,10 @@ export default function CentralAtas() {
   };
 
   const toggleStatusAcao = async (acao, e) => {
-    e.stopPropagation(); // Evita abrir o modal
+    e.stopPropagation(); 
     const novoStatus = acao.status === 'Aberta' ? 'Concluída' : 'Aberta';
     
-    // Otimista
+    // Atualiza visualmente (rápido)
     const updateList = (lista) => lista.map(a => a.id === acao.id ? {...a, status: novoStatus} : a);
     setAcoesCriadas(updateList(acoesCriadas));
     setAcoesAnteriores(updateList(acoesAnteriores));
@@ -183,14 +182,16 @@ export default function CentralAtas() {
     await supabase.from('acoes').update({ status: novoStatus }).eq('id', acao.id);
   };
 
-  // --- OUTRAS FUNÇÕES (Ata, IA, Delete) ---
+  // --- OUTRAS FUNÇÕES ---
   const handleSaveAta = async () => {
     const { error } = await supabase.from('reunioes').update({ pauta: editedPauta, observacoes }).eq('id', selectedAta.id);
     if (!error) {
         setIsEditing(false);
         setSelectedAta(prev => ({...prev, pauta: editedPauta, observacoes}));
         setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: editedPauta, observacoes} : a));
-        alert("Salvo!");
+        alert("Ata salva com sucesso!");
+    } else {
+        alert("Erro ao salvar ata: " + error.message);
     }
   };
 
@@ -215,6 +216,14 @@ export default function CentralAtas() {
             setIsGenerating(false);
         };
     } catch (e) { alert("Erro IA"); setIsGenerating(false); }
+  };
+
+  const handleDeleteAta = async () => {
+    const senha = window.prompt("Senha para excluir:");
+    if (senha === "excluir") {
+        await supabase.from('reunioes').delete().eq('id', selectedAta.id);
+        window.location.reload();
+    }
   };
 
   const atasFiltradas = atas.filter(a => a.titulo.toLowerCase().includes(busca.toLowerCase()));
@@ -262,7 +271,10 @@ export default function CentralAtas() {
                     {isEditing ? (
                         <button onClick={handleSaveAta} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg"><Save size={18}/> Salvar</button>
                     ) : (
-                        <button onClick={() => setIsEditing(true)} className="p-2 text-slate-400 hover:text-blue-600 rounded-lg bg-slate-50" title="Editar"><Edit3 size={20}/></button>
+                        <div className="flex gap-2">
+                            <button onClick={() => setIsEditing(true)} className="p-2 text-slate-400 hover:text-blue-600 rounded-lg bg-slate-50" title="Editar"><Edit3 size={20}/></button>
+                            <button onClick={handleDeleteAta} className="p-2 text-slate-400 hover:text-red-600 rounded-lg bg-slate-50" title="Excluir"><Trash2 size={20}/></button>
+                        </div>
                     )}
                   </div>
                 </div>
@@ -352,7 +364,7 @@ export default function CentralAtas() {
           )}
         </div>
 
-        {/* --- MODAL DE AÇÃO (CRIAÇÃO E DETALHES) --- */}
+        {/* --- MODAL DE AÇÃO COMPLETO --- */}
         {isModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
