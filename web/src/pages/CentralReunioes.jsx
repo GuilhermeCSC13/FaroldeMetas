@@ -42,6 +42,13 @@ export default function CentralReunioes() {
     setReunioes(data || []);
   };
 
+  // --- Helper para ignorar fuso horário (Visual = Banco) ---
+  const parseDataLocal = (dataString) => {
+    if (!dataString) return new Date();
+    // Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:mm:ss) ignorando o 'Z' ou offset
+    return parseISO(dataString.substring(0, 19));
+  };
+
   // --- Helpers de Calendário ---
   const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
@@ -57,9 +64,8 @@ export default function CentralReunioes() {
   };
 
   const handleEdit = (reuniao) => {
-    // CORREÇÃO DE FUSO: Usar parseISO garante que a string UTC do banco
-    // seja convertida corretamente para o horário local do navegador.
-    const dt = parseISO(reuniao.data_hora);
+    // CORREÇÃO: Usa parseDataLocal para manter a hora visualmente igual ao banco
+    const dt = parseDataLocal(reuniao.data_hora);
     
     setFormData({
       titulo: reuniao.titulo,
@@ -79,12 +85,9 @@ export default function CentralReunioes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // CORREÇÃO: Cria a data combinando Data + Hora explicitamente
-    // Isso cria um objeto Date com o fuso horário do seu computador (Brasil)
-    const dataCombined = new Date(`${formData.data}T${formData.hora}:00`);
-    
-    // Converte para ISO string (UTC) para o Supabase entender e salvar corretamente
-    const dataHoraIso = dataCombined.toISOString();
+    // CORREÇÃO: Monta a string ISO manualmente sem conversão UTC (.toISOString muda o horário)
+    // O Supabase vai aceitar isso como 'Local', mantendo o 09:00 visualmente.
+    const dataHoraIso = `${formData.data}T${formData.hora}:00`;
     
     const dados = {
       titulo: formData.titulo,
@@ -155,16 +158,16 @@ export default function CentralReunioes() {
             {/* Grid */}
             <div className="grid grid-cols-7 grid-rows-5 flex-1">
               {calendarDays.map((day) => {
-                // CORREÇÃO: Usa parseISO para comparar corretamente o dia
-                const dayMeetings = reunioes.filter(r => isSameDay(parseISO(r.data_hora), day));
+                // CORREÇÃO: Usa parseDataLocal para filtrar corretamente o dia
+                const dayMeetings = reunioes.filter(r => isSameDay(parseDataLocal(r.data_hora), day));
                 const isCurrent = isSameMonth(day, monthStart);
                 return (
                   <div key={day.toString()} onClick={() => onDateClick(day)} className={`border-r border-b border-slate-50 p-1 cursor-pointer hover:bg-blue-50/30 transition-colors flex flex-col gap-1 ${!isCurrent ? 'bg-slate-50/50 opacity-50' : ''}`}>
                     <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isSameDay(day, new Date()) ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{format(day, 'd')}</span>
                     {dayMeetings.map(m => (
                       <div key={m.id} onClick={(e) => { e.stopPropagation(); handleEdit(m); }} className="text-[10px] truncate px-1 rounded border-l-2 font-medium" style={{ borderLeftColor: m.cor, backgroundColor: m.cor + '15', color: '#475569' }}>
-                        {/* parseISO aqui também */}
-                        {format(parseISO(m.data_hora), 'HH:mm')} {m.titulo}
+                        {/* CORREÇÃO: Exibição visual sem conversão de fuso */}
+                        {format(parseDataLocal(m.data_hora), 'HH:mm')} {m.titulo}
                       </div>
                     ))}
                   </div>
@@ -178,7 +181,8 @@ export default function CentralReunioes() {
         {view === 'list' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-4 custom-scrollbar">
              {reunioes.map(r => {
-                const dt = parseISO(r.data_hora);
+                // CORREÇÃO: parseDataLocal
+                const dt = parseDataLocal(r.data_hora);
                 return (
                   <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
                       <div className="w-12 text-center">
