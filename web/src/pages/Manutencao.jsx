@@ -5,12 +5,11 @@ import ManutencaoRotinas from "./ManutencaoRotinas";
 import ManutencaoResumo from "./ManutencaoResumo";
 
 const Manutencao = () => {
-  const [aba, setAba] = useState("resumo"); // 'resumo' | 'metas' | 'rotinas'
+  const [aba, setAba] = useState("resumo");
 
   const renderContent = () => {
     if (aba === "metas") return <ManutencaoMetas />;
     if (aba === "rotinas") return <ManutencaoRotinas />;
-    // default = resumo
     return <ManutencaoResumo />;
   };
 
@@ -23,7 +22,6 @@ const Manutencao = () => {
   return (
     <Layout>
       <div className="h-full p-6 bg-slate-50 overflow-hidden flex flex-col font-sans">
-        {/* Cabeçalho + Botões de Navegação Interna */}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-lg sm:text-2xl font-bold text-gray-800 uppercase tracking-tight">
@@ -65,7 +63,6 @@ const Manutencao = () => {
           </div>
         </div>
 
-        {/* Conteúdo */}
         <div className="flex-1 min-h-0">{renderContent()}</div>
       </div>
     </Layout>
