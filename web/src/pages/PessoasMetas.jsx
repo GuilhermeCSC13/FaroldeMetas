@@ -12,7 +12,7 @@ const MESES = [
   { id: 10, label: 'out/26' }, { id: 11, label: 'nov/26' }, { id: 12, label: 'dez/26' }
 ];
 
-const pessoasMetas = () => {
+const ManutencaoMetas = () => {
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
@@ -24,7 +24,7 @@ const pessoasMetas = () => {
   const fetchMetasData = async () => {
     setLoading(true);
     try {
-      // Busca Metas da Área 2 (Pessoas)
+      // Busca Metas da Área 2 (Manutenção)
       const { data: metasDef } = await supabase.from('metas_farol').select('*').eq('area_id', ID_MANUTENCAO).order('id');
       const { data: metasMensais } = await supabase.from('metas_farol_mensal').select('*').eq('ano', 2026);
       const { data: resultados } = await supabase.from('resultados_farol').select('*').eq('ano', 2026);
@@ -120,7 +120,7 @@ const pessoasMetas = () => {
     <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
-        <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Pessoas</h2>
+        <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Manutenção</h2>
         <div className="flex items-center gap-3">
              <button 
                 onClick={() => window.location.hash = 'rotinas'} 
@@ -195,7 +195,7 @@ const pessoasMetas = () => {
                 {/* RODAPÉ VERMELHO (PADRÃO OPERAÇÃO) */}
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                   <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">TOTAL SCORE</td>
-                  <td className="p-2 border-r border-red-500 text-center">100</td>
+                  <td className="p-2 border-r border-red-500 text-center">60</td>
                   <td className="p-2 border-r border-red-500"></td>
                   {MESES.map(mes => (
                     <td key={mes.id} className="p-2 text-center border-r border-red-500 text-sm">
@@ -211,7 +211,7 @@ const pessoasMetas = () => {
 
       {showConfig && (
         <ConfiguracaoGeral 
-            areasContexto={[{ id: 2, nome: 'Pessoas' }]} 
+            areasContexto={[{ id: 8, nome: 'PESSOAS' }]} 
             onClose={() => { setShowConfig(false); fetchMetasData(); }} 
         />
       )}
@@ -219,4 +219,4 @@ const pessoasMetas = () => {
   );
 };
 
-export default ManutencaoMetas;
+export default PessoasMetas;
