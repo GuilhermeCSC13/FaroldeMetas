@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
 import { Settings } from 'lucide-react';
 
-const ID_MANUTENCAO = 8;
+const ID_PESSOAS = 8;
 
 const MESES = [
   { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
@@ -12,7 +12,7 @@ const MESES = [
   { id: 10, label: 'out/26' }, { id: 11, label: 'nov/26' }, { id: 12, label: 'dez/26' }
 ];
 
-const ManutencaoMetas = () => {
+const pessoasMetas = () => {
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
@@ -24,7 +24,7 @@ const ManutencaoMetas = () => {
   const fetchMetasData = async () => {
     setLoading(true);
     try {
-      // Busca Metas da Área 2 (Manutenção)
+      // Busca Metas da Área 2 (Pessoas)
       const { data: metasDef } = await supabase.from('metas_farol').select('*').eq('area_id', ID_MANUTENCAO).order('id');
       const { data: metasMensais } = await supabase.from('metas_farol_mensal').select('*').eq('ano', 2026);
       const { data: resultados } = await supabase.from('resultados_farol').select('*').eq('ano', 2026);
@@ -120,7 +120,7 @@ const ManutencaoMetas = () => {
     <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
-        <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Manutenção</h2>
+        <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Pessoas</h2>
         <div className="flex items-center gap-3">
              <button 
                 onClick={() => window.location.hash = 'rotinas'} 
@@ -136,7 +136,7 @@ const ManutencaoMetas = () => {
              </button>
              {/* Tag da Área */}
              <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100 uppercase">
-                Manutenção
+                Pessoas
              </div>
         </div>
       </div>
@@ -211,7 +211,7 @@ const ManutencaoMetas = () => {
 
       {showConfig && (
         <ConfiguracaoGeral 
-            areasContexto={[{ id: 2, nome: 'Manutenção' }]} 
+            areasContexto={[{ id: 2, nome: 'Pessoas' }]} 
             onClose={() => { setShowConfig(false); fetchMetasData(); }} 
         />
       )}
