@@ -21,7 +21,7 @@ const setores = [
 export default function Sidebar() {
   const location = useLocation();
 
-  const isPlanejamentoActive = setores.some(s =>
+  const isPlanejamentoActive = setores.some((s) =>
     location.pathname.startsWith(s.path)
   );
 
@@ -94,7 +94,9 @@ export default function Sidebar() {
 
           <div
             className={`overflow-hidden transition-all duration-300 ease-in-out ${
-              openPlanejamento ? "max-h-[500px] opacity-100 mt-1" : "max-h-0 opacity-0"
+              openPlanejamento
+                ? "max-h-[500px] opacity-100 mt-1"
+                : "max-h-0 opacity-0"
             }`}
           >
             <div className="ml-2 pl-2 border-l border-blue-500/30 space-y-1">
