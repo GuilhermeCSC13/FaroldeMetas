@@ -1,18 +1,313 @@
-import React from "react";
+// src/pages/AdministrativoRotinas.jsx
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient';
+import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
+import { Settings, Target } from 'lucide-react';
 
-export default function AdministrativoRotinas() {
+// IDs das áreas Administrativo (Financeiro + Pessoas)
+const IDS_ADMIN = [7, 8];
+
+const MESES = [
+  { id: 1, label: 'JAN' }, { id: 2, label: 'FEV' }, { id: 3, label: 'MAR' },
+  { id: 4, label: 'ABR' }, { id: 5, label: 'MAI' }, { id: 6, label: 'JUN' },
+  { id: 7, label: 'JUL' }, { id: 8, label: 'AGO' }, { id: 9, label: 'SET' },
+  { id: 10, label: 'OUT' }, { id: 11, label: 'NOV' }, { id: 12, label: 'DEZ' }
+];
+
+const AdministrativoRotinas = () => {
+  const [areas, setAreas] = useState([]);
+  const [areaSelecionada, setAreaSelecionada] = useState(null);
+  const [rotinas, setRotinas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
+
+  useEffect(() => {
+    fetchAreas();
+  }, []);
+
+  useEffect(() => {
+    if (areaSelecionada) fetchRotinasData();
+  }, [areaSelecionada]);
+
+  const fetchAreas = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('areas')
+        .select('*')
+        .eq('ativa', true)
+        .order('id');
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const filtered = data.filter(a => IDS_ADMIN.includes(a.id));
+        const lista = filtered.length > 0 ? filtered : data;
+        setAreas(lista);
+        setAreaSelecionada(lista[0].id);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar áreas:', err);
+    }
+  };
+
+  const fetchRotinasData = async () => {
+    setLoading(true);
+    try {
+      const { data: defs, error: defsErr } = await supabase
+        .from('rotinas_indicadores')
+        .select('*')
+        .eq('area_id', areaSelecionada)
+        .order('ordem', { ascending: true });
+
+      if (defsErr) throw defsErr;
+
+      const { data: valores, error: valsErr } = await supabase
+        .from('rotinas_mensais')
+        .select('*')
+        .eq('ano', 2026);
+
+      if (valsErr) throw valsErr;
+
+      const combined = (defs || []).map(r => {
+        const row = { ...r, meses: {} };
+        MESES.forEach(mes => {
+          const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
+          row.meses[mes.id] = {
+            realizado: valObj ? valObj.valor_realizado : '',
+            meta: valObj ? valObj.valor_meta : null
+          };
+        });
+        return row;
+      });
+
+      setRotinas(combined);
+    } catch (error) {
+      console.error('Erro ao carregar rotinas:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async (rotinaId, mesId, valor) => {
+    const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
+
+    // Atualiza estado local
+    setRotinas(prev =>
+      prev.map(r => {
+        if (r.id !== rotinaId) return r;
+        const novosMeses = { ...r.meses };
+        novosMeses[mesId] = { ...novosMeses[mesId], realizado: valorNum };
+        return { ...r, meses: novosMeses };
+      })
+    );
+
+    // Chama RPC para gravar no banco
+    const { error } = await supabase.rpc('atualizar_realizado_rotina', {
+      p_rotina_id: rotinaId,
+      p_mes: mesId,
+      p_valor: valorNum
+    });
+
+    if (error) console.error('Erro ao salvar:', error);
+  };
+
+  const getCellStatus = (real, meta, tipoComparacao) => {
+    if (real === '' || real === null || meta === null || meta === undefined)
+      return 'bg-white';
+
+    const r = parseFloat(real);
+    const m = parseFloat(meta);
+    if (isNaN(r) || isNaN(m)) return 'bg-white';
+
+    let isGood = false;
+    if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
+      isGood = r <= m;
+    } else {
+      isGood = r >= m;
+    }
+
+    return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
+  };
+
+  const themeColor = 'blue';
+  const headerClass = 'bg-[#3b82f6] text-white';
+
   return (
-    <div className="flex items-center justify-center h-full text-slate-400 bg-white rounded-xl shadow-sm border border-slate-200">
-      <div className="text-center max-w-md">
-        <h2 className="text-xl font-bold text-slate-800 mb-2">
+    <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-5 bg-white border-b border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 tracking-tight">
           Farol de Rotinas — Administrativo
         </h2>
-        <p className="text-sm text-slate-500">
-          Em breve você verá aqui as rotinas consolidadas de Financeiro e
-          Pessoas. Por enquanto, utilize o Farol de Metas para parametrizar os
-          indicadores.
-        </p>
+
+        <div className="flex items-center gap-4">
+          {/* Botões de Navegação */}
+          <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
+            <button
+              onClick={() => (window.location.hash = 'metas')}
+              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
+            >
+              Ir para Metas
+            </button>
+            <button
+              onClick={() => setShowConfig(true)}
+              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+              title="Configurações"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
+
+          {/* Seletor de Áreas (Financeiro / Pessoas) */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {areas.map(area => (
+              <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                  areaSelecionada === area.id
+                    ? `bg-white text-${themeColor}-600 shadow-sm`
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {area.nome}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* Tabela */}
+      <div className="flex-1 overflow-auto bg-white">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-64 text-gray-400 animate-pulse">
+            Carregando...
+          </div>
+        ) : (
+          <div className="min-w-max">
+            <table className="w-full text-sm border-separate border-spacing-0">
+              <thead className="sticky top-0 z-20 shadow-sm">
+                <tr>
+                  <th
+                    className={`sticky left-0 z-30 p-4 w-72 text-left font-bold uppercase tracking-wider text-xs border-b border-r border-white/10 ${headerClass}`}
+                  >
+                    Indicador
+                  </th>
+                  {MESES.map(mes => (
+                    <th
+                      key={mes.id}
+                      className={`p-3 min-w-[100px] text-center font-bold text-xs border-b border-white/10 ${headerClass}`}
+                    >
+                      {mes.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rotinas.map((row, idx) => (
+                  <tr
+                    key={row.id || idx}
+                    className="group hover:bg-gray-50/80 transition-colors"
+                  >
+                    {/* Coluna Indicador */}
+                    <td className="sticky left-0 z-10 p-4 bg-white border-r border-gray-100 group-hover:bg-gray-50 font-medium text-gray-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-1 h-8 rounded-full bg-${themeColor}-500/20`}
+                        ></div>
+                        <div className="flex flex-col">
+                          <span
+                            className="truncate text-sm"
+                            title={row.indicador}
+                          >
+                            {row.indicador}
+                          </span>
+                          <span className="text-[9px] text-gray-400 uppercase">
+                            {row.tipo_comparacao === '<='
+                              ? 'Menor é melhor'
+                              : 'Meta Mínima'}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Meses */}
+                    {MESES.map(mes => {
+                      const dados = row.meses[mes.id];
+                      const temMeta =
+                        dados.meta !== null && dados.meta !== undefined;
+                      const bgStatus = getCellStatus(
+                        dados.realizado,
+                        dados.meta,
+                        row.tipo_comparacao
+                      );
+
+                      return (
+                        <td
+                          key={mes.id}
+                          className="p-0 border-r border-gray-50 relative align-top"
+                        >
+                          <div
+                            className={`flex flex-col h-full min-h-[60px] transition-colors duration-300 ${bgStatus}`}
+                          >
+                            {/* Valor Realizado */}
+                            <div className="flex-1 flex items-center justify-center pt-2">
+                              <div className="flex items-baseline gap-0.5">
+                                {row.formato === 'currency' && (
+                                  <span className="text-gray-500/60 text-[10px] font-light">
+                                    R$
+                                  </span>
+                                )}
+                                <input
+                                  className="w-20 text-center bg-transparent focus:outline-none font-bold text-base text-gray-800 placeholder-gray-400/50"
+                                  placeholder="-"
+                                  defaultValue={dados.realizado}
+                                  onBlur={e =>
+                                    handleSave(row.id, mes.id, e.target.value)
+                                  }
+                                />
+                                {row.formato === 'percent' && (
+                                  <span className="text-gray-500/60 text-[10px] font-light">
+                                    %
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Meta (Target) */}
+                            <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60 text-gray-600">
+                              <Target size={8} />
+                              <span className="font-medium">
+                                {temMeta
+                                  ? Number(dados.meta).toFixed(
+                                      row.formato === 'percent' ? 0 : 0
+                                    )
+                                  : ''}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showConfig && (
+        <ConfiguracaoGeral
+          onClose={() => {
+            setShowConfig(false);
+            fetchRotinasData();
+          }}
+          areasContexto={areas}
+        />
+      )}
     </div>
   );
-}
+};
+
+export default AdministrativoRotinas;
