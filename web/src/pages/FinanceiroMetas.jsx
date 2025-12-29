@@ -328,13 +328,14 @@ const FinanceiroMetas = () => {
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral
-          onClose={() => {
-            setShowConfig(false);
-            fetchMetasData();
-          }}
-        />
-      )}
+  <ConfiguracaoGeral
+    onClose={() => {
+      setShowConfig(false);
+      fetchMetasData();
+    }}
+    areasContexto={areas}   // aqui `areas` está filtrado para id = 8
+  />
+)}
     </div>
   );
 };
