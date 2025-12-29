@@ -3,11 +3,12 @@ import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
 import { Settings, DollarSign } from 'lucide-react';
 
+const ID_FINANCEIRO = 7; // ID Unificado
+
 const FinanceiroMetas = () => {
   const [metas, setMetas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
-  const [idFinanceiro, setIdFinanceiro] = useState(null);
 
   const MESES = [
     { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
@@ -17,35 +18,14 @@ const FinanceiroMetas = () => {
   ];
 
   useEffect(() => {
-    fetchAreaAndData();
+    fetchMetasData();
   }, []);
 
-  const fetchAreaAndData = async () => {
+  const fetchMetasData = async () => {
     setLoading(true);
     try {
-      // 1. Busca o ID da área Financeiro dinamicamente
-      const { data: areaData } = await supabase
-        .from('areas')
-        .select('id')
-        .eq('nome', 'Financeiro')
-        .single();
-
-      if (areaData) {
-        setIdFinanceiro(areaData.id);
-        await fetchMetasData(areaData.id);
-      }
-    } catch (err) {
-      console.error("Erro ao buscar área:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchMetasData = async (areaId) => {
-    try {
-      // Busca Definições, Alvos e Resultados
       const [resDef, resMensal, resReal] = await Promise.all([
-        supabase.from('metas_farol').select('*').eq('area_id', areaId).eq('ano', 2026).order('id'),
+        supabase.from('metas_farol').select('*').eq('area_id', ID_FINANCEIRO).eq('ano', 2026).order('id'),
         supabase.from('metas_farol_mensal').select('*').eq('ano', 2026),
         supabase.from('resultados_farol').select('*').eq('ano', 2026)
       ]);
@@ -55,7 +35,6 @@ const FinanceiroMetas = () => {
         MESES.forEach(mes => {
           const alvoObj = resMensal.data?.find(x => x.meta_id === m.id && x.mes === mes.id);
           const realObj = resReal.data?.find(x => x.meta_id === m.id && x.mes === mes.id);
-          
           const alvo = alvoObj ? parseFloat(alvoObj.valor_meta) : null;
           const real = realObj ? parseFloat(realObj.valor_realizado) : '';
 
@@ -67,26 +46,24 @@ const FinanceiroMetas = () => {
         });
         return row;
       });
-
       setMetas(combined);
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+      console.error('Erro ao carregar metas:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Lógica de cálculo idêntica à Operação, adaptada para Financeiro (<=)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
       return { score: 0, color: 'bg-white' };
     }
-
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
     if (m === 0) return { score: 0, color: 'bg-white' };
 
-    // Para Financeiro (Tipo <=), quanto menor o realizado em relação à meta, melhor
-    let atingimento = r <= m ? 1 : m / r;
-
+    let atingimento = (tipo === '<=' || tipo === 'menor') ? (r <= m ? 1 : m / r) : (r / m);
+    
     let multiplicador = 0;
     let cor = 'bg-red-200';
 
@@ -101,7 +78,6 @@ const FinanceiroMetas = () => {
   const handleSave = async (metaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace('%', '').replace(',', '.'));
     
-    // Update Local Otimista
     setMetas(prev => prev.map(m => {
       if (m.id !== metaId) return m;
       const novoMeses = { ...m.meses };
@@ -113,7 +89,6 @@ const FinanceiroMetas = () => {
       return { ...m, meses: novoMeses };
     }));
 
-    // Salva no Banco
     await supabase.from('resultados_farol').upsert({
       meta_id: metaId, ano: 2026, mes: mesId, valor_realizado: valorNum
     }, { onConflict: 'meta_id, ano, mes' });
@@ -126,12 +101,9 @@ const FinanceiroMetas = () => {
 
   return (
     <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
-      {/* Header Financeiro */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-slate-800 text-white">
         <div className="flex items-center gap-3">
-          <div className="bg-green-600 p-1.5 rounded">
-            <DollarSign size={20} />
-          </div>
+          <div className="bg-green-600 p-1.5 rounded"><DollarSign size={20} /></div>
           <h2 className="text-xl font-bold">Farol de Metas — Financeiro</h2>
         </div>
         <button onClick={() => setShowConfig(true)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -139,15 +111,14 @@ const FinanceiroMetas = () => {
         </button>
       </div>
 
-      {/* Tabela */}
       <div className="flex-1 overflow-auto p-4 bg-slate-50">
         {loading ? (
-          <div className="text-center py-10 text-gray-400 animate-pulse font-bold">Carregando indicadores financeiros...</div>
+          <div className="text-center py-10 text-gray-400 animate-pulse">Carregando dados...</div>
         ) : (
           <div className="border border-gray-300 rounded overflow-hidden shadow-sm bg-white">
             <table className="w-full text-[11px] border-collapse">
               <thead>
-                <tr className="bg-slate-100 text-gray-700 font-bold">
+                <tr className="bg-slate-100 text-gray-700 font-bold uppercase">
                   <th className="p-3 border border-gray-300 w-64 text-left sticky left-0 bg-slate-100 z-10">Indicador</th>
                   <th className="p-2 border border-gray-300 w-16 text-center">Peso</th>
                   {MESES.map(mes => <th key={mes.id} className="p-2 border border-gray-300 min-w-[75px] text-center">{mes.label}</th>)}
@@ -179,10 +150,8 @@ const FinanceiroMetas = () => {
                     })}
                   </tr>
                 ))}
-                
-                {/* Rodapé Performance */}
                 <tr className="bg-slate-900 text-white font-black border-t-2 border-black uppercase">
-                  <td className="p-3 sticky left-0 bg-slate-900 z-10 text-right pr-6">Score Mensal Consolidado</td>
+                  <td className="p-3 sticky left-0 bg-slate-900 z-10 text-right pr-6">Score Consolidado</td>
                   <td className="p-2 text-center">100</td>
                   {MESES.map(mes => (
                     <td key={mes.id} className="p-2 text-center bg-slate-800 text-sm border-r border-slate-700">
@@ -195,10 +164,7 @@ const FinanceiroMetas = () => {
           </div>
         )}
       </div>
-
-      {showConfig && (
-        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchAreaAndData(); }} />
-      )}
+      {showConfig && <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />}
     </div>
   );
 };
