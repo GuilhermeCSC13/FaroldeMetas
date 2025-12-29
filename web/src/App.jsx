@@ -7,8 +7,7 @@ import Inicio from "./pages/Inicio";
 import Operacao from "./pages/Operacao";
 import Moov from "./pages/Moov";
 import Manutencao from "./pages/Manutencao";
-import Financeiro from "./pages/Financeiro"; // NOVO
-import Pessoas from "./pages/Pessoas";       // NOVO
+import Administrativo from "./pages/Administrativo"; // MAIN ADM
 
 // Reuniões & Ações
 import ReunioesCalendario from "./pages/ReunioesCalendario";
@@ -33,23 +32,26 @@ export default function App() {
         
         {/* --- MÓDULOS DE ÁREAS --- */}
         <Route path="/planejamento/operacao" element={<Operacao />} />
-        <Route path="/planejamento/financeiro" element={<Financeiro />} />
-        <Route path="/planejamento/pessoas" element={<Pessoas />} />
+        <Route path="/planejamento/administrativo" element={<Administrativo />} />
         <Route path="/moov" element={<Moov />} />
         <Route path="/manutencao" element={<Manutencao />} />
+
+        {/* (opcional) compatibilidade com rotas antigas */}
+        {/* <Route path="/planejamento/financeiro" element={<Administrativo />} />
+        <Route path="/planejamento/pessoas" element={<Administrativo />} /> */}
 
         {/* --- MÓDULO REUNIÕES & ATAS --- */}
         <Route path="/central-reunioes" element={<CentralReunioes />} />
         <Route path="/central-atas" element={<CentralAtas />} />
         <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
-        {/* Rotas Legado */}
+        {/* Rotas legado */}
         <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
         <Route path="/reunioes/:id" element={<DetalheReuniao />} />
 
         <Route path="/copiloto" element={<Copiloto />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
-        <Route path="/planejamento-tatico" element={<Inicio />} /> 
+        <Route path="/planejamento-tatico" element={<Inicio />} />
       </Routes>
     </BrowserRouter>
   );
