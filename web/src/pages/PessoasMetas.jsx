@@ -327,14 +327,15 @@ const PessoasMetas = () => {
         )}
       </div>
 
-      {showConfig && (
-        <ConfiguracaoGeral
-          onClose={() => {
-            setShowConfig(false);
-            fetchMetasData();
-          }}
-        />
-      )}
+{showConfig && (
+  <ConfiguracaoGeral
+    onClose={() => {
+      setShowConfig(false);
+      fetchMetasData();
+    }}
+    areasContexto={areas}   // aqui `areas` está filtrado para id = 8
+  />
+)}
     </div>
   );
 };
