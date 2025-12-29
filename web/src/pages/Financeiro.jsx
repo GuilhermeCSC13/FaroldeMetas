@@ -1,23 +1,24 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import Layout from '../components/tatico/Layout';
-import PessoasMetas from './PessoasMetas';
-import PessoasRotinas from './PessoasRotinas';
+import FinanceiroMetas from './FinanceiroMetas';
+import FinanceiroRotinas from './FinanceiroRotinas';
 
-export default function Pessoas() {
+export default function Financeiro() {
   const { hash } = useLocation();
 
+  // Renderização baseada no hash vindo da Sidebar
   const renderContent = () => {
     switch (hash) {
       case '#metas':
-        return <PessoasMetas />;
+        return <FinanceiroMetas />;
       case '#rotinas':
-        return <PessoasRotinas />;
+        return <FinanceiroRotinas />;
       default:
         return (
           <div className="flex items-center justify-center h-full text-slate-400 bg-white rounded-xl shadow-sm border border-slate-200">
             <div className="text-center">
-              <h2 className="text-xl font-bold text-indigo-900">Resumo Pessoas / RH</h2>
+              <h2 className="text-xl font-bold text-slate-800">Resumo Financeiro</h2>
               <p>Selecione Metas ou Rotinas no menu lateral.</p>
             </div>
           </div>
