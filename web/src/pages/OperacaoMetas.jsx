@@ -198,7 +198,7 @@ const OperacaoMetas = () => {
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
         
         <div className="flex items-center gap-4">
-          {/* Botão de Configuração (removido 'Ir para Rotinas') */}
+          {/* Só Configuração (sem 'Ir para Rotinas') */}
           <div className="flex items-center gap-2 mr-4 pr-4">
             <button 
               onClick={() => setShowConfig(true)}
@@ -237,9 +237,11 @@ const OperacaoMetas = () => {
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
-                  <th className="p-2 border border-gray-300 w-32">Responsável</th>
                   <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">
                     Indicador
+                  </th>
+                  <th className="p-2 border border-gray-300 w-32">
+                    Responsável
                   </th>
                   <th className="p-2 border border-gray-300 w-12">Peso</th>
                   <th className="p-2 border border-gray-300 w-12">Tipo</th>
@@ -253,17 +255,17 @@ const OperacaoMetas = () => {
               <tbody>
                 {metas.map(meta => (
                   <tr key={meta.id} className="hover:bg-gray-50 text-center">
-                    {/* Responsável */}
-                    <td className="p-2 border border-gray-300 text-left text-[11px] text-gray-700">
-                      {meta.responsavel || '-'}
-                    </td>
-
-                    {/* Indicador */}
+                    {/* Indicador (primeira coluna, sticky) */}
                     <td className="p-2 border border-gray-300 text-left font-semibold text-gray-800 text-sm sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
                       <span className='block text-[9px] text-gray-400 font-normal'>
                         {meta.unidade}
                       </span>
+                    </td>
+
+                    {/* Responsável (segunda coluna) */}
+                    <td className="p-2 border border-gray-300 text-left text-[11px] text-gray-700">
+                      {meta.responsavel || '-'}
                     </td>
 
                     <td className="p-2 border border-gray-300 bg-gray-50">
@@ -304,11 +306,12 @@ const OperacaoMetas = () => {
                 ))}
                 
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
-                  {/* coluna responsável vazia para alinhar */}
-                  <td className="p-2 border-r border-red-500"></td>
+                  {/* TOTAL SCORE alinhado à coluna Indicador (primeira) */}
                   <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                     TOTAL SCORE
                   </td>
+                  {/* Coluna Responsável vazia */}
+                  <td className="p-2 border-r border-red-500"></td>
                   <td className="p-2 border-r border-red-500 text-center">100</td>
                   <td className="p-2 border-r border-red-500"></td>
                   {MESES.map(mes => (
