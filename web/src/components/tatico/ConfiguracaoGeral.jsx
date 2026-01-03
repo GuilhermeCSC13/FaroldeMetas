@@ -24,7 +24,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
   const [areaId, setAreaId] = useState(areasDisponiveis[0].id);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false); // NOVO: estado de salvamento
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -74,13 +74,13 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         dataMetas = values || [];
       }
 
-      const combined = dataItems.map((item) => {
+      const combined = dataItems.map(item => {
         const row = { ...item, valores_mensais: {} };
-        MESES.forEach((mes) => {
+        MESES.forEach(mes => {
           const fkId = item.id;
           const fkColumn = tipo === 'metas' ? 'meta_id' : 'rotina_id';
           const found = dataMetas.find(
-            (v) => v[fkColumn] === fkId && v.mes === mes.id
+            v => v[fkColumn] === fkId && v.mes === mes.id
           );
           row.valores_mensais[mes.id] = found ? found.valor_meta : '';
         });
@@ -102,7 +102,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
     try {
       if (tipo === 'metas') {
-        // INSERE APENAS COLUNAS EXISTENTES NA TABELA metas_farol
         const { error } = await supabase.from('metas_farol').insert({
           area_id: areaId,
           indicador: nome,
@@ -129,8 +128,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     }
   };
 
-  const handleDelete = async (id) => {
-    // Confirmação dupla com senha APAGAR
+  const handleDelete = async id => {
     const senha = prompt(
       'ATENÇÃO: isso vai apagar o INDICADOR e todo o histórico vinculado.\n\n' +
         'Para confirmar, digite APAGAR em letras maiúsculas:'
@@ -151,7 +149,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     const fkCol = tipo === 'metas' ? 'meta_id' : 'rotina_id';
 
     try {
-      // Se for meta, apaga também resultados_farol
       if (tipo === 'metas') {
         const { error: errRes } = await supabase
           .from('resultados_farol')
@@ -182,8 +179,8 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
   const updateRowProp = async (id, field, value) => {
     const table = tipo === 'metas' ? 'metas_farol' : 'rotinas_indicadores';
 
-    setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, [field]: value } : i))
+    setItems(prev =>
+      prev.map(i => (i.id === id ? { ...i, [field]: value } : i))
     );
 
     try {
@@ -198,6 +195,36 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     }
   };
 
+  // Helper genérico para fazer "upsert" sem ON CONFLICT
+  const upsertValorMensal = async (table, fkColumn, itemId, mesId, valorNum) => {
+    // 1) Verifica se já existe linha
+    const { data, error } = await supabase
+      .from(table)
+      .select('id')
+      .eq(fkColumn, itemId)
+      .eq('ano', 2026)
+      .eq('mes', mesId);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      const id = data[0].id;
+      const { error: updError } = await supabase
+        .from(table)
+        .update({ valor_meta: valorNum })
+        .eq('id', id);
+      if (updError) throw updError;
+    } else {
+      const { error: insError } = await supabase.from(table).insert({
+        [fkColumn]: itemId,
+        ano: 2026,
+        mes: mesId,
+        valor_meta: valorNum
+      });
+      if (insError) throw insError;
+    }
+  };
+
   const saveMonthlyTarget = async (itemId, mesId, valor) => {
     const valorNum =
       valor === '' || valor === null
@@ -207,18 +234,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     const fkColumn = tipo === 'metas' ? 'meta_id' : 'rotina_id';
 
     try {
-      const payload = {
-        [fkColumn]: itemId,
-        ano: 2026,
-        mes: mesId,
-        valor_meta: valorNum
-      };
-
-      const { error } = await supabase
-        .from(table)
-        .upsert(payload, { onConflict: `${fkColumn}, ano, mes` });
-
-      if (error) throw error;
+      await upsertValorMensal(table, fkColumn, itemId, mesId, valorNum);
     } catch (err) {
       console.error('Erro ao salvar meta mensal:', err);
       alert('Erro ao salvar a meta mensal. Veja o console para detalhes.');
@@ -226,8 +242,8 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
   };
 
   const handleMonthlyChange = (itemId, mesId, valor) => {
-    setItems((prev) =>
-      prev.map((i) => {
+    setItems(prev =>
+      prev.map(i => {
         if (i.id !== itemId) return i;
         const newVals = { ...i.valores_mensais, [mesId]: valor };
         return { ...i, valores_mensais: newVals };
@@ -235,45 +251,39 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     );
   };
 
-  // NOVO: botão explícito para salvar todas as metas/rotinas da tela
+  // Botão explícito para salvar todas as metas/rotinas da tela
   const handleSaveAll = async () => {
     setSaving(true);
     const table = tipo === 'metas' ? 'metas_farol_mensal' : 'rotinas_mensais';
     const fkColumn = tipo === 'metas' ? 'meta_id' : 'rotina_id';
 
     try {
-      const rows = [];
+      const promises = [];
 
-      items.forEach((item) => {
-        MESES.forEach((mes) => {
+      items.forEach(item => {
+        MESES.forEach(mes => {
           const rawVal = item.valores_mensais[mes.id];
           if (rawVal === '' || rawVal === undefined) return;
 
           const parsed = parseFloat(String(rawVal).replace(',', '.'));
           const valorNum = isNaN(parsed) ? null : parsed;
 
-          rows.push({
-            [fkColumn]: item.id,
-            ano: 2026,
-            mes: mes.id,
-            valor_meta: valorNum
-          });
+          promises.push(
+            upsertValorMensal(table, fkColumn, item.id, mes.id, valorNum)
+          );
         });
       });
 
-      if (rows.length === 0) {
+      if (promises.length === 0) {
         alert('Nenhum valor preenchido para salvar.');
+        setSaving(false);
         return;
       }
 
-      const { error } = await supabase
-        .from(table)
-        .upsert(rows, { onConflict: `${fkColumn}, ano, mes` });
-
-      if (error) throw error;
+      await Promise.all(promises);
 
       alert('Metas/rotinas salvas com sucesso.');
-      fetchData(); // recarrega para garantir que veio igual do banco
+      fetchData();
     } catch (err) {
       console.error('Erro ao salvar metas/rotinas:', err);
       alert('Erro ao salvar metas/rotinas. Veja o console para detalhes.');
@@ -312,14 +322,13 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Dropdown de Áreas */}
             <select
               value={areaId}
-              onChange={(e) => setAreaId(Number(e.target.value))}
+              onChange={e => setAreaId(Number(e.target.value))}
               className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 font-semibold"
               disabled={areasDisponiveis.length === 1}
             >
-              {areasDisponiveis.map((a) => (
+              {areasDisponiveis.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.nome || a.label}
                 </option>
@@ -360,7 +369,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         <th className="p-3 w-16 text-center border-r">Tipo</th>
                       </>
                     )}
-                    {MESES.map((m) => (
+                    {MESES.map(m => (
                       <th
                         key={m.id}
                         className="p-3 text-center min-w-[60px] border-r bg-yellow-50 text-yellow-800"
@@ -372,15 +381,12 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {items.map((item) => (
-                    <tr
-                      key={item.id}
-                      className="hover:bg-blue-50/30 transition-colors group"
-                    >
+                  {items.map(item => (
+                    <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
                       <td className="p-2 border-r">
                         <input
                           value={item.nome_meta || item.indicador}
-                          onChange={(e) =>
+                          onChange={e =>
                             updateRowProp(
                               item.id,
                               tipo === 'metas' ? 'nome_meta' : 'indicador',
@@ -397,7 +403,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                             <input
                               type="number"
                               value={item.peso}
-                              onChange={(e) =>
+                              onChange={e =>
                                 updateRowProp(item.id, 'peso', e.target.value)
                               }
                               className="w-full text-center bg-transparent"
@@ -406,7 +412,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                           <td className="p-1 border-r">
                             <input
                               value={item.unidade}
-                              onChange={(e) =>
+                              onChange={e =>
                                 updateRowProp(item.id, 'unidade', e.target.value)
                               }
                               className="w-full text-center bg-transparent"
@@ -420,7 +426,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                           <td className="p-1 border-r">
                             <select
                               value={item.formato}
-                              onChange={(e) =>
+                              onChange={e =>
                                 updateRowProp(item.id, 'formato', e.target.value)
                               }
                               className="w-full bg-transparent"
@@ -433,7 +439,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                           <td className="p-1 border-r">
                             <input
                               value={item.responsavel || ''}
-                              onChange={(e) =>
+                              onChange={e =>
                                 updateRowProp(item.id, 'responsavel', e.target.value)
                               }
                               className="w-full text-center bg-transparent"
@@ -445,7 +451,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                       <td className="p-1 border-r">
                         <select
                           value={item.tipo_comparacao}
-                          onChange={(e) =>
+                          onChange={e =>
                             updateRowProp(
                               item.id,
                               'tipo_comparacao',
@@ -459,17 +465,14 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         </select>
                       </td>
 
-                      {MESES.map((mes) => (
-                        <td
-                          key={mes.id}
-                          className="p-0 border-r bg-yellow-50/10"
-                        >
+                      {MESES.map(mes => (
+                        <td key={mes.id} className="p-0 border-r bg-yellow-50/10">
                           <input
                             value={item.valores_mensais[mes.id] || ''}
-                            onChange={(e) =>
+                            onChange={e =>
                               handleMonthlyChange(item.id, mes.id, e.target.value)
                             }
-                            onBlur={(e) =>
+                            onBlur={e =>
                               saveMonthlyTarget(item.id, mes.id, e.target.value)
                             }
                             className="w-full h-9 text-center bg-transparent text-gray-700 font-medium focus:bg-yellow-100 focus:outline-none"
