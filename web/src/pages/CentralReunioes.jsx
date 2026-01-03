@@ -13,7 +13,7 @@ import {
 import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 
 export default function CentralReunioes() {
-  const [view, setView] = useState('calendar'); 
+  const [view, setView] = useState('calendar'); // 'calendar' | 'week' | 'list'
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reunioes, setReunioes] = useState([]);
   
@@ -33,12 +33,18 @@ export default function CentralReunioes() {
     recorrencia: 'unica'
   });
 
+  // Drag & drop
+  const [draggingReuniao, setDraggingReuniao] = useState(null);
+
   useEffect(() => {
     fetchReunioes();
   }, [currentDate]);
 
   const fetchReunioes = async () => {
-    const { data } = await supabase.from('reunioes').select('*').order('data_hora');
+    const { data } = await supabase
+      .from('reunioes')
+      .select('*')
+      .order('data_hora');
     setReunioes(data || []);
   };
 
@@ -49,6 +55,12 @@ export default function CentralReunioes() {
     return parseISO(dataString.substring(0, 19));
   };
 
+  const resumoPauta = (pauta) => {
+    if (!pauta) return '';
+    const clean = pauta.replace(/[#*_>\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    return clean.length > 140 ? clean.slice(0, 140) + '...' : clean;
+  };
+
   // --- Helpers de Calendário ---
   const nextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
@@ -56,15 +68,20 @@ export default function CentralReunioes() {
   const onDateClick = (day) => {
     setEditingReuniao(null);
     setFormData({ 
-        titulo: '', tipo_reuniao: 'Geral', data: format(day, 'yyyy-MM-dd'), hora: '09:00', 
-        cor: '#3B82F6', responsavel: '', pauta: '', recorrencia: 'unica' 
+      titulo: '', 
+      tipo_reuniao: 'Geral', 
+      data: format(day, 'yyyy-MM-dd'), 
+      hora: '09:00', 
+      cor: '#3B82F6', 
+      responsavel: '', 
+      pauta: '', 
+      recorrencia: 'unica' 
     });
     setActiveTab('detalhes');
     setIsModalOpen(true);
   };
 
   const handleEdit = (reuniao) => {
-    // CORREÇÃO: Usa parseDataLocal para manter a hora visualmente igual ao banco
     const dt = parseDataLocal(reuniao.data_hora);
     
     setFormData({
@@ -85,8 +102,7 @@ export default function CentralReunioes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // CORREÇÃO: Monta a string ISO manualmente sem conversão UTC (.toISOString muda o horário)
-    // O Supabase vai aceitar isso como 'Local', mantendo o 09:00 visualmente.
+    // grava como string "local" sem .toISOString()
     const dataHoraIso = `${formData.data}T${formData.hora}:00`;
     
     const dados = {
@@ -100,7 +116,9 @@ export default function CentralReunioes() {
     };
 
     if (editingReuniao) {
-      const aplicarSerie = window.confirm("Você alterou esta reunião. Deseja aplicar as mudanças (exceto data/hora) para todas as futuras desta série?");
+      const aplicarSerie = window.confirm(
+        'Você alterou esta reunião. Deseja aplicar as mudanças (exceto data/hora) para todas as futuras desta série?'
+      );
       await atualizarReuniao(editingReuniao.id, dados, aplicarSerie);
     } else {
       await salvarReuniao(dados, formData.recorrencia);
@@ -110,10 +128,74 @@ export default function CentralReunioes() {
     fetchReunioes();
   };
 
-  // Calendário Render Logic
   const monthStart = startOfMonth(currentDate);
   const startDate = startOfWeek(monthStart);
-  const calendarDays = eachDayOfInterval({ start: startDate, end: endOfWeek(endOfMonth(monthStart)) });
+  const calendarDays = eachDayOfInterval({
+    start: startDate,
+    end: endOfWeek(endOfMonth(monthStart)),
+  });
+
+  const weekStart = startOfWeek(currentDate);
+  const weekEnd = endOfWeek(currentDate);
+  const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
+
+  const reunioesDoDia = (day) =>
+    reunioes.filter((r) => isSameDay(parseDataLocal(r.data_hora), day));
+
+  // --- Drag & Drop ---
+  const handleDragStart = (e, reuniao) => {
+    setDraggingReuniao(reuniao);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggingReuniao(null);
+  };
+
+  const handleDragOverDay = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDropOnDay = async (e, day) => {
+    e.preventDefault();
+    if (!draggingReuniao) return;
+
+    try {
+      const dtOrig = parseDataLocal(draggingReuniao.data_hora);
+      const novaDataHora = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        dtOrig.getHours(),
+        dtOrig.getMinutes(),
+        dtOrig.getSeconds()
+      );
+
+      const novaIso = `${format(novaDataHora, 'yyyy-MM-dd')}T${format(
+        novaDataHora,
+        'HH:mm:ss'
+      )}`;
+
+      const { error } = await supabase
+        .from('reunioes')
+        .update({ data_hora: novaIso })
+        .eq('id', draggingReuniao.id);
+
+      if (error) throw error;
+
+      // Atualiza localmente
+      setReunioes((prev) =>
+        prev.map((r) =>
+          r.id === draggingReuniao.id ? { ...r, data_hora: novaIso } : r
+        )
+      );
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao mover reunião.');
+    } finally {
+      setDraggingReuniao(null);
+    }
+  };
 
   return (
     <Layout>
@@ -126,50 +208,125 @@ export default function CentralReunioes() {
             <p className="text-sm text-slate-500">Agendamento e controle de rituais.</p>
           </div>
           <div className="flex gap-2">
-             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
-              <button onClick={() => setView('calendar')} className={`p-2 rounded ${view === 'calendar' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}><CalIcon size={18}/></button>
-              <button onClick={() => setView('list')} className={`p-2 rounded ${view === 'list' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'}`}><List size={18}/></button>
+            <div className="bg-white border p-1 rounded-lg flex shadow-sm">
+              <button
+                onClick={() => setView('calendar')}
+                className={`p-2 rounded ${
+                  view === 'calendar' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'
+                }`}
+              >
+                <CalIcon size={18} />
+              </button>
+              <button
+                onClick={() => setView('week')}
+                className={`p-2 rounded ${
+                  view === 'week' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'
+                }`}
+              >
+                S
+              </button>
+              <button
+                onClick={() => setView('list')}
+                className={`p-2 rounded ${
+                  view === 'list' ? 'bg-blue-100 text-blue-700' : 'text-slate-500'
+                }`}
+              >
+                <List size={18} />
+              </button>
             </div>
-            <button onClick={() => onDateClick(new Date())} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md">
+            <button
+              onClick={() => onDateClick(new Date())}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md"
+            >
               <Plus size={18} /> Nova
             </button>
           </div>
         </div>
 
-        {/* --- VIEW: CALENDÁRIO --- */}
+        {/* --- VIEW: CALENDÁRIO MENSAL --- */}
         {view === 'calendar' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-             {/* Navegação Mês */}
+            {/* Navegação Mês */}
             <div className="flex items-center justify-between p-4 border-b border-slate-100">
-              <h2 className="text-xl font-bold text-slate-700 capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</h2>
+              <h2 className="text-xl font-bold text-slate-700 capitalize">
+                {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
+              </h2>
               <div className="flex gap-2">
-                <button onClick={prevMonth} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft /></button>
-                <button onClick={nextMonth} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
+                <button
+                  onClick={prevMonth}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronLeft />
+                </button>
+                <button
+                  onClick={nextMonth}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronRight />
+                </button>
               </div>
             </div>
             
             {/* Cabeçalho Dias */}
             <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-100">
-              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
-                <div key={d} className="py-2 text-center text-xs font-bold text-slate-400 uppercase">{d}</div>
+              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d) => (
+                <div
+                  key={d}
+                  className="py-2 text-center text-xs font-bold text-slate-400 uppercase"
+                >
+                  {d}
+                </div>
               ))}
             </div>
 
-            {/* Grid */}
-            <div className="grid grid-cols-7 grid-rows-5 flex-1">
+            {/* Grid Mensal */}
+            <div className="grid grid-cols-7 flex-1">
               {calendarDays.map((day) => {
-                // CORREÇÃO: Usa parseDataLocal para filtrar corretamente o dia
-                const dayMeetings = reunioes.filter(r => isSameDay(parseDataLocal(r.data_hora), day));
+                const dayMeetings = reunioesDoDia(day);
                 const isCurrent = isSameMonth(day, monthStart);
+
                 return (
-                  <div key={day.toString()} onClick={() => onDateClick(day)} className={`border-r border-b border-slate-50 p-1 cursor-pointer hover:bg-blue-50/30 transition-colors flex flex-col gap-1 ${!isCurrent ? 'bg-slate-50/50 opacity-50' : ''}`}>
-                    <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isSameDay(day, new Date()) ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{format(day, 'd')}</span>
-                    {dayMeetings.map(m => (
-                      <div key={m.id} onClick={(e) => { e.stopPropagation(); handleEdit(m); }} className="text-[10px] truncate px-1 rounded border-l-2 font-medium" style={{ borderLeftColor: m.cor, backgroundColor: m.cor + '15', color: '#475569' }}>
-                        {/* CORREÇÃO: Exibição visual sem conversão de fuso */}
-                        {format(parseDataLocal(m.data_hora), 'HH:mm')} {m.titulo}
-                      </div>
-                    ))}
+                  <div
+                    key={day.toString()}
+                    onClick={() => onDateClick(day)}
+                    onDragOver={handleDragOverDay}
+                    onDrop={(e) => handleDropOnDay(e, day)}
+                    className={`border-r border-b border-slate-50 p-1 cursor-pointer hover:bg-blue-50/30 transition-colors flex flex-col gap-1 ${
+                      !isCurrent ? 'bg-slate-50/50 opacity-50' : ''
+                    }`}
+                  >
+                    <span
+                      className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${
+                        isSameDay(day, new Date())
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      {format(day, 'd')}
+                    </span>
+                    {dayMeetings.map((m) => {
+                      const dt = parseDataLocal(m.data_hora);
+                      return (
+                        <div
+                          key={m.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, m)}
+                          onDragEnd={handleDragEnd}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(m);
+                          }}
+                          className="text-[10px] truncate px-1 rounded border-l-2 font-medium"
+                          style={{
+                            borderLeftColor: m.cor,
+                            backgroundColor: m.cor + '15',
+                            color: '#475569',
+                          }}
+                        >
+                          {format(dt, 'HH:mm')} {m.titulo}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -177,25 +334,196 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* --- VIEW: LISTA --- */}
+        {/* --- VIEW: SEMANAL (GRADE + LISTA POR DIA) --- */}
+        {view === 'week' && (
+          <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            {/* Cabeçalho Semana */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <h2 className="text-xl font-bold text-slate-700">
+                Semana de {format(weekStart, 'dd/MM', { locale: ptBR })} a{' '}
+                {format(weekEnd, 'dd/MM', { locale: ptBR })}
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCurrentDate(subMonths(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronLeft />
+                </button>
+                <button
+                  onClick={() => setCurrentDate(new Date())}
+                  className="px-3 py-1 text-xs bg-blue-50 text-blue-700 rounded-lg border border-blue-100 font-bold"
+                >
+                  Hoje
+                </button>
+                <button
+                  onClick={() => setCurrentDate(addMonths(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronRight />
+                </button>
+              </div>
+            </div>
+
+            {/* Grade semanal */}
+            <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
+              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d) => (
+                <div
+                  key={d}
+                  className="py-2 text-center text-xs font-bold text-slate-400 uppercase"
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 border-b border-slate-100">
+              {weekDays.map((day) => {
+                const dayMeetings = reunioesDoDia(day);
+                const isToday = isSameDay(day, new Date());
+                return (
+                  <div
+                    key={day.toString()}
+                    onClick={() => onDateClick(day)}
+                    onDragOver={handleDragOverDay}
+                    onDrop={(e) => handleDropOnDay(e, day)}
+                    className="border-r border-slate-100 p-2 min-h-[110px] hover:bg-blue-50/30 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span
+                        className={`text-xs font-bold ${
+                          isToday ? 'text-blue-700' : 'text-slate-600'
+                        }`}
+                      >
+                        {format(day, 'd/MM')}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1 max-h-[80px] overflow-y-auto custom-scrollbar">
+                      {dayMeetings.map((m) => {
+                        const dt = parseDataLocal(m.data_hora);
+                        return (
+                          <div
+                            key={m.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, m)}
+                            onDragEnd={handleDragEnd}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(m);
+                            }}
+                            className="text-[10px] px-2 py-1 rounded border-l-2 font-semibold truncate"
+                            style={{
+                              borderLeftColor: m.cor,
+                              backgroundColor: m.cor + '15',
+                              color: '#475569',
+                            }}
+                          >
+                            {format(dt, 'HH:mm')} {m.titulo}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Lista da semana separada por dia */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
+              {weekDays.map((day) => {
+                const dayMeetings = reunioesDoDia(day);
+                if (dayMeetings.length === 0) return null;
+
+                return (
+                  <div key={day.toString()} className="flex gap-4">
+                    <div className="w-20 text-right pt-2">
+                      <p className="text-2xl font-bold text-slate-800">
+                        {format(day, 'dd')}
+                      </p>
+                      <p className="text-xs text-slate-400 uppercase font-bold">
+                        {format(day, 'EEE', { locale: ptBR })}
+                      </p>
+                    </div>
+                    <div className="flex-1 border-l-2 border-slate-100 pl-4 space-y-3 pb-4">
+                      {dayMeetings.map((m) => {
+                        const dt = parseDataLocal(m.data_hora);
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => handleEdit(m)}
+                            className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm hover:shadow-md cursor-pointer transition-shadow"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h4 className="font-bold text-slate-800">
+                                  {m.titulo}
+                                </h4>
+                                <p className="text-xs text-slate-500">
+                                  {format(dt, 'HH:mm')} • {m.tipo_reuniao}
+                                  {m.responsavel
+                                    ? ` • Resp: ${m.responsavel}`
+                                    : ''}
+                                </p>
+                              </div>
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: m.cor || '#64748b' }}
+                              />
+                            </div>
+                            {m.pauta && (
+                              <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                                {resumoPauta(m.pauta)}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* --- VIEW: LISTA MENSAL --- */}
         {view === 'list' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-4 custom-scrollbar">
-             {reunioes.map(r => {
-                // CORREÇÃO: parseDataLocal
-                const dt = parseDataLocal(r.data_hora);
-                return (
-                  <div key={r.id} onClick={() => handleEdit(r)} className="flex items-center gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer">
-                      <div className="w-12 text-center">
-                        <div className="text-xs font-bold uppercase text-slate-400">{format(dt, 'MMM', { locale: ptBR })}</div>
-                        <div className="text-xl font-bold text-slate-800">{format(dt, 'dd')}</div>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-bold text-slate-800">{r.titulo}</h4>
-                        <p className="text-xs text-slate-500">{r.responsavel ? `Resp: ${r.responsavel}` : 'Sem responsável'} • {format(dt, 'HH:mm')}</p>
-                      </div>
+            {reunioes.map((r) => {
+              const dt = parseDataLocal(r.data_hora);
+              return (
+                <div
+                  key={r.id}
+                  onClick={() => handleEdit(r)}
+                  className="flex items-start gap-4 p-4 border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
+                >
+                  <div className="w-12 text-center">
+                    <div className="text-xs font-bold uppercase text-slate-400">
+                      {format(dt, 'MMM', { locale: ptBR })}
+                    </div>
+                    <div className="text-xl font-bold text-slate-800">
+                      {format(dt, 'dd')}
+                    </div>
                   </div>
-               )
-             })}
+                  <div className="flex-1">
+                    <h4 className="font-bold text-slate-800">{r.titulo}</h4>
+                    <p className="text-xs text-slate-500">
+                      {format(dt, 'HH:mm')} • {r.tipo_reuniao}
+                      {r.responsavel ? ` • Resp: ${r.responsavel}` : ''}
+                    </p>
+                    {r.pauta && (
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                        {resumoPauta(r.pauta)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {reunioes.length === 0 && (
+              <p className="text-center text-slate-400 py-16">
+                Nenhuma reunião cadastrada.
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -213,103 +541,222 @@ export default function CentralReunioes() {
               <div className="flex gap-2">
                 {/* Abas */}
                 <div className="flex bg-slate-200 p-1 rounded-lg mr-4">
-                    <button onClick={() => setActiveTab('detalhes')} className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'detalhes' ? 'bg-white shadow text-blue-700' : 'text-slate-500'}`}>Detalhes</button>
-                    <button onClick={() => setActiveTab('ata')} className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'ata' ? 'bg-white shadow text-blue-700' : 'text-slate-500'}`}>Ata / Pauta</button>
+                  <button
+                    onClick={() => setActiveTab('detalhes')}
+                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
+                      activeTab === 'detalhes'
+                        ? 'bg-white shadow text-blue-700'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Detalhes
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('ata')}
+                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
+                      activeTab === 'ata'
+                        ? 'bg-white shadow text-blue-700'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Ata / Pauta
+                  </button>
                 </div>
-                <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-200 rounded-full"><X size={20} className="text-slate-500"/></button>
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-2 hover:bg-slate-200 rounded-full"
+                >
+                  <X size={20} className="text-slate-500" />
+                </button>
               </div>
             </div>
 
             {/* Corpo do Modal (Scrollável) */}
-            <form onSubmit={handleSubmit} className="flex-1 flex flex-col md:flex-row overflow-hidden">
-                
-                {/* COLUNA ESQUERDA: Detalhes */}
-                <div className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${activeTab === 'ata' ? 'hidden md:block' : ''}`}>
-                    <div className="space-y-6 max-w-lg mx-auto">
-                        
-                        <div>
-                            <label className="label-form">Título da Reunião</label>
-                            <input required className="input-form text-lg font-bold" value={formData.titulo} onChange={e => setFormData({...formData, titulo: e.target.value})} placeholder="Ex: Reunião Mensal de Resultados" />
-                        </div>
+            <form
+              onSubmit={handleSubmit}
+              className="flex-1 flex flex-col md:flex-row overflow-hidden"
+            >
+              {/* COLUNA ESQUERDA: Detalhes */}
+              <div
+                className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${
+                  activeTab === 'ata' ? 'hidden md:block' : ''
+                }`}
+              >
+                <div className="space-y-6 max-w-lg mx-auto">
+                  <div>
+                    <label className="label-form">Título da Reunião</label>
+                    <input
+                      required
+                      className="input-form text-lg font-bold"
+                      value={formData.titulo}
+                      onChange={(e) =>
+                        setFormData({ ...formData, titulo: e.target.value })
+                      }
+                      placeholder="Ex: Reunião Mensal de Resultados"
+                    />
+                  </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="label-form">Data</label>
-                                <input type="date" required className="input-form" value={formData.data} onChange={e => setFormData({...formData, data: e.target.value})} />
-                            </div>
-                            <div>
-                                <label className="label-form">Hora</label>
-                                <input type="time" required className="input-form" value={formData.hora} onChange={e => setFormData({...formData, hora: e.target.value})} />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="label-form">Responsável (Organizador)</label>
-                            <div className="relative">
-                                <User className="absolute left-3 top-3 text-slate-400" size={18} />
-                                <input className="input-form pl-10" value={formData.responsavel} onChange={e => setFormData({...formData, responsavel: e.target.value})} placeholder="Quem está liderando?" />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="label-form">Tipo / Categoria</label>
-                                <input className="input-form" value={formData.tipo_reuniao} onChange={e => setFormData({...formData, tipo_reuniao: e.target.value})} list="tipos" />
-                                <datalist id="tipos">
-                                    <option value="Operacional" /><option value="Estratégica" /><option value="Feedback" /><option value="Treinamento" />
-                                </datalist>
-                            </div>
-                            <div>
-                                <label className="label-form">Cor na Agenda</label>
-                                <div className="flex items-center gap-2 h-11">
-                                    <input type="color" className="w-10 h-10 rounded border-none cursor-pointer" value={formData.cor} onChange={e => setFormData({...formData, cor: e.target.value})} />
-                                    <span className="text-xs text-slate-400">Clique para escolher</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {!editingReuniao && (
-                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                <label className="label-form text-blue-800 flex items-center gap-2"><Repeat size={14}/> Recorrência</label>
-                                <div className="flex gap-2 mt-2">
-                                    {['unica', 'semanal', 'mensal'].map(t => (
-                                        <button key={t} type="button" onClick={() => setFormData({...formData, recorrencia: t})} className={`px-3 py-1 text-xs font-bold rounded uppercase ${formData.recorrencia === t ? 'bg-blue-600 text-white' : 'bg-white border text-slate-500'}`}>{t}</button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="label-form">Data</label>
+                      <input
+                        type="date"
+                        required
+                        className="input-form"
+                        value={formData.data}
+                        onChange={(e) =>
+                          setFormData({ ...formData, data: e.target.value })
+                        }
+                      />
                     </div>
-                </div>
+                    <div>
+                      <label className="label-form">Hora</label>
+                      <input
+                        type="time"
+                        required
+                        className="input-form"
+                        value={formData.hora}
+                        onChange={(e) =>
+                          setFormData({ ...formData, hora: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
 
-                {/* COLUNA DIREITA: ATA / PAUTA */}
-                <div className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'}`}>
-                    <label className="label-form flex items-center gap-2 mb-2">
-                        <AlignLeft size={16}/> Ata da Reunião / Pauta
-                        <span className="text-xs font-normal text-slate-400 ml-auto">Markdown suportado</span>
-                    </label>
-                    <textarea 
-                        className="flex-1 w-full bg-white border border-slate-200 rounded-xl p-6 text-slate-700 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500 resize-none shadow-sm"
-                        placeholder="Digite aqui os tópicos discutidos, decisões tomadas e próximos passos..."
-                        value={formData.pauta}
-                        onChange={e => setFormData({...formData, pauta: e.target.value})}
-                    ></textarea>
-                </div>
+                  <div>
+                    <label className="label-form">Responsável (Organizador)</label>
+                    <div className="relative">
+                      <User
+                        className="absolute left-3 top-3 text-slate-400"
+                        size={18}
+                      />
+                      <input
+                        className="input-form pl-10"
+                        value={formData.responsavel}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            responsavel: e.target.value,
+                          })
+                        }
+                        placeholder="Quem está liderando?"
+                      />
+                    </div>
+                  </div>
 
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="label-form">Tipo / Categoria</label>
+                      <input
+                        className="input-form"
+                        value={formData.tipo_reuniao}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            tipo_reuniao: e.target.value,
+                          })
+                        }
+                        list="tipos"
+                      />
+                      <datalist id="tipos">
+                        <option value="Operacional" />
+                        <option value="Estratégica" />
+                        <option value="Feedback" />
+                        <option value="Treinamento" />
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="label-form">Cor na Agenda</label>
+                      <div className="flex items-center gap-2 h-11">
+                        <input
+                          type="color"
+                          className="w-10 h-10 rounded border-none cursor-pointer"
+                          value={formData.cor}
+                          onChange={(e) =>
+                            setFormData({ ...formData, cor: e.target.value })
+                          }
+                        />
+                        <span className="text-xs text-slate-400">
+                          Clique para escolher
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {!editingReuniao && (
+                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                      <label className="label-form text-blue-800 flex items-center gap-2">
+                        <Repeat size={14} /> Recorrência
+                      </label>
+                      <div className="flex gap-2 mt-2">
+                        {['unica', 'semanal', 'mensal'].map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() =>
+                              setFormData({ ...formData, recorrencia: t })
+                            }
+                            className={`px-3 py-1 text-xs font-bold rounded uppercase ${
+                              formData.recorrencia === t
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-white border text-slate-500'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* COLUNA DIREITA: ATA / PAUTA */}
+              <div
+                className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${
+                  activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'
+                }`}
+              >
+                <label className="label-form flex items-center gap-2 mb-2">
+                  <AlignLeft size={16} /> Ata da Reunião / Pauta
+                  <span className="text-xs font-normal text-slate-400 ml-auto">
+                    Markdown suportado
+                  </span>
+                </label>
+                <textarea
+                  className="flex-1 w-full bg-white border border-slate-200 rounded-xl p-6 text-slate-700 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500 resize-none shadow-sm"
+                  placeholder="Digite aqui os tópicos discutidos, decisões tomadas e próximos passos..."
+                  value={formData.pauta}
+                  onChange={(e) =>
+                    setFormData({ ...formData, pauta: e.target.value })
+                  }
+                ></textarea>
+              </div>
             </form>
 
             {/* Footer Ações */}
             <div className="bg-white p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-                {editingReuniao && (
-                    <button type="button" className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4">
-                        <Trash2 size={16} /> Excluir
-                    </button>
-                )}
-                <button onClick={() => setIsModalOpen(false)} className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg">Cancelar</button>
-                <button onClick={handleSubmit} className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2">
-                    <Save size={18}/> Salvar Reunião
+              {editingReuniao && (
+                <button
+                  type="button"
+                  className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4"
+                >
+                  <Trash2 size={16} /> Excluir
                 </button>
+              )}
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSubmit}
+                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2"
+              >
+                <Save size={18} /> Salvar Reunião
+              </button>
             </div>
-
           </div>
         </div>
       )}
