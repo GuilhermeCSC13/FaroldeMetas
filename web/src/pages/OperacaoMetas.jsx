@@ -26,7 +26,7 @@ const OperacaoMetas = () => {
     fetchAreas();
   }, []);
 
-  // Recarrega as metas sempre que mudar a aba (Isso garante ver o valor atualizado do KM/L)
+  // Recarrega as metas sempre que mudar a área
   useEffect(() => {
     if (areaSelecionada) fetchMetasData();
   }, [areaSelecionada]);
@@ -198,39 +198,33 @@ const OperacaoMetas = () => {
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
         
         <div className="flex items-center gap-4">
-            {/* Botões de Navegação e Configuração */}
-            <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
-                 <button 
-                    onClick={() => window.location.hash = 'rotinas'} 
-                    className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
-                 >
-                    Ir para Rotinas
-                 </button>
-                 <button 
-                    onClick={() => setShowConfig(true)}
-                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
-                    title="Configurações"
-                 >
-                    <Settings size={18} />
-                 </button>
-            </div>
+          {/* Botão de Configuração (removido 'Ir para Rotinas') */}
+          <div className="flex items-center gap-2 mr-4 pr-4">
+            <button 
+              onClick={() => setShowConfig(true)}
+              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+              title="Configurações"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
 
-            {/* Seletor de Áreas (PCO / Motoristas) */}
-            <div className="flex space-x-2">
-                {areas.map(area => (
-                    <button
-                    key={area.id}
-                    onClick={() => setAreaSelecionada(area.id)}
-                    className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
-                        areaSelecionada === area.id
-                        ? 'border-blue-600 text-blue-700 bg-blue-50'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-                    }`}
-                    >
-                    {area.nome}
-                    </button>
-                ))}
-            </div>
+          {/* Seletor de Áreas (PCO / Motoristas) */}
+          <div className="flex space-x-2">
+            {areas.map(area => (
+              <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-all border-b-2 ${
+                  areaSelecionada === area.id
+                    ? 'border-blue-600 text-blue-700 bg-blue-50'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {area.nome}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -243,7 +237,10 @@ const OperacaoMetas = () => {
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
-                  <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">Indicador</th>
+                  <th className="p-2 border border-gray-300 w-32">Responsável</th>
+                  <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">
+                    Indicador
+                  </th>
                   <th className="p-2 border border-gray-300 w-12">Peso</th>
                   <th className="p-2 border border-gray-300 w-12">Tipo</th>
                   {MESES.map(mes => (
@@ -256,12 +253,25 @@ const OperacaoMetas = () => {
               <tbody>
                 {metas.map(meta => (
                   <tr key={meta.id} className="hover:bg-gray-50 text-center">
+                    {/* Responsável */}
+                    <td className="p-2 border border-gray-300 text-left text-[11px] text-gray-700">
+                      {meta.responsavel || '-'}
+                    </td>
+
+                    {/* Indicador */}
                     <td className="p-2 border border-gray-300 text-left font-semibold text-gray-800 text-sm sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
-                      <span className='block text-[9px] text-gray-400 font-normal'>{meta.unidade}</span>
+                      <span className='block text-[9px] text-gray-400 font-normal'>
+                        {meta.unidade}
+                      </span>
                     </td>
-                    <td className="p-2 border border-gray-300 bg-gray-50">{parseInt(meta.peso)}</td>
-                    <td className="p-2 border border-gray-300 font-mono text-gray-500">{meta.tipo_comparacao}</td>
+
+                    <td className="p-2 border border-gray-300 bg-gray-50">
+                      {parseInt(meta.peso)}
+                    </td>
+                    <td className="p-2 border border-gray-300 font-mono text-gray-500">
+                      {meta.tipo_comparacao}
+                    </td>
                     
                     {MESES.map(mes => {
                       const dados = meta.meses[mes.id];
@@ -271,7 +281,10 @@ const OperacaoMetas = () => {
                           : dados.realizado;
 
                       return (
-                        <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
+                        <td
+                          key={mes.id}
+                          className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
+                        >
                           <div className="flex flex-col h-full justify-between">
                             {/* META (ALVO) */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
@@ -291,7 +304,11 @@ const OperacaoMetas = () => {
                 ))}
                 
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
-                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">TOTAL SCORE</td>
+                  {/* coluna responsável vazia para alinhar */}
+                  <td className="p-2 border-r border-red-500"></td>
+                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                    TOTAL SCORE
+                  </td>
                   <td className="p-2 border-r border-red-500 text-center">100</td>
                   <td className="p-2 border-r border-red-500"></td>
                   {MESES.map(mes => (
@@ -307,7 +324,9 @@ const OperacaoMetas = () => {
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />
+        <ConfiguracaoGeral
+          onClose={() => { setShowConfig(false); fetchMetasData(); }}
+        />
       )}
     </div>
   );
