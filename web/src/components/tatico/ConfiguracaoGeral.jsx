@@ -109,7 +109,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           peso: 0,
           unidade: '',
           tipo_comparacao: '>=',
-          responsavel: ''   // novo campo já inicializado
+          responsavel: ''
         });
         if (error) throw error;
       } else {
@@ -179,17 +179,30 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     }
   };
 
+  // >>> AJUSTE AQUI: normalizar campo numérico (peso) antes de mandar pro Supabase
   const updateRowProp = async (id, field, value) => {
     const table = tipo === 'metas' ? 'metas_farol' : 'rotinas_indicadores';
 
+    // Normalização para campo numérico
+    let normalizedValue = value;
+    if (field === 'peso') {
+      if (value === '' || value === null || value === undefined) {
+        normalizedValue = 0;
+      } else {
+        const parsed = Number(String(value).replace(',', '.'));
+        normalizedValue = isNaN(parsed) ? 0 : parsed;
+      }
+    }
+
+    // Atualiza no estado local
     setItems(prev =>
-      prev.map(i => (i.id === id ? { ...i, [field]: value } : i))
+      prev.map(i => (i.id === id ? { ...i, [field]: normalizedValue } : i))
     );
 
     try {
       const { error } = await supabase
         .from(table)
-        .update({ [field]: value })
+        .update({ [field]: normalizedValue })
         .eq('id', id);
       if (error) throw error;
     } catch (err) {
@@ -197,6 +210,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
       alert('Erro ao atualizar indicador. Veja o console para detalhes.');
     }
   };
+  // <<< FIM DO AJUSTE
 
   // Helper genérico para fazer "upsert" sem ON CONFLICT
   const upsertValorMensal = async (table, fkColumn, itemId, mesId, valorNum) => {
@@ -523,7 +537,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         </div>
 
         {/* Rodapé - Novo Indicador + Salvar */}
-        <div className="p-4 bg-white border-t rounded-b-xl flex justify-between items-center gap-4">
+        <div className="p-4 bg-white border-t rounded-b-xl flex justify_between items-center gap-4">
           <div className="flex gap-3">
             <button
               onClick={handleAdd}
