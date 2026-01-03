@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
 import { Settings, Target } from 'lucide-react';
@@ -19,6 +19,7 @@ const OperacaoRotinas = () => {
   const [rotinas, setRotinas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
+  const [responsavelFiltro, setResponsavelFiltro] = useState(''); // filtro de responsável
 
   useEffect(() => {
     fetchAreas();
@@ -114,6 +115,28 @@ const OperacaoRotinas = () => {
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
+  // lista de responsáveis para o filtro
+  const responsaveisUnicos = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (rotinas || [])
+            .map(r => r.responsavel)
+            .filter(r => r && String(r).trim() !== '')
+        )
+      ),
+    [rotinas]
+  );
+
+  // aplica filtro de responsável
+  const rotinasFiltradas = useMemo(
+    () =>
+      responsavelFiltro
+        ? rotinas.filter(r => r.responsavel === responsavelFiltro)
+        : rotinas,
+    [rotinas, responsavelFiltro]
+  );
+
   const isPCO = areaSelecionada == ID_PCO;
 
   return (
@@ -125,7 +148,24 @@ const OperacaoRotinas = () => {
         </h2>
 
         <div className="flex items-center gap-4">
-          {/* Botões de Navegação */}
+          {/* Filtro de Responsável */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 font-semibold">Responsável:</span>
+            <select
+              value={responsavelFiltro}
+              onChange={e => setResponsavelFiltro(e.target.value)}
+              className="text-xs bg-white border border-gray-300 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos</option>
+              {responsaveisUnicos.map(resp => (
+                <option key={resp} value={resp}>
+                  {resp}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Botões de Navegação / Configuração */}
           <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
             <button
               onClick={() => (window.location.hash = 'metas')}
@@ -176,6 +216,9 @@ const OperacaoRotinas = () => {
                     <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
                       Indicador
                     </th>
+                    <th className="p-2 border border-gray-300 w-40 text-left">
+                      Responsável
+                    </th>
                     {MESES.map(mes => (
                       <th
                         key={mes.id}
@@ -187,12 +230,12 @@ const OperacaoRotinas = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rotinas.map((row, idx) => (
+                  {rotinasFiltradas.map((row, idx) => (
                     <tr
                       key={row.id || idx}
                       className="hover:bg-gray-50 transition-colors"
                     >
-                      {/* Coluna Indicador */}
+                      {/* Coluna Indicador (sticky) */}
                       <td className="p-3 border border-gray-200 sticky left-0 bg-white z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                         <div className="flex items-start gap-2">
                           <div className="w-1.5 h-10 rounded-full bg-blue-500/20" />
@@ -208,13 +251,13 @@ const OperacaoRotinas = () => {
                                 ? 'Menor é melhor'
                                 : 'Meta mínima'}
                             </span>
-                            {row.responsavel && (
-                              <span className="text-[9px] text-gray-400">
-                                Resp.: {row.responsavel}
-                              </span>
-                            )}
                           </div>
                         </div>
+                      </td>
+
+                      {/* Coluna Responsável */}
+                      <td className="p-2 border border-gray-200 text-[11px] text-gray-700">
+                        {row.responsavel || '-'}
                       </td>
 
                       {/* Meses */}
@@ -228,16 +271,23 @@ const OperacaoRotinas = () => {
                           row.tipo_comparacao
                         );
 
+                        const valorRealizado =
+                          dados.realizado === null ||
+                          dados.realizado === '' ||
+                          isNaN(dados.realizado)
+                            ? ''
+                            : dados.realizado;
+
                         return (
                           <td
                             key={mes.id}
                             className={`border border-gray-200 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* Meta (alvo) no topo, pequeno */}
-                              <div className="flex items-center justify-center pt-1 text-[10px] text-gray-600 gap-1 bg-white/40">
-                                <Target size={9} className="opacity-60" />
-                                <span className="font-medium">
+                              {/* Meta (alvo) no topo, azul, estilo parecido com Metas */}
+                              <div className="flex items-center justify-end px-1 pt-0.5 text-[11px] text-blue-700 font-semibold bg-white/40 gap-1">
+                                <Target size={9} className="opacity-70" />
+                                <span>
                                   {temMeta
                                     ? Number(dados.meta).toFixed(
                                         row.formato === 'percent' ? 0 : 0
@@ -258,7 +308,11 @@ const OperacaoRotinas = () => {
                                   <input
                                     className="w-20 text-center bg-transparent focus:outline-none font-bold text-[13px] text-gray-900 placeholder-gray-400/70 focus:bg-white/60 rounded-sm"
                                     placeholder="-"
-                                    defaultValue={dados.realizado ?? ''}
+                                    defaultValue={
+                                      valorRealizado === ''
+                                        ? ''
+                                        : String(valorRealizado)
+                                    }
                                     onBlur={e =>
                                       handleSave(
                                         row.id,
