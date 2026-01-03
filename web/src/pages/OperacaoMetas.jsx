@@ -262,7 +262,8 @@ const OperacaoMetas = () => {
                       return (
                         <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
-                            <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 bg-white/40">
+                            {/* META (ALVO) - AUMENTAMOS FONTE E COR */}
+                            <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                               {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
                             </div>
                             <input 
