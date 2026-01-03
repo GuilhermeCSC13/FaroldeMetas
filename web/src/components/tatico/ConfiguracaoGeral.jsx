@@ -108,7 +108,8 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           nome_meta: nome,
           peso: 0,
           unidade: '',
-          tipo_comparacao: '>='
+          tipo_comparacao: '>=',
+          responsavel: ''   // novo campo já inicializado
         });
         if (error) throw error;
       } else {
@@ -117,7 +118,9 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           indicador: nome,
           formato: 'num',
           ordem: items.length + 1,
-          tipo_comparacao: '>='
+          tipo_comparacao: '>=',
+          peso: 0,
+          responsavel: ''
         });
         if (error) throw error;
       }
@@ -197,7 +200,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
   // Helper genérico para fazer "upsert" sem ON CONFLICT
   const upsertValorMensal = async (table, fkColumn, itemId, mesId, valorNum) => {
-    // 1) Verifica se já existe linha
     const { data, error } = await supabase
       .from(table)
       .select('id')
@@ -356,19 +358,23 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                 <thead className="bg-gray-100 text-gray-600 uppercase font-bold sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="p-3 w-64 border-r">Indicador</th>
+
                     {tipo === 'metas' ? (
                       <>
                         <th className="p-3 w-16 text-center border-r">Peso</th>
                         <th className="p-3 w-16 text-center border-r">Unid.</th>
+                        <th className="p-3 w-24 text-center border-r">Resp.</th>
                         <th className="p-3 w-16 text-center border-r">Tipo</th>
                       </>
                     ) : (
                       <>
+                        <th className="p-3 w-16 text-center border-r">Peso</th>
                         <th className="p-3 w-20 text-center border-r">Formato</th>
                         <th className="p-3 w-24 text-center border-r">Resp.</th>
                         <th className="p-3 w-16 text-center border-r">Tipo</th>
                       </>
                     )}
+
                     {MESES.map(m => (
                       <th
                         key={m.id}
@@ -402,7 +408,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                           <td className="p-1 border-r">
                             <input
                               type="number"
-                              value={item.peso}
+                              value={item.peso ?? 0}
                               onChange={e =>
                                 updateRowProp(item.id, 'peso', e.target.value)
                               }
@@ -411,9 +417,18 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                           </td>
                           <td className="p-1 border-r">
                             <input
-                              value={item.unidade}
+                              value={item.unidade || ''}
                               onChange={e =>
                                 updateRowProp(item.id, 'unidade', e.target.value)
+                              }
+                              className="w-full text-center bg-transparent"
+                            />
+                          </td>
+                          <td className="p-1 border-r">
+                            <input
+                              value={item.responsavel || ''}
+                              onChange={e =>
+                                updateRowProp(item.id, 'responsavel', e.target.value)
                               }
                               className="w-full text-center bg-transparent"
                             />
@@ -424,8 +439,18 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                       {tipo === 'rotinas' && (
                         <>
                           <td className="p-1 border-r">
+                            <input
+                              type="number"
+                              value={item.peso ?? 0}
+                              onChange={e =>
+                                updateRowProp(item.id, 'peso', e.target.value)
+                              }
+                              className="w-full text-center bg-transparent"
+                            />
+                          </td>
+                          <td className="p-1 border-r">
                             <select
-                              value={item.formato}
+                              value={item.formato || 'num'}
                               onChange={e =>
                                 updateRowProp(item.id, 'formato', e.target.value)
                               }
@@ -448,6 +473,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         </>
                       )}
 
+                      {/* Tipo de comparação (metas e rotinas) */}
                       <td className="p-1 border-r">
                         <select
                           value={item.tipo_comparacao}
