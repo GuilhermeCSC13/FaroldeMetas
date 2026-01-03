@@ -6,26 +6,46 @@ import { Settings } from 'lucide-react';
 const ID_MOOV = 3;
 
 const MESES = [
-  { id: 1, label: 'JAN' }, { id: 2, label: 'FEV' }, { id: 3, label: 'MAR' },
-  { id: 4, label: 'ABR' }, { id: 5, label: 'MAI' }, { id: 6, label: 'JUN' },
-  { id: 7, label: 'JUL' }, { id: 8, label: 'AGO' }, { id: 9, label: 'SET' },
-  { id: 10, label: 'OUT' }, { id: 11, label: 'NOV' }, { id: 12, label: 'DEZ' }
+  { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
+  { id: 4, label: 'abr/26' }, { id: 5, label: 'mai/26' }, { id: 6, label: 'jun/26' },
+  { id: 7, label: 'jul/26' }, { id: 8, label: 'ago/26' }, { id: 9, label: 'set/26' },
+  { id: 10, label: 'out/26' }, { id: 11, label: 'nov/26' }, { id: 12, label: 'dez/26' }
 ];
 
 const MoovRotinas = () => {
+  const [areas, setAreas] = useState([]);
+  const [areaSelecionada, setAreaSelecionada] = useState(null);
   const [rotinas, setRotinas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
   const [responsavelFiltro, setResponsavelFiltro] = useState('');
 
   useEffect(() => {
-    fetchRotinasData();
+    fetchAreas();
   }, []);
 
-  // mesma lógica de score do Farol de Metas / Operação Rotinas
+  useEffect(() => {
+    if (areaSelecionada) fetchRotinasData();
+  }, [areaSelecionada]);
+
+  const fetchAreas = async () => {
+    const { data } = await supabase
+      .from('areas')
+      .select('*')
+      .eq('ativa', true)
+      .order('id');
+
+    if (data && data.length > 0) {
+      const filtered = data.filter(a => a.id == ID_MOOV);
+      const lista = filtered.length > 0 ? filtered : data;
+      setAreas(lista);
+      setAreaSelecionada(lista[0].id);
+    }
+  };
+
+  // mesma lógica de score do Farol de Metas
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     const peso = parseFloat(pesoTotal);
-
     if (
       meta === null ||
       meta === undefined ||
@@ -46,19 +66,18 @@ const MoovRotinas = () => {
     if (tipo === '>=' || tipo === 'maior') {
       atingimento = r / m;
     } else {
-      // '<=' ou menor
-      atingimento = 1 + ((m - r) / m);
+      atingimento = 1 + (m - r) / m;
     }
 
     let multiplicador = 0;
 
     if (atingimento >= 1.0) {
       multiplicador = 1.0;
-    } else if (atingimento >= 0.99) {
+    } else if ( atingimento >= 0.99 ) {
       multiplicador = 0.75;
-    } else if (atingimento >= 0.98) {
+    } else if ( atingimento >= 0.98 ) {
       multiplicador = 0.5;
-    } else if (atingimento >= 0.97) {
+    } else if ( atingimento >= 0.97 ) {
       multiplicador = 0.25;
     } else {
       multiplicador = 0.0;
@@ -73,7 +92,7 @@ const MoovRotinas = () => {
       const { data: defs } = await supabase
         .from('rotinas_indicadores')
         .select('*')
-        .eq('area_id', ID_MOOV)
+        .eq('area_id', areaSelecionada)
         .order('ordem', { ascending: true });
 
       const { data: valores } = await supabase
@@ -83,12 +102,8 @@ const MoovRotinas = () => {
 
       const combined = (defs || []).map(r => {
         const row = { ...r, meses: {} };
-
         MESES.forEach(mes => {
-          const valObj = valores?.find(
-            v => v.rotina_id === r.id && v.mes === mes.id
-          );
-
+          const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
           const realizado = valObj ? valObj.valor_realizado : '';
           const meta = valObj ? valObj.valor_meta : null;
 
@@ -99,9 +114,12 @@ const MoovRotinas = () => {
             r.peso
           );
 
-          row.meses[mes.id] = { realizado, meta, score };
+          row.meses[mes.id] = {
+            realizado,
+            meta,
+            score
+          };
         });
-
         return row;
       });
 
@@ -119,7 +137,6 @@ const MoovRotinas = () => {
     setRotinas(prev =>
       prev.map(r => {
         if (r.id !== rotinaId) return r;
-
         const novosMeses = { ...r.meses };
         const meta = novosMeses[mesId].meta;
 
@@ -135,7 +152,6 @@ const MoovRotinas = () => {
           realizado: valorNum,
           score
         };
-
         return { ...r, meses: novosMeses };
       })
     );
@@ -152,7 +168,6 @@ const MoovRotinas = () => {
   const getCellStatus = (real, meta, tipoComparacao) => {
     if (real === '' || real === null || meta === null || meta === undefined)
       return 'bg-white';
-
     const r = parseFloat(real);
     const m = parseFloat(meta);
     if (isNaN(r) || isNaN(m)) return 'bg-white';
@@ -163,7 +178,6 @@ const MoovRotinas = () => {
     } else {
       isGood = r >= m;
     }
-
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
@@ -204,6 +218,8 @@ const MoovRotinas = () => {
     return total.toFixed(0);
   };
 
+  const isMoov = areaSelecionada == ID_MOOV;
+
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
       {/* Header */}
@@ -230,14 +246,7 @@ const MoovRotinas = () => {
             </select>
           </div>
 
-          {/* Botão Metas + Config */}
-          <button
-            onClick={() => (window.location.hash = 'metas')}
-            className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-100 rounded transition-colors"
-          >
-            Ir para Metas
-          </button>
-
+          {/* Botão de Configuração */}
           <button
             onClick={() => setShowConfig(true)}
             className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
@@ -246,8 +255,21 @@ const MoovRotinas = () => {
             <Settings size={18} />
           </button>
 
-          <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">
-            MOOV
+          {/* Seletor de Áreas (aqui vai aparecer só Moov, mas segue o modelo) */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {areas.map(area => (
+              <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                  areaSelecionada === area.id
+                    ? 'bg-white text-blue-600 shadow-sm border border-blue-200'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {area.nome}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -263,23 +285,23 @@ const MoovRotinas = () => {
             <div className="border border-gray-300 rounded-lg overflow-hidden shadow-sm bg-white min-w-max">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-[#3b82f6] text-white text-center font-bold">
-                    <th className="p-2 border border-[#2563eb] w-72 sticky left-0 bg-[#3b82f6] z-20 text-left">
+                  <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
+                    <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
                       Indicador
                     </th>
-                    <th className="p-2 border border-[#2563eb] w-40 text-left">
+                    <th className="p-2 border border-gray-300 w-40 text-left">
                       Responsável
                     </th>
-                    <th className="p-2 border border-[#2563eb] w-12">
+                    <th className="p-2 border border-gray-300 w-12">
                       Peso
                     </th>
-                    <th className="p-2 border border-[#2563eb] w-12">
+                    <th className="p-2 border border-gray-300 w-12">
                       Tipo
                     </th>
                     {MESES.map(mes => (
                       <th
                         key={mes.id}
-                        className="p-2 border border-[#2563eb] min-w-[90px]"
+                        className="p-2 border border-gray-300 min-w-[90px]"
                       >
                         {mes.label}
                       </th>
@@ -329,16 +351,17 @@ const MoovRotinas = () => {
 
                       {/* Meses */}
                       {MESES.map(mes => {
-                        const dados = row.meses[mes.id] || {};
+                        const dados = row.meses[mes.id];
                         const temMeta =
-                          dados.meta !== null && dados.meta !== undefined;
+                          dados?.meta !== null && dados?.meta !== undefined;
                         const bgStatus = getCellStatus(
-                          dados.realizado,
-                          dados.meta,
+                          dados?.realizado,
+                          dados?.meta,
                           row.tipo_comparacao
                         );
 
                         const valorRealizado =
+                          !dados ||
                           dados.realizado === null ||
                           dados.realizado === '' ||
                           isNaN(dados.realizado)
@@ -351,7 +374,7 @@ const MoovRotinas = () => {
                             className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* META (ALVO) */}
+                              {/* META (ALVO) - estilo igual Metas */}
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
@@ -399,7 +422,7 @@ const MoovRotinas = () => {
                     </tr>
                   ))}
 
-                  {/* TOTAL SCORE (igual modelo) */}
+                  {/* TOTAL SCORE (igual Metas) */}
                   <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                     <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                       TOTAL SCORE
@@ -427,7 +450,7 @@ const MoovRotinas = () => {
 
       {showConfig && (
         <ConfiguracaoGeral
-          areasContexto={[{ id: 3, nome: 'Moov' }]}
+          areasContexto={[{ id: ID_MOOV, nome: 'Moov' }]}
           onClose={() => {
             setShowConfig(false);
             fetchRotinasData();
