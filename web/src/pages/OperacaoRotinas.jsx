@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
-import { Settings, Target } from 'lucide-react';
+import { Settings } from 'lucide-react';
 
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
 
 const MESES = [
-  { id: 1, label: 'JAN' }, { id: 2, label: 'FEV' }, { id: 3, label: 'MAR' },
-  { id: 4, label: 'ABR' }, { id: 5, label: 'MAI' }, { id: 6, label: 'JUN' },
-  { id: 7, label: 'JUL' }, { id: 8, label: 'AGO' }, { id: 9, label: 'SET' },
-  { id: 10, label: 'OUT' }, { id: 11, label: 'NOV' }, { id: 12, label: 'DEZ' }
+  { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
+  { id: 4, label: 'abr/26' }, { id: 5, label: 'mai/26' }, { id: 6, label: 'jun/26' },
+  { id: 7, label: 'jul/26' }, { id: 8, label: 'ago/26' }, { id: 9, label: 'set/26' },
+  { id: 10, label: 'out/26' }, { id: 11, label: 'nov/26' }, { id: 12, label: 'dez/26' }
 ];
 
 const OperacaoRotinas = () => {
@@ -19,7 +19,7 @@ const OperacaoRotinas = () => {
   const [rotinas, setRotinas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
-  const [responsavelFiltro, setResponsavelFiltro] = useState(''); // filtro de responsável
+  const [responsavelFiltro, setResponsavelFiltro] = useState('');
 
   useEffect(() => {
     fetchAreas();
@@ -115,7 +115,7 @@ const OperacaoRotinas = () => {
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
-  // lista de responsáveis para o filtro
+  // responsáveis únicos para o filtro
   const responsaveisUnicos = useMemo(
     () =>
       Array.from(
@@ -128,7 +128,6 @@ const OperacaoRotinas = () => {
     [rotinas]
   );
 
-  // aplica filtro de responsável
   const rotinasFiltradas = useMemo(
     () =>
       responsavelFiltro
@@ -219,6 +218,12 @@ const OperacaoRotinas = () => {
                     <th className="p-2 border border-gray-300 w-40 text-left">
                       Responsável
                     </th>
+                    <th className="p-2 border border-gray-300 w-12">
+                      Peso
+                    </th>
+                    <th className="p-2 border border-gray-300 w-12">
+                      Tipo
+                    </th>
                     {MESES.map(mes => (
                       <th
                         key={mes.id}
@@ -235,8 +240,8 @@ const OperacaoRotinas = () => {
                       key={row.id || idx}
                       className="hover:bg-gray-50 transition-colors"
                     >
-                      {/* Coluna Indicador (sticky) */}
-                      <td className="p-3 border border-gray-200 sticky left-0 bg-white z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
+                      {/* Indicador (sticky) */}
+                      <td className="p-3 border border-gray-300 sticky left-0 bg-white z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)] text-left">
                         <div className="flex items-start gap-2">
                           <div className="w-1.5 h-10 rounded-full bg-blue-500/20" />
                           <div className="flex flex-col">
@@ -255,9 +260,19 @@ const OperacaoRotinas = () => {
                         </div>
                       </td>
 
-                      {/* Coluna Responsável */}
-                      <td className="p-2 border border-gray-200 text-[11px] text-gray-700">
+                      {/* Responsável */}
+                      <td className="p-2 border border-gray-300 text-[11px] text-gray-700 text-left">
                         {row.responsavel || '-'}
+                      </td>
+
+                      {/* Peso (se não tiver na tabela, fica '-') */}
+                      <td className="p-2 border border-gray-300 bg-gray-50 text-center">
+                        {row.peso != null ? row.peso : '-'}
+                      </td>
+
+                      {/* Tipo (comparação) */}
+                      <td className="p-2 border border-gray-300 font-mono text-gray-500 text-center">
+                        {row.tipo_comparacao}
                       </td>
 
                       {/* Meses */}
@@ -281,23 +296,20 @@ const OperacaoRotinas = () => {
                         return (
                           <td
                             key={mes.id}
-                            className={`border border-gray-200 p-0 align-middle ${bgStatus}`}
+                            className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* Meta (alvo) no topo, azul, estilo parecido com Metas */}
-                              <div className="flex items-center justify-end px-1 pt-0.5 text-[11px] text-blue-700 font-semibold bg-white/40 gap-1">
-                                <Target size={9} className="opacity-70" />
-                                <span>
-                                  {temMeta
-                                    ? Number(dados.meta).toFixed(
-                                        row.formato === 'percent' ? 0 : 0
-                                      )
-                                    : ''}
-                                  {temMeta && row.formato === 'percent' && '%'}
-                                </span>
+                              {/* META (ALVO) - igual Metas: azul, sem ícone */}
+                              <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
+                                {temMeta
+                                  ? Number(dados.meta).toFixed(
+                                      row.formato === 'percent' ? 0 : 0
+                                    )
+                                  : ''}
+                                {temMeta && row.formato === 'percent' && '%'}
                               </div>
 
-                              {/* Valor realizado (input) no centro */}
+                              {/* Valor realizado (input) */}
                               <div className="flex-1 flex items-center justify-center pb-1">
                                 <div className="flex items-baseline gap-0.5">
                                   {row.formato === 'currency' && (
