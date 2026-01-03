@@ -50,6 +50,51 @@ const AdministrativoRotinas = () => {
     }
   };
 
+  // Mesma lógica de score do Farol de Metas/Rotinas
+  const calculateScore = (meta, realizado, tipoComparacao, pesoTotal) => {
+    const peso = parseFloat(pesoTotal);
+
+    if (
+      meta === null ||
+      meta === undefined ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado)) ||
+      isNaN(peso)
+    ) {
+      return 0;
+    }
+
+    const r = parseFloat(realizado);
+    const m = parseFloat(meta);
+    if (m === 0) return 0;
+
+    let atingimento = 0;
+
+    if (tipoComparacao === '>=' || tipoComparacao === 'maior') {
+      atingimento = r / m;
+    } else {
+      // '<=' ou 'menor'
+      atingimento = 1 + ((m - r) / m);
+    }
+
+    let multiplicador = 0;
+
+    if (atingimento >= 1.0) {
+      multiplicador = 1.0;
+    } else if (atingimento >= 0.99) {
+      multiplicador = 0.75;
+    } else if (atingimento >= 0.98) {
+      multiplicador = 0.5;
+    } else if (atingimento >= 0.97) {
+      multiplicador = 0.25;
+    } else {
+      multiplicador = 0.0;
+    }
+
+    return peso * multiplicador;
+  };
+
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
@@ -70,13 +115,25 @@ const AdministrativoRotinas = () => {
 
       const combined = (defs || []).map(r => {
         const row = { ...r, meses: {} };
+
         MESES.forEach(mes => {
-          const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
-          row.meses[mes.id] = {
-            realizado: valObj ? valObj.valor_realizado : '',
-            meta: valObj ? valObj.valor_meta : null
-          };
+          const valObj = valores?.find(
+            v => v.rotina_id === r.id && v.mes === mes.id
+          );
+
+          const realizado = valObj ? valObj.valor_realizado : '';
+          const meta = valObj ? valObj.valor_meta : null;
+
+          const score = calculateScore(
+            meta,
+            realizado,
+            r.tipo_comparacao,
+            r.peso
+          );
+
+          row.meses[mes.id] = { realizado, meta, score };
         });
+
         return row;
       });
 
@@ -91,12 +148,27 @@ const AdministrativoRotinas = () => {
   const handleSave = async (rotinaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
 
-    // Atualiza estado local
+    // Atualiza estado local com novo realizado + score
     setRotinas(prev =>
       prev.map(r => {
         if (r.id !== rotinaId) return r;
+
         const novosMeses = { ...r.meses };
-        novosMeses[mesId] = { ...novosMeses[mesId], realizado: valorNum };
+        const meta = novosMeses[mesId].meta;
+
+        const score = calculateScore(
+          meta,
+          valorNum,
+          r.tipo_comparacao,
+          r.peso
+        );
+
+        novosMeses[mesId] = {
+          ...novosMeses[mesId],
+          realizado: valorNum,
+          score
+        };
+
         return { ...r, meses: novosMeses };
       })
     );
@@ -127,6 +199,14 @@ const AdministrativoRotinas = () => {
     }
 
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
+  };
+
+  const getTotalScore = mesId => {
+    const total = rotinas.reduce(
+      (acc, r) => acc + (r.meses[mesId]?.score || 0),
+      0
+    );
+    return total.toFixed(1);
   };
 
   const themeColor = 'blue';
@@ -223,7 +303,7 @@ const AdministrativoRotinas = () => {
                             {row.indicador}
                           </span>
                           <span className="text-[9px] text-gray-400 uppercase">
-                            {row.tipo_comparacao === '<='
+                            {row.tipo_comparacao === '<=' || row.tipo_comparacao === 'menor'
                               ? 'Menor é melhor'
                               : 'Meta Mínima'}
                           </span>
@@ -233,14 +313,30 @@ const AdministrativoRotinas = () => {
 
                     {/* Meses */}
                     {MESES.map(mes => {
-                      const dados = row.meses[mes.id];
+                      const dados = row.meses[mes.id] || {};
                       const temMeta =
-                        dados.meta !== null && dados.meta !== undefined;
+                        dados.meta !== null &&
+                        dados.meta !== undefined &&
+                        !isNaN(dados.meta);
+
                       const bgStatus = getCellStatus(
                         dados.realizado,
                         dados.meta,
                         row.tipo_comparacao
                       );
+
+                      const valorRealizado =
+                        dados.realizado === null ||
+                        dados.realizado === '' ||
+                        isNaN(dados.realizado)
+                          ? ''
+                          : dados.realizado;
+
+                      const valorMeta = temMeta
+                        ? Number(dados.meta).toFixed(
+                            row.formato === 'percent' ? 0 : 0
+                          )
+                        : '';
 
                       return (
                         <td
@@ -261,9 +357,17 @@ const AdministrativoRotinas = () => {
                                 <input
                                   className="w-20 text-center bg-transparent focus:outline-none font-bold text-base text-gray-800 placeholder-gray-400/50"
                                   placeholder="-"
-                                  defaultValue={dados.realizado}
+                                  defaultValue={
+                                    valorRealizado === ''
+                                      ? ''
+                                      : String(valorRealizado)
+                                  }
                                   onBlur={e =>
-                                    handleSave(row.id, mes.id, e.target.value)
+                                    handleSave(
+                                      row.id,
+                                      mes.id,
+                                      e.target.value
+                                    )
                                   }
                                 />
                                 {row.formato === 'percent' && (
@@ -278,11 +382,8 @@ const AdministrativoRotinas = () => {
                             <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60 text-gray-600">
                               <Target size={8} />
                               <span className="font-medium">
-                                {temMeta
-                                  ? Number(dados.meta).toFixed(
-                                      row.formato === 'percent' ? 0 : 0
-                                    )
-                                  : ''}
+                                {valorMeta}
+                                {temMeta && row.formato === 'percent' && '%'}
                               </span>
                             </div>
                           </div>
@@ -291,6 +392,21 @@ const AdministrativoRotinas = () => {
                     })}
                   </tr>
                 ))}
+
+                {/* TOTAL SCORE por mês */}
+                <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
+                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                    TOTAL SCORE
+                  </td>
+                  {MESES.map(mes => (
+                    <td
+                      key={mes.id}
+                      className="p-2 text-center border-r border-red-500 text-sm"
+                    >
+                      {getTotalScore(mes.id)}
+                    </td>
+                  ))}
+                </tr>
               </tbody>
             </table>
           </div>
