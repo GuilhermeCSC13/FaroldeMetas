@@ -338,7 +338,7 @@ export default function CentralReunioes() {
         {view === 'week' && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             {/* Cabeçalho Semana */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+            <div className="flex items-center justify_between p-4 border-b border-slate-100">
               <h2 className="text-xl font-bold text-slate-700">
                 Semana de {format(weekStart, 'dd/MM', { locale: ptBR })} a{' '}
                 {format(weekEnd, 'dd/MM', { locale: ptBR })}
@@ -576,142 +576,193 @@ export default function CentralReunioes() {
               onSubmit={handleSubmit}
               className="flex-1 flex flex-col md:flex-row overflow-hidden"
             >
-              {/* COLUNA ESQUERDA: Detalhes */}
+              {/* COLUNA ESQUERDA: Detalhes (AJUSTADA) */}
               <div
                 className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${
                   activeTab === 'ata' ? 'hidden md:block' : ''
                 }`}
               >
-                <div className="space-y-6 max-w-lg mx-auto">
+                <div className="space-y-6 max-w-xl mx-auto">
+                  
+                  {/* Header interno */}
                   <div>
-                    <label className="label-form">Título da Reunião</label>
+                    <p className="text-[11px] font-bold tracking-wide text-slate-400 uppercase mb-1">
+                      Detalhes da reunião
+                    </p>
                     <input
                       required
-                      className="input-form text-lg font-bold"
+                      className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-lg font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
                       value={formData.titulo}
                       onChange={(e) =>
                         setFormData({ ...formData, titulo: e.target.value })
                       }
                       placeholder="Ex: Reunião Mensal de Resultados"
                     />
+                    <p className="mt-1 text-xs text-slate-400">
+                      Defina um título claro que identifique a pauta principal da reunião.
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="label-form">Data</label>
-                      <input
-                        type="date"
-                        required
-                        className="input-form"
-                        value={formData.data}
-                        onChange={(e) =>
-                          setFormData({ ...formData, data: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label className="label-form">Hora</label>
-                      <input
-                        type="time"
-                        required
-                        className="input-form"
-                        value={formData.hora}
-                        onChange={(e) =>
-                          setFormData({ ...formData, hora: e.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label-form">Responsável (Organizador)</label>
-                    <div className="relative">
-                      <User
-                        className="absolute left-3 top-3 text-slate-400"
-                        size={18}
-                      />
-                      <input
-                        className="input-form pl-10"
-                        value={formData.responsavel}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            responsavel: e.target.value,
-                          })
-                        }
-                        placeholder="Quem está liderando?"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="label-form">Tipo / Categoria</label>
-                      <input
-                        className="input-form"
-                        value={formData.tipo_reuniao}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            tipo_reuniao: e.target.value,
-                          })
-                        }
-                        list="tipos"
-                      />
-                      <datalist id="tipos">
-                        <option value="Operacional" />
-                        <option value="Estratégica" />
-                        <option value="Feedback" />
-                        <option value="Treinamento" />
-                      </datalist>
-                    </div>
-                    <div>
-                      <label className="label-form">Cor na Agenda</label>
-                      <div className="flex items-center gap-2 h-11">
+                  {/* Card de Informações */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+                    {/* Linha Data / Hora */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="label-form">Data</label>
                         <input
-                          type="color"
-                          className="w-10 h-10 rounded border-none cursor-pointer"
-                          value={formData.cor}
+                          type="date"
+                          required
+                          className="input-form"
+                          value={formData.data}
                           onChange={(e) =>
-                            setFormData({ ...formData, cor: e.target.value })
+                            setFormData({ ...formData, data: e.target.value })
                           }
                         />
-                        <span className="text-xs text-slate-400">
-                          Clique para escolher
-                        </span>
+                      </div>
+                      <div>
+                        <label className="label-form">Hora</label>
+                        <input
+                          type="time"
+                          required
+                          className="input-form"
+                          value={formData.hora}
+                          onChange={(e) =>
+                            setFormData({ ...formData, hora: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha Responsável / Tipo */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="label-form">Responsável (Organizador)</label>
+                        <div className="relative">
+                          <User
+                            className="absolute left-3 top-3 text-slate-400"
+                            size={18}
+                          />
+                          <input
+                            className="input-form pl-10"
+                            value={formData.responsavel}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                responsavel: e.target.value,
+                              })
+                            }
+                            placeholder="Quem está liderando?"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label-form">Tipo / Categoria</label>
+                        <input
+                          className="input-form"
+                          value={formData.tipo_reuniao}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              tipo_reuniao: e.target.value,
+                            })
+                          }
+                          list="tipos"
+                        />
+                        <datalist id="tipos">
+                          <option value="Operacional" />
+                          <option value="Estratégica" />
+                          <option value="Feedback" />
+                          <option value="Treinamento" />
+                        </datalist>
+                      </div>
+                    </div>
+
+                    {/* Linha Recorrência / Cor */}
+                    <div className="grid grid-cols-2 gap-4 items-start">
+                      <div>
+                        {!editingReuniao && (
+                          <>
+                            <label className="label-form flex items-center gap-2">
+                              <Repeat size={14} />
+                              Recorrência
+                            </label>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                              {['unica', 'semanal', 'mensal'].map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() =>
+                                    setFormData({ ...formData, recorrencia: t })
+                                  }
+                                  className={`px-3 py-1 text-[11px] font-bold rounded-full uppercase tracking-wide ${
+                                    formData.recorrencia === t
+                                      ? 'bg-blue-600 text-white shadow-sm'
+                                      : 'bg-white border border-slate-300 text-slate-600'
+                                  }`}
+                                >
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {editingReuniao && (
+                          <>
+                            <label className="label-form">Recorrência</label>
+                            <p className="text-xs text-slate-400">
+                              Edição de recorrência é aplicada pelo fluxo de série na gravação.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                      <div>
+                        <label className="label-form">Cor na agenda</label>
+                        <div className="flex items-center gap-3 h-11">
+                          <input
+                            type="color"
+                            className="w-10 h-10 rounded border-none cursor-pointer"
+                            value={formData.cor}
+                            onChange={(e) =>
+                              setFormData({ ...formData, cor: e.target.value })
+                            }
+                          />
+                          <span className="text-xs text-slate-400">
+                            A cor será usada nas visões de calendário e lista.
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {!editingReuniao && (
-                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                      <label className="label-form text-blue-800 flex items-center gap-2">
-                        <Repeat size={14} /> Recorrência
-                      </label>
-                      <div className="flex gap-2 mt-2">
-                        {['unica', 'semanal', 'mensal'].map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() =>
-                              setFormData({ ...formData, recorrencia: t })
-                            }
-                            className={`px-3 py-1 text-xs font-bold rounded uppercase ${
-                              formData.recorrencia === t
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-white border text-slate-500'
-                            }`}
-                          >
-                            {t}
-                          </button>
-                        ))}
+                  {/* Card de Pauta Principal (fixa) */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <AlignLeft size={16} className="text-slate-500" />
+                        <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                          Pauta principal desta reunião
+                        </span>
                       </div>
+                      <span className="text-[10px] text-slate-400">
+                        Resumo executivo em 1–3 linhas
+                      </span>
                     </div>
-                  )}
+                    <textarea
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none min-h-[64px]"
+                      placeholder="Ex: Revisar indicadores DBO, validar plano de ação de KM/L e tratar pendências de segurança."
+                      value={formData.pauta}
+                      onChange={(e) =>
+                        setFormData({ ...formData, pauta: e.target.value })
+                      }
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Este campo será utilizado como resumo em listas e visão semanal.
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              {/* COLUNA DIREITA: ATA / PAUTA */}
+              {/* COLUNA DIREITA: ATA / PAUTA (igual antes) */}
               <div
                 className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${
                   activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'
@@ -769,3 +820,5 @@ export default function CentralReunioes() {
     </Layout>
   );
 }
+
+
