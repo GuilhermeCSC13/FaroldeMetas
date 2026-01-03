@@ -89,7 +89,13 @@ const OperacaoMetas = () => {
           const realObj = resultados?.find(x => x.meta_id === m.id && x.mes === mes.id);
           
           const alvo = alvoObj ? parseFloat(alvoObj.valor_meta) : null;
-          const real = realObj ? parseFloat(realObj.valor_realizado) : '';
+
+          // evita NaN: só converte se tiver valor numérico
+          let real = '';
+          if (realObj && realObj.valor_realizado !== null && realObj.valor_realizado !== '') {
+            const parsed = parseFloat(realObj.valor_realizado);
+            real = isNaN(parsed) ? '' : parsed;
+          }
 
           row.meses[mes.id] = {
             alvo: alvo,
@@ -233,7 +239,7 @@ const OperacaoMetas = () => {
         {loading ? (
           <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
         ) : (
-          <div className="border border-gray-300 rounded overflow-hidden shadow-sm">
+          <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
@@ -250,7 +256,7 @@ const OperacaoMetas = () => {
               <tbody>
                 {metas.map(meta => (
                   <tr key={meta.id} className="hover:bg-gray-50 text-center">
-                    <td className="p-2 border border-gray-300 text-left font-medium text-gray-800 sticky left-0 bg-white z-10">
+                    <td className="p-2 border border-gray-300 text-left font-semibold text-gray-800 text-sm sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
                       <span className='block text-[9px] text-gray-400 font-normal'>{meta.unidade}</span>
                     </td>
@@ -259,17 +265,22 @@ const OperacaoMetas = () => {
                     
                     {MESES.map(mes => {
                       const dados = meta.meses[mes.id];
+                      const valorRealizado = 
+                        dados.realizado === null || dados.realizado === '' || isNaN(dados.realizado)
+                          ? ''
+                          : dados.realizado;
+
                       return (
                         <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
-                            {/* META (ALVO) - AUMENTAMOS FONTE E COR */}
+                            {/* META (ALVO) */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                               {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
                             </div>
                             <input 
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                               placeholder="-"
-                              defaultValue={dados.realizado}
+                              defaultValue={valorRealizado === '' ? '' : String(valorRealizado)}
                               onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
                             />
                           </div>
