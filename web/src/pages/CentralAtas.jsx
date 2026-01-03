@@ -61,37 +61,38 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    // 1. Ações desta reuno
-    const { data: crdas } = await supabase
+    // 1. Ações desta reunião
+    const { data: criadas } = await supabase
       .from('acoes')
       .select('*')
       .eq('reuniao_id', ata.id)
       .order('data_criacao', { ascending: false });
+
     setAcoesCriadas(criadas || []);
 
     // 2. Ações Pendentes Anteriores
     if (ata.tipo_reuniao) {
-        const { data: idsDoTipo } = await supabase
-            .from('reunioes')
-            .select('id')
-            .eq('tipo_reuniao', ata.tipo_reuniao)
-            .neq('id', ata.id)
-            .lt('data_hora', ata.data_hora);
-        
-        const listaIds = (idsDoTipo || []).map(r => r.id);
-        
-        if (listaIds.length > 0) {
-            const { data: anteriores } = await supabase
-            .from('acoes')
-            .select('*')
-            .in('reuniao_id', listaIds)
-            .eq('status', 'Aberta');
-            setAcoesAnteriores(anteriores || []);
-        } else {
-            setAcoesAnteriores([]);
-        }
-    } else {
+      const { data: idsDoTipo } = await supabase
+        .from('reunioes')
+        .select('id')
+        .eq('tipo_reuniao', ata.tipo_reuniao)
+        .neq('id', ata.id)
+        .lt('data_hora', ata.data_hora);
+      
+      const listaIds = (idsDoTipo || []).map(r => r.id);
+      
+      if (listaIds.length > 0) {
+        const { data: anteriores } = await supabase
+          .from('acoes')
+          .select('*')
+          .in('reuniao_id', listaIds)
+          .eq('status', 'Aberta');
+        setAcoesAnteriores(anteriores || []);
+      } else {
         setAcoesAnteriores([]);
+      }
+    } else {
+      setAcoesAnteriores([]);
     }
   };
 
@@ -113,13 +114,13 @@ export default function CentralAtas() {
 
   const openEditActionModal = (acao) => {
     setActionForm({
-        id: acao.id,
-        descricao: acao.descricao,
-        responsavel: acao.responsavel,
-        data_vencimento: acao.data_vencimento || '',
-        observacao: acao.observacao || '',
-        resultado: acao.resultado || '',
-        fotos: acao.fotos || []
+      id: acao.id,
+      descricao: acao.descricao,
+      responsavel: acao.responsavel,
+      data_vencimento: acao.data_vencimento || '',
+      observacao: acao.observacao || '',
+      resultado: acao.resultado || '',
+      fotos: acao.fotos || []
     });
     setNewFiles([]);
     setIsModalOpen(true);
@@ -134,50 +135,50 @@ export default function CentralAtas() {
     setModalLoading(true);
 
     try {
-        // 1. Upload de fotos (se houver)
-        let uploadedUrls = [];
-        if (newFiles.length > 0) {
-            for (const file of newFiles) {
-                const fileName = `evidencia-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
-                const { error } = await supabase.storage.from('evidencias').upload(fileName, file);
-                if (!error) {
-                    const { data } = supabase.storage.from('evidencias').getPublicUrl(fileName);
-                    uploadedUrls.push(data.publicUrl);
-                }
-            }
+      // 1. Upload de fotos (se houver)
+      let uploadedUrls = [];
+      if (newFiles.length > 0) {
+        for (const file of newFiles) {
+          const fileName = `evidencia-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
+          const { error } = await supabase.storage.from('evidencias').upload(fileName, file);
+          if (!error) {
+            const { data } = supabase.storage.from('evidencias').getPublicUrl(fileName);
+            uploadedUrls.push(data.publicUrl);
+          }
         }
+      }
 
-        const finalFotos = [...actionForm.fotos, ...uploadedUrls];
+      const finalFotos = [...actionForm.fotos, ...uploadedUrls];
 
-        const payload = {
-            descricao: actionForm.descricao,
-            responsavel: actionForm.responsavel || 'Geral',
-            data_vencimento: actionForm.data_vencimento || null,
-            observacao: actionForm.observacao,
-            resultado: actionForm.resultado,
-            fotos: finalFotos,
-            reuniao_id: selectedAta.id,
-        };
+      const payload = {
+        descricao: actionForm.descricao,
+        responsavel: actionForm.responsavel || 'Geral',
+        data_vencimento: actionForm.data_vencimento || null,
+        observacao: actionForm.observacao,
+        resultado: actionForm.resultado,
+        fotos: finalFotos,
+        reuniao_id: selectedAta.id,
+      };
 
-        if (actionForm.id) {
-            // EDITAR
-            const { error } = await supabase.from('acoes').update(payload).eq('id', actionForm.id);
-            if (error) throw error;
-        } else {
-            // CRIAR NOVA
-            payload.status = 'Aberta';
-            payload.data_criacao = new Date().toISOString();
-            const { error } = await supabase.from('acoes').insert([payload]);
-            if (error) throw error;
-        }
+      if (actionForm.id) {
+        // EDITAR
+        const { error } = await supabase.from('acoes').update(payload).eq('id', actionForm.id);
+        if (error) throw error;
+      } else {
+        // CRIAR NOVA
+        payload.status = 'Aberta';
+        payload.data_criacao = new Date().toISOString();
+        const { error } = await supabase.from('acoes').insert([payload]);
+        if (error) throw error;
+      }
 
-        await carregarDetalhes(selectedAta); // Atualiza a tela
-        setIsModalOpen(false);
+      await carregarDetalhes(selectedAta); // Atualiza a tela
+      setIsModalOpen(false);
 
     } catch (error) {
-        alert("Erro ao salvar ação: " + error.message);
+      alert("Erro ao salvar ação: " + error.message);
     } finally {
-        setModalLoading(false);
+      setModalLoading(false);
     }
   };
 
@@ -197,12 +198,12 @@ export default function CentralAtas() {
   const handleSaveAta = async () => {
     const { error } = await supabase.from('reunioes').update({ pauta: editedPauta, observacoes }).eq('id', selectedAta.id);
     if (!error) {
-        setIsEditing(false);
-        setSelectedAta(prev => ({...prev, pauta: editedPauta, observacoes}));
-        setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: editedPauta, observacoes} : a));
-        alert("Ata salva com sucesso!");
+      setIsEditing(false);
+      setSelectedAta(prev => ({...prev, pauta: editedPauta, observacoes}));
+      setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: editedPauta, observacoes} : a));
+      alert("Ata salva com sucesso!");
     } else {
-        alert("Erro ao salvar ata: " + error.message);
+      alert("Erro ao salvar ata: " + error.message);
     }
   };
 
@@ -286,8 +287,8 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
   const handleDeleteAta = async () => {
     const senha = window.prompt("Senha para excluir:");
     if (senha === "excluir") {
-        await supabase.from('reunioes').delete().eq('id', selectedAta.id);
-        window.location.reload();
+      await supabase.from('reunioes').delete().eq('id', selectedAta.id);
+      window.location.reload();
     }
   };
 
