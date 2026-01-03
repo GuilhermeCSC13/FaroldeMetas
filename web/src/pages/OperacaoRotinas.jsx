@@ -44,6 +44,49 @@ const OperacaoRotinas = () => {
     }
   };
 
+  // mesma lógica de score do Farol de Metas
+  const calculateScore = (meta, realizado, tipo, pesoTotal) => {
+    const peso = parseFloat(pesoTotal);
+    if (
+      meta === null ||
+      meta === undefined ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado)) ||
+      isNaN(peso)
+    ) {
+      return 0;
+    }
+
+    const r = parseFloat(realizado);
+    const m = parseFloat(meta);
+    if (m === 0) return 0;
+
+    let atingimento = 0;
+
+    if (tipo === '>=' || tipo === 'maior') {
+      atingimento = r / m;
+    } else {
+      atingimento = 1 + (m - r) / m;
+    }
+
+    let multiplicador = 0;
+
+    if ( atingimento >= 1.0 ) {
+      multiplicador = 1.0;
+    } else if ( atingimento >= 0.99 ) {
+      multiplicador = 0.75;
+    } else if ( atingimento >= 0.98 ) {
+      multiplicador = 0.5;
+    } else if ( atingimento >= 0.97 ) {
+      multiplicador = 0.25;
+    } else {
+      multiplicador = 0.0;
+    }
+
+    return peso * multiplicador;
+  };
+
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
@@ -62,9 +105,20 @@ const OperacaoRotinas = () => {
         const row = { ...r, meses: {} };
         MESES.forEach(mes => {
           const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
+          const realizado = valObj ? valObj.valor_realizado : '';
+          const meta = valObj ? valObj.valor_meta : null;
+
+          const score = calculateScore(
+            meta,
+            realizado,
+            r.tipo_comparacao,
+            r.peso
+          );
+
           row.meses[mes.id] = {
-            realizado: valObj ? valObj.valor_realizado : '',
-            meta: valObj ? valObj.valor_meta : null
+            realizado,
+            meta,
+            score
           };
         });
         return row;
@@ -85,7 +139,20 @@ const OperacaoRotinas = () => {
       prev.map(r => {
         if (r.id !== rotinaId) return r;
         const novosMeses = { ...r.meses };
-        novosMeses[mesId] = { ...novosMeses[mesId], realizado: valorNum };
+        const meta = novosMeses[mesId].meta;
+
+        const score = calculateScore(
+          meta,
+          valorNum,
+          r.tipo_comparacao,
+          r.peso
+        );
+
+        novosMeses[mesId] = {
+          ...novosMeses[mesId],
+          realizado: valorNum,
+          score
+        };
         return { ...r, meses: novosMeses };
       })
     );
@@ -136,6 +203,22 @@ const OperacaoRotinas = () => {
     [rotinas, responsavelFiltro]
   );
 
+  const getTotalScore = mesId => {
+    const total = rotinasFiltradas.reduce(
+      (acc, r) => acc + (r.meses[mesId]?.score || 0),
+      0
+    );
+    return total.toFixed(1);
+  };
+
+  const getTotalPeso = () => {
+    const total = rotinasFiltradas.reduce(
+      (acc, r) => acc + (parseFloat(r.peso) || 0),
+      0
+    );
+    return total.toFixed(0);
+  };
+
   const isPCO = areaSelecionada == ID_PCO;
 
   return (
@@ -164,22 +247,14 @@ const OperacaoRotinas = () => {
             </select>
           </div>
 
-          {/* Botões de Navegação / Configuração */}
-          <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
-            <button
-              onClick={() => (window.location.hash = 'metas')}
-              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
-            >
-              Ir para Metas
-            </button>
-            <button
-              onClick={() => setShowConfig(true)}
-              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
-              title="Configurações"
-            >
-              <Settings size={18} />
-            </button>
-          </div>
+          {/* Apenas botão de Configuração (removido "Ir para Metas") */}
+          <button
+            onClick={() => setShowConfig(true)}
+            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+            title="Configurações"
+          >
+            <Settings size={18} />
+          </button>
 
           {/* Seletor de Áreas */}
           <div className="flex bg-gray-100 p-1 rounded-lg">
@@ -265,12 +340,12 @@ const OperacaoRotinas = () => {
                         {row.responsavel || '-'}
                       </td>
 
-                      {/* Peso (se não tiver na tabela, fica '-') */}
+                      {/* Peso */}
                       <td className="p-2 border border-gray-300 bg-gray-50 text-center">
                         {row.peso != null ? row.peso : '-'}
                       </td>
 
-                      {/* Tipo (comparação) */}
+                      {/* Tipo */}
                       <td className="p-2 border border-gray-300 font-mono text-gray-500 text-center">
                         {row.tipo_comparacao}
                       </td>
@@ -299,7 +374,7 @@ const OperacaoRotinas = () => {
                             className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* META (ALVO) - igual Metas: azul, sem ícone */}
+                              {/* META (ALVO) - estilo igual Metas */}
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
@@ -346,6 +421,26 @@ const OperacaoRotinas = () => {
                       })}
                     </tr>
                   ))}
+
+                  {/* TOTAL SCORE (igual Metas) */}
+                  <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
+                    <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                      TOTAL SCORE
+                    </td>
+                    <td className="p-2 border-r border-red-500"></td>
+                    <td className="p-2 border-r border-red-500 text-center">
+                      {getTotalPeso()}
+                    </td>
+                    <td className="p-2 border-r border-red-500"></td>
+                    {MESES.map(mes => (
+                      <td
+                        key={mes.id}
+                        className="p-2 text-center border-r border-red-500 text-sm"
+                      >
+                        {getTotalScore(mes.id)}
+                      </td>
+                    ))}
+                  </tr>
                 </tbody>
               </table>
             </div>
