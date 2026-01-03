@@ -19,61 +19,104 @@ import {
 } from "lucide-react";
 import ConfiguracaoGeral from "../components/tatico/ConfiguracaoGeral";
 
-const ID_MANUTENCAO = 2; // <<--- Área Manutenção
+const ID_MANUTENCAO = 2;
+
+// Meses usados no seletor e nos textos
+const MESES = [
+  { id: 1, label: "Jan/26" },
+  { id: 2, label: "Fev/26" },
+  { id: 3, label: "Mar/26" },
+  { id: 4, label: "Abr/26" },
+  { id: 5, label: "Mai/26" },
+  { id: 6, label: "Jun/26" },
+  { id: 7, label: "Jul/26" },
+  { id: 8, label: "Ago/26" },
+  { id: 9, label: "Set/26" },
+  { id: 10, label: "Out/26" },
+  { id: 11, label: "Nov/26" },
+  { id: 12, label: "Dez/26" },
+];
 
 const ManutencaoResumo = () => {
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
+
+  const [mesSelecionado, setMesSelecionado] = useState(1); // Jan/26
+
   const [metrics, setMetrics] = useState({
     scoreAtual: 0,
     metasBatidas: 0,
     criticos: 0,
     totalMetas: 0,
+    totalPeso: 0,
   });
   const [chartData, setChartData] = useState([]);
   const [alertas, setAlertas] = useState([]);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [mesSelecionado]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      // 1. Metas da MANUTENÇÃO (area_id = 2)
-      const { data: metas } = await supabase
+      // 1. Metas da MANUTENÇÃO
+      const { data: metas, error: errMetas } = await supabase
         .from("metas_farol")
         .select("*")
         .eq("area_id", ID_MANUTENCAO);
 
+      if (errMetas) throw errMetas;
+
       // 2. Metas Mensais (alvos)
-      const { data: alvos } = await supabase
+      const { data: alvos, error: errAlvos } = await supabase
         .from("metas_farol_mensal")
         .select("*")
         .eq("ano", 2026);
 
+      if (errAlvos) throw errAlvos;
+
       // 3. Resultados (realizado)
-      const { data: realizados } = await supabase
+      const { data: realizados, error: errReal } = await supabase
         .from("resultados_farol")
         .select("*")
         .eq("ano", 2026);
 
-      if (!metas || !alvos || !realizados) {
+      if (errReal) throw errReal;
+
+      if (!metas || metas.length === 0) {
+        setMetrics({
+          scoreAtual: 0,
+          metasBatidas: 0,
+          criticos: 0,
+          totalMetas: 0,
+          totalPeso: 0,
+        });
+        setChartData([]);
+        setAlertas([]);
         setLoading(false);
         return;
       }
 
-      const MES_ATUAL = 1; // Jan/26
+      const MES_ATUAL = mesSelecionado;
 
       let somaScore = 0;
       let countBatidas = 0;
       let countCriticas = 0;
       const listaAlertas = [];
 
+      // Soma de pesos
+      const totalPesoMeta = metas.reduce(
+        (acc, meta) => acc + (Number(meta.peso) || 0),
+        0
+      );
+
+      // KPIs do mês selecionado
       metas.forEach((meta) => {
         const alvo = alvos.find(
           (a) => a.meta_id === meta.id && a.mes === MES_ATUAL
         )?.valor_meta;
+
         const real = realizados.find(
           (r) => r.meta_id === meta.id && r.mes === MES_ATUAL
         )?.valor_realizado;
@@ -86,6 +129,7 @@ const ManutencaoResumo = () => {
         );
 
         somaScore += score;
+
         if (faixa === 1) countBatidas++;
         if (faixa === 5) {
           countCriticas++;
@@ -108,6 +152,7 @@ const ManutencaoResumo = () => {
           const real = realizados.find(
             (r) => r.meta_id === meta.id && r.mes === mesId
           )?.valor_realizado;
+
           const { score } = calculateScore(
             alvo,
             real,
@@ -125,10 +170,11 @@ const ManutencaoResumo = () => {
       });
 
       setMetrics({
-        scoreAtual: somaScore.toFixed(1),
+        scoreAtual: Number(somaScore.toFixed(1)),
         metasBatidas: countBatidas,
         criticos: countCriticas,
         totalMetas: metas.length,
+        totalPeso: totalPesoMeta,
       });
       setChartData(historico);
       setAlertas(listaAlertas);
@@ -145,14 +191,14 @@ const ManutencaoResumo = () => {
       meta === undefined ||
       realizado === null ||
       realizado === "" ||
-      isNaN(realizado)
+      isNaN(parseFloat(realizado))
     ) {
       return { score: 0, faixa: 0 };
     }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
-    if (!m || m === 0 || isNaN(r)) return { score: 0, faixa: 0 };
+    if (isNaN(r) || isNaN(m) || m === 0) return { score: 0, faixa: 0 };
 
     let atingimento = 0;
     if (tipo === ">=" || tipo === "maior") {
@@ -184,20 +230,43 @@ const ManutencaoResumo = () => {
     return { score: parseFloat(pesoTotal) * multiplicador, faixa };
   };
 
+  const mesLabel =
+    MESES.find((m) => m.id === mesSelecionado)?.label || "Jan/26";
+  const areaLabel = "Manutenção";
+
   return (
     <div className="flex flex-col gap-6 animate-fade-in">
       {/* Cabeçalho */}
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Visão Geral — Manutenção</h2>
+          <h2 className="text-2xl font-bold text-gray-800">
+            Visão Geral — Manutenção
+          </h2>
           <p className="text-sm text-gray-500">
-            Acompanhamento consolidado dos indicadores de Manutenção (Jan/2026)
+            Acompanhamento consolidado de performance —{" "}
+            <span className="font-semibold">{mesLabel}</span>{" "}
+            <span className="text-gray-400">({areaLabel})</span>
           </p>
         </div>
-        <div className="flex items-center gap-3">
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Filtro de Mês */}
+          <select
+            value={mesSelecionado}
+            onChange={(e) => setMesSelecionado(Number(e.target.value))}
+            className="bg-white border border-gray-300 text-gray-700 text-xs rounded-lg px-3 py-2 font-semibold shadow-sm"
+          >
+            {MESES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+
+          {/* Botão Configuração */}
           <button
             onClick={() => setShowConfig(true)}
-            className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-700 transition-colors shadow-sm"
+            className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-700 transition-colors shadow-sm"
           >
             <Settings size={16} /> Configurar Metas e Rotinas
           </button>
@@ -221,10 +290,16 @@ const ManutencaoResumo = () => {
                 <Target size={24} />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Score Global</p>
+                <p className="text-sm text-gray-500 font-medium">
+                  Score Global
+                </p>
                 <h3 className="text-2xl font-bold text-gray-800">
-                  {metrics.scoreAtual}{" "}
-                  <span className="text-xs text-gray-400 font-normal">/ 100</span>
+                  {metrics.scoreAtual.toFixed(1)}{" "}
+                  {metrics.totalPeso > 0 && (
+                    <span className="text-xs text-gray-400 font-normal">
+                      / {metrics.totalPeso}
+                    </span>
+                  )}
                 </h3>
               </div>
             </div>
@@ -234,7 +309,9 @@ const ManutencaoResumo = () => {
                 <CheckCircle size={24} />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Metas Batidas</p>
+                <p className="text-sm text-gray-500 font-medium">
+                  Metas Batidas
+                </p>
                 <h3 className="text-2xl font-bold text-gray-800">
                   {metrics.metasBatidas}{" "}
                   <span className="text-xs text-gray-400 font-normal">
@@ -263,8 +340,12 @@ const ManutencaoResumo = () => {
                 <TrendingUp size={24} />
               </div>
               <div>
-                <p className="text-sm text-gray-500 font-medium">Tendência</p>
-                <h3 className="text-sm font-bold text-purple-700">Estável</h3>
+                <p className="text-sm text-gray-500 font-medium">
+                  Tendência
+                </p>
+                <h3 className="text-sm font-bold text-purple-700">
+                  Estável
+                </h3>
               </div>
             </div>
           </div>
@@ -295,7 +376,6 @@ const ManutencaoResumo = () => {
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: "#9ca3af", fontSize: 12 }}
-                      domain={[0, 100]}
                     />
                     <Tooltip
                       cursor={{ fill: "#f3f4f6" }}
@@ -304,8 +384,13 @@ const ManutencaoResumo = () => {
                         border: "none",
                         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
                       }}
+                      formatter={(value) => [`${value} pts`, "Score"]}
                     />
-                    <Bar dataKey="score" radius={[4, 4, 0, 0]} barSize={40}>
+                    <Bar
+                      dataKey="score"
+                      radius={[4, 4, 0, 0]}
+                      barSize={40}
+                    >
                       {chartData.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
