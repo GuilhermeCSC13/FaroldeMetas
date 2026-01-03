@@ -1,26 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import ConfiguracaoGeral from '../components/tatico/ConfiguracaoGeral';
-import { Settings, Target } from 'lucide-react';
+import { Settings } from 'lucide-react';
 
 const ID_MANUTENCAO = 2;
+
 const MESES = [
-  { id: 1, label: 'JAN' }, { id: 2, label: 'FEV' }, { id: 3, label: 'MAR' },
-  { id: 4, label: 'ABR' }, { id: 5, label: 'MAI' }, { id: 6, label: 'JUN' },
-  { id: 7, label: 'JUL' }, { id: 8, label: 'AGO' }, { id: 9, label: 'SET' },
-  { id: 10, label: 'OUT' }, { id: 11, label: 'NOV' }, { id: 12, label: 'DEZ' }
+  { id: 1, label: 'jan/26' }, { id: 2, label: 'fev/26' }, { id: 3, label: 'mar/26' },
+  { id: 4, label: 'abr/26' }, { id: 5, label: 'mai/26' }, { id: 6, label: 'jun/26' },
+  { id: 7, label: 'jul/26' }, { id: 8, label: 'ago/26' }, { id: 9, label: 'set/26' },
+  { id: 10, label: 'out/26' }, { id: 11, label: 'nov/26' }, { id: 12, label: 'dez/26' }
 ];
 
 const ManutencaoRotinas = () => {
+  const [areas, setAreas] = useState([]);
+  const [areaSelecionada, setAreaSelecionada] = useState(null);
   const [rotinas, setRotinas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
+  const [responsavelFiltro, setResponsavelFiltro] = useState('');
 
   useEffect(() => {
-    fetchRotinasData();
+    fetchAreas();
   }, []);
 
-  // Mesma lógica de score do Farol de Metas / Rotinas
+  useEffect(() => {
+    if (areaSelecionada) fetchRotinasData();
+  }, [areaSelecionada]);
+
+  const fetchAreas = async () => {
+    const { data } = await supabase
+      .from('areas')
+      .select('*')
+      .eq('ativa', true)
+      .order('id');
+
+    if (data && data.length > 0) {
+      const filtered = data.filter(a => a.id == ID_MANUTENCAO);
+      const lista = filtered.length > 0 ? filtered : data;
+      setAreas(lista);
+      setAreaSelecionada(lista[0].id);
+    }
+  };
+
+  // mesma lógica de score do Farol de Metas / Operação Rotinas
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     const peso = parseFloat(pesoTotal);
 
@@ -44,8 +67,7 @@ const ManutencaoRotinas = () => {
     if (tipo === '>=' || tipo === 'maior') {
       atingimento = r / m;
     } else {
-      // '<=' ou 'menor'
-      atingimento = 1 + ((m - r) / m);
+      atingimento = 1 + (m - r) / m;
     }
 
     let multiplicador = 0;
@@ -71,8 +93,8 @@ const ManutencaoRotinas = () => {
       const { data: defs } = await supabase
         .from('rotinas_indicadores')
         .select('*')
-        .eq('area_id', ID_MANUTENCAO)
-        .order('ordem');
+        .eq('area_id', areaSelecionada)
+        .order('ordem', { ascending: true });
 
       const { data: valores } = await supabase
         .from('rotinas_mensais')
@@ -81,10 +103,8 @@ const ManutencaoRotinas = () => {
 
       const combined = (defs || []).map(r => {
         const row = { ...r, meses: {} };
-
         MESES.forEach(mes => {
           const valObj = valores?.find(v => v.rotina_id === r.id && v.mes === mes.id);
-
           const realizado = valObj ? valObj.valor_realizado : '';
           const meta = valObj ? valObj.valor_meta : null;
 
@@ -95,9 +115,12 @@ const ManutencaoRotinas = () => {
             r.peso
           );
 
-          row.meses[mes.id] = { realizado, meta, score };
+          row.meses[mes.id] = {
+            realizado,
+            meta,
+            score
+          };
         });
-
         return row;
       });
 
@@ -115,7 +138,6 @@ const ManutencaoRotinas = () => {
     setRotinas(prev =>
       prev.map(r => {
         if (r.id !== rotinaId) return r;
-
         const novosMeses = { ...r.meses };
         const meta = novosMeses[mesId].meta;
 
@@ -131,7 +153,6 @@ const ManutencaoRotinas = () => {
           realizado: valorNum,
           score
         };
-
         return { ...r, meses: novosMeses };
       })
     );
@@ -145,7 +166,7 @@ const ManutencaoRotinas = () => {
     if (error) console.error('Erro ao salvar:', error);
   };
 
-  const getCellStatus = (real, meta, tipo) => {
+  const getCellStatus = (real, meta, tipoComparacao) => {
     if (real === '' || real === null || meta === null || meta === undefined)
       return 'bg-white';
 
@@ -154,7 +175,7 @@ const ManutencaoRotinas = () => {
     if (isNaN(r) || isNaN(m)) return 'bg-white';
 
     let isGood = false;
-    if (tipo === '<=' || tipo === 'menor') {
+    if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
       isGood = r <= m;
     } else {
       isGood = r >= m;
@@ -162,169 +183,276 @@ const ManutencaoRotinas = () => {
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
-  const getTotalScore = (mesId) => {
-    const total = rotinas.reduce(
+  // responsáveis únicos para o filtro
+  const responsaveisUnicos = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (rotinas || [])
+            .map(r => r.responsavel)
+            .filter(r => r && String(r).trim() !== '')
+        )
+      ),
+    [rotinas]
+  );
+
+  const rotinasFiltradas = useMemo(
+    () =>
+      responsavelFiltro
+        ? rotinas.filter(r => r.responsavel === responsavelFiltro)
+        : rotinas,
+    [rotinas, responsavelFiltro]
+  );
+
+  const getTotalScore = mesId => {
+    const total = rotinasFiltradas.reduce(
       (acc, r) => acc + (r.meses[mesId]?.score || 0),
       0
     );
     return total.toFixed(1);
   };
 
-  // CABEÇALHO AZUL (PADRÃO OPERAÇÃO/MOOV)
-  const headerClass = 'bg-[#3b82f6] text-white';
+  const getTotalPeso = () => {
+    const total = rotinasFiltradas.reduce(
+      (acc, r) => acc + (parseFloat(r.peso) || 0),
+      0
+    );
+    return total.toFixed(0);
+  };
+
+  const isManutencao = areaSelecionada == ID_MANUTENCAO;
 
   return (
-    <div className="flex flex-col h-full bg-white font-sans">
-      {/* Cabeçalho */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
-        <h2 className="text-xl font-bold text-gray-800">Farol de Rotinas — Manutenção</h2>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => (window.location.hash = 'metas')}
-            className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-gray-50 rounded transition-colors"
-          >
-            Ir para Metas
-          </button>
+    <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-5 bg-white border-b border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 tracking-tight">
+          Farol de Rotinas — Manutenção
+        </h2>
+
+        <div className="flex items-center gap-4">
+          {/* Filtro de Responsável */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 font-semibold">Responsável:</span>
+            <select
+              value={responsavelFiltro}
+              onChange={e => setResponsavelFiltro(e.target.value)}
+              className="text-xs bg-white border border-gray-300 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos</option>
+              {responsaveisUnicos.map(resp => (
+                <option key={resp} value={resp}>
+                  {resp}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Botão de Configuração */}
           <button
             onClick={() => setShowConfig(true)}
-            className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-gray-100"
+            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+            title="Configurações"
           >
             <Settings size={18} />
           </button>
-          <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100 uppercase">
-            Manutenção
+
+          {/* Seletor de Áreas (aqui vai aparecer só Manutenção, mas segue o modelo) */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {areas.map(area => (
+              <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                  areaSelecionada === area.id
+                    ? 'bg-white text-blue-600 shadow-sm border border-blue-200'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {area.nome}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Tabela */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto bg-white">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400 animate-pulse">
             Carregando...
           </div>
         ) : (
-          <table className="w-full text-xs border-collapse">
-            <thead className="sticky top-0 z-20 shadow-sm">
-              {/* CABEÇALHO AZUL */}
-              <tr className={`${headerClass} font-bold uppercase text-center border-b border-blue-700`}>
-                <th
-                  className={`sticky left-0 z-30 p-3 w-72 text-left border-r border-blue-400/30 ${headerClass}`}
-                >
-                  Indicador
-                </th>
-                {MESES.map(mes => (
-                  <th
-                    key={mes.id}
-                    className="p-3 min-w-[80px] border-r border-blue-400/30"
-                  >
-                    {mes.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-100">
-              {rotinas.map(row => (
-                <tr key={row.id} className="group hover:bg-gray-50">
-                  {/* Coluna Indicador Fixa (Azul Claro) */}
-                  <td className="sticky left-0 z-10 p-3 bg-blue-50 border-r border-gray-200 font-semibold text-gray-700 shadow-sm">
-                    <div className="flex flex-col">
-                      <span>{row.indicador}</span>
-                      <span className="text-[9px] text-gray-400 font-normal uppercase mt-0.5">
-                        {row.tipo_comparacao === '<=' || row.tipo_comparacao === 'menor'
-                          ? 'Menor é melhor'
-                          : 'Meta Mínima'}
-                      </span>
-                    </div>
-                  </td>
-
-                  {/* Dados por mês */}
-                  {MESES.map(mes => {
-                    const dados = row.meses[mes.id] || {};
-                    const bg = getCellStatus(
-                      dados.realizado,
-                      dados.meta,
-                      row.tipo_comparacao
-                    );
-
-                    const valorRealizado =
-                      dados.realizado === null ||
-                      dados.realizado === '' ||
-                      isNaN(dados.realizado)
-                        ? ''
-                        : dados.realizado;
-
-                    const temMeta =
-                      dados.meta !== null &&
-                      dados.meta !== undefined &&
-                      !isNaN(dados.meta);
-
-                    const valorMeta = temMeta
-                      ? Number(dados.meta).toFixed(
-                          row.formato === 'percent' ? 0 : 0
-                        )
-                      : '';
-
-                    return (
-                      <td
+          <div className="p-4">
+            <div className="border border-gray-300 rounded-lg overflow-hidden shadow-sm bg-white min-w-max">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
+                    <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
+                      Indicador
+                    </th>
+                    <th className="p-2 border border-gray-300 w-40 text-left">
+                      Responsável
+                    </th>
+                    <th className="p-2 border border-gray-300 w-12">
+                      Peso
+                    </th>
+                    <th className="p-2 border border-gray-300 w-12">
+                      Tipo
+                    </th>
+                    {MESES.map(mes => (
+                      <th
                         key={mes.id}
-                        className="p-0 border-r border-gray-100 relative align-top h-12"
+                        className="p-2 border border-gray-300 min-w-[90px]"
                       >
-                        <div
-                          className={`flex flex-col h-full justify-center ${bg} transition-colors`}
-                        >
-                          {/* Input Realizado */}
-                          <div className="flex items-center justify-center">
-                            <input
-                              className="w-full text-center bg-transparent font-bold text-gray-800 focus:outline-none"
-                              placeholder="-"
-                              defaultValue={
-                                valorRealizado === '' ? '' : String(valorRealizado)
-                              }
-                              onBlur={e =>
-                                handleSave(row.id, mes.id, e.target.value)
-                              }
-                            />
+                        {mes.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rotinasFiltradas.map((row, idx) => (
+                    <tr
+                      key={row.id || idx}
+                      className="hover:bg-gray-50 transition-colors"
+                    >
+                      {/* Indicador (sticky) */}
+                      <td className="p-3 border border-gray-300 sticky left-0 bg-white z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)] text-left">
+                        <div className="flex items-start gap-2">
+                          <div className="w-1.5 h-10 rounded-full bg-blue-500/20" />
+                          <div className="flex flex-col">
+                            <span
+                              className="truncate text-[13px] font-semibold text-gray-800"
+                              title={row.indicador}
+                            >
+                              {row.indicador}
+                            </span>
+                            <span className="text-[9px] text-gray-400 uppercase">
+                              {row.tipo_comparacao === '<=' || row.tipo_comparacao === 'menor'
+                                ? 'Menor é melhor'
+                                : 'Meta mínima'}
+                            </span>
                           </div>
-
-                          {/* Meta Pequena (Rodapé) */}
-                          {temMeta && (
-                            <div className="absolute bottom-1 right-1 text-[8px] text-gray-500 font-medium opacity-60 flex items-center gap-0.5">
-                              <Target size={6} />
-                              {valorMeta}
-                              {row.formato === 'percent' && '%'}
-                            </div>
-                          )}
                         </div>
                       </td>
-                    );
-                  })}
-                </tr>
-              ))}
 
-              {/* TOTAL SCORE por mês */}
-              <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
-                <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
-                  TOTAL SCORE
-                </td>
-                {MESES.map(mes => (
-                  <td
-                    key={mes.id}
-                    className="p-2 text-center border-r border-red-500 text-sm"
-                  >
-                    {getTotalScore(mes.id)}
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
+                      {/* Responsável */}
+                      <td className="p-2 border border-gray-300 text-[11px] text-gray-700 text-left">
+                        {row.responsavel || '-'}
+                      </td>
+
+                      {/* Peso */}
+                      <td className="p-2 border border-gray-300 bg-gray-50 text-center">
+                        {row.peso != null ? row.peso : '-'}
+                      </td>
+
+                      {/* Tipo */}
+                      <td className="p-2 border border-gray-300 font-mono text-gray-500 text-center">
+                        {row.tipo_comparacao}
+                      </td>
+
+                      {/* Meses */}
+                      {MESES.map(mes => {
+                        const dados = row.meses[mes.id];
+                        const temMeta =
+                          dados?.meta !== null && dados?.meta !== undefined;
+                        const bgStatus = getCellStatus(
+                          dados?.realizado,
+                          dados?.meta,
+                          row.tipo_comparacao
+                        );
+
+                        const valorRealizado =
+                          !dados ||
+                          dados.realizado === null ||
+                          dados.realizado === '' ||
+                          isNaN(dados.realizado)
+                            ? ''
+                            : dados.realizado;
+
+                        return (
+                          <td
+                            key={mes.id}
+                            className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
+                          >
+                            <div className="flex flex-col h-full min-h-[64px] justify-between">
+                              {/* META (ALVO) - estilo igual Metas */}
+                              <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
+                                {temMeta
+                                  ? Number(dados.meta).toFixed(
+                                      row.formato === 'percent' ? 0 : 0
+                                    )
+                                  : ''}
+                                {temMeta && row.formato === 'percent' && '%'}
+                              </div>
+
+                              {/* Valor realizado (input) */}
+                              <div className="flex-1 flex items-center justify-center pb-1">
+                                <div className="flex items-baseline gap-0.5">
+                                  {row.formato === 'currency' && (
+                                    <span className="text-gray-500/70 text-[10px]">
+                                      R$
+                                    </span>
+                                  )}
+                                  <input
+                                    className="w-20 text-center bg-transparent focus:outline-none font-bold text-[13px] text-gray-900 placeholder-gray-400/70 focus:bg-white/60 rounded-sm"
+                                    placeholder="-"
+                                    defaultValue={
+                                      valorRealizado === ''
+                                        ? ''
+                                        : String(valorRealizado)
+                                    }
+                                    onBlur={e =>
+                                      handleSave(
+                                        row.id,
+                                        mes.id,
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                  {row.formato === 'percent' && (
+                                    <span className="text-gray-500/70 text-[10px]">
+                                      %
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+
+                  {/* TOTAL SCORE (igual modelo) */}
+                  <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
+                    <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                      TOTAL SCORE
+                    </td>
+                    <td className="p-2 border-r border-red-500"></td>
+                    <td className="p-2 border-r border-red-500 text-center">
+                      {getTotalPeso()}
+                    </td>
+                    <td className="p-2 border-r border-red-500"></td>
+                    {MESES.map(mes => (
+                      <td
+                        key={mes.id}
+                        className="p-2 text-center border-r border-red-500 text-sm"
+                      >
+                        {getTotalScore(mes.id)}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
 
       {showConfig && (
         <ConfiguracaoGeral
-          areasContexto={[{ id: 2, nome: 'Manutenção' }]}
+          areasContexto={[{ id: ID_MANUTENCAO, nome: 'Manutenção' }]}
           onClose={() => {
             setShowConfig(false);
             fetchRotinasData();
