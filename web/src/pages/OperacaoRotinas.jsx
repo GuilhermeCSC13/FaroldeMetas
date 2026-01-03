@@ -29,11 +29,17 @@ const OperacaoRotinas = () => {
   }, [areaSelecionada]);
 
   const fetchAreas = async () => {
-    const { data } = await supabase.from('areas').select('*').eq('ativa', true).order('id');
-    if (data) {
+    const { data } = await supabase
+      .from('areas')
+      .select('*')
+      .eq('ativa', true)
+      .order('id');
+
+    if (data && data.length > 0) {
       const filtered = data.filter(a => a.id == ID_PCO || a.id == ID_MOTORISTAS);
-      setAreas(filtered.length > 0 ? filtered : data);
-      setAreaSelecionada(filtered.length > 0 ? filtered[0].id : data[0].id);
+      const lista = filtered.length > 0 ? filtered : data;
+      setAreas(lista);
+      setAreaSelecionada(lista[0].id);
     }
   };
 
@@ -73,13 +79,15 @@ const OperacaoRotinas = () => {
 
   const handleSave = async (rotinaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
-    
-    setRotinas(prev => prev.map(r => {
-      if (r.id !== rotinaId) return r;
-      const novosMeses = { ...r.meses };
-      novosMeses[mesId] = { ...novosMeses[mesId], realizado: valorNum };
-      return { ...r, meses: novosMeses };
-    }));
+
+    setRotinas(prev =>
+      prev.map(r => {
+        if (r.id !== rotinaId) return r;
+        const novosMeses = { ...r.meses };
+        novosMeses[mesId] = { ...novosMeses[mesId], realizado: valorNum };
+        return { ...r, meses: novosMeses };
+      })
+    );
 
     const { error } = await supabase.rpc('atualizar_realizado_rotina', {
       p_rotina_id: rotinaId,
@@ -87,11 +95,12 @@ const OperacaoRotinas = () => {
       p_valor: valorNum
     });
 
-    if (error) console.error("Erro ao salvar:", error);
+    if (error) console.error('Erro ao salvar:', error);
   };
 
   const getCellStatus = (real, meta, tipoComparacao) => {
-    if (real === '' || real === null || meta === null || meta === undefined) return 'bg-white';
+    if (real === '' || real === null || meta === null || meta === undefined)
+      return 'bg-white';
     const r = parseFloat(real);
     const m = parseFloat(meta);
     if (isNaN(r) || isNaN(m)) return 'bg-white';
@@ -100,57 +109,55 @@ const OperacaoRotinas = () => {
     if (tipoComparacao === '<=' || tipoComparacao === 'menor') {
       isGood = r <= m;
     } else {
-      isGood = r >= m; 
+      isGood = r >= m;
     }
     return isGood ? 'bg-[#dcfce7]' : 'bg-[#fee2e2]';
   };
 
   const isPCO = areaSelecionada == ID_PCO;
-  // Cor azul se for PCO, ou verde (padrão) se for outro, ajustado para o layout do Moov (Azul)
-  const themeColor = 'blue'; 
-  const headerClass = 'bg-[#3b82f6] text-white';
 
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
-      
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-5 bg-white border-b border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 tracking-tight">Farol de Rotinas — Operação</h2>
-        
-        <div className="flex items-center gap-4">
-            {/* Botões de Navegação */}
-            <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
-                <button 
-                    onClick={() => window.location.hash = 'metas'}
-                    className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
-                >
-                    Ir para Metas
-                </button>
-                <button 
-                    onClick={() => setShowConfig(true)}
-                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
-                    title="Configurações"
-                >
-                    <Settings size={18} />
-                </button>
-            </div>
+        <h2 className="text-xl font-bold text-gray-800 tracking-tight">
+          Farol de Rotinas — Operação
+        </h2>
 
-            {/* Seletor de Áreas */}
-            <div className="flex bg-gray-100 p-1 rounded-lg">
-                {areas.map(area => (
-                    <button
-                    key={area.id}
-                    onClick={() => setAreaSelecionada(area.id)}
-                    className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
-                        areaSelecionada === area.id
-                        ? `bg-white text-${themeColor}-600 shadow-sm`
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                    >
-                    {area.nome}
-                    </button>
-                ))}
-            </div>
+        <div className="flex items-center gap-4">
+          {/* Botões de Navegação */}
+          <div className="flex items-center gap-2 mr-4 border-r border-gray-300 pr-4">
+            <button
+              onClick={() => (window.location.hash = 'metas')}
+              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-gray-200 rounded transition-colors"
+            >
+              Ir para Metas
+            </button>
+            <button
+              onClick={() => setShowConfig(true)}
+              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
+              title="Configurações"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
+
+          {/* Seletor de Áreas */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {areas.map(area => (
+              <button
+                key={area.id}
+                onClick={() => setAreaSelecionada(area.id)}
+                className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                  areaSelecionada === area.id
+                    ? 'bg-white text-blue-600 shadow-sm border border-blue-200'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {area.nome}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -161,81 +168,132 @@ const OperacaoRotinas = () => {
             Carregando...
           </div>
         ) : (
-          <div className="min-w-max">
-            <table className="w-full text-sm border-separate border-spacing-0">
-              <thead className="sticky top-0 z-20 shadow-sm">
-                <tr>
-                    <th className={`sticky left-0 z-30 p-4 w-72 text-left font-bold uppercase tracking-wider text-xs border-b border-r border-white/10 ${headerClass}`}>
-                        Indicador
+          <div className="p-4">
+            <div className="border border-gray-300 rounded-lg overflow-hidden shadow-sm bg-white min-w-max">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
+                    <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
+                      Indicador
                     </th>
                     {MESES.map(mes => (
-                        <th key={mes.id} className={`p-3 min-w-[100px] text-center font-bold text-xs border-b border-white/10 ${headerClass}`}>
-                            {mes.label}
-                        </th>
+                      <th
+                        key={mes.id}
+                        className="p-2 border border-gray-300 min-w-[90px]"
+                      >
+                        {mes.label}
+                      </th>
                     ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {rotinas.map((row, idx) => (
-                  <tr key={row.id || idx} className="group hover:bg-gray-50/80 transition-colors">
-                    
-                    {/* Coluna Indicador */}
-                    <td className="sticky left-0 z-10 p-4 bg-white border-r border-gray-100 group-hover:bg-gray-50 font-medium text-gray-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-1 h-8 rounded-full bg-${themeColor}-500/20`}></div>
-                        <div className="flex flex-col">
-                            <span className="truncate text-sm" title={row.indicador}>{row.indicador}</span>
-                            <span className="text-[9px] text-gray-400 uppercase">
-                                {row.tipo_comparacao === '<=' ? 'Menor é melhor' : 'Meta Mínima'}
-                            </span>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Meses */}
-                    {MESES.map(mes => {
-                        const dados = row.meses[mes.id];
-                        const temMeta = dados.meta !== null && dados.meta !== undefined;
-                        const bgStatus = getCellStatus(dados.realizado, dados.meta, row.tipo_comparacao);
-                        
-                        return (
-                            <td key={mes.id} className="p-0 border-r border-gray-50 relative align-top">
-                                <div className={`flex flex-col h-full min-h-[60px] transition-colors duration-300 ${bgStatus}`}>
-                                    
-                                    <div className="flex-1 flex items-center justify-center pt-2">
-                                        <div className="flex items-baseline gap-0.5">
-                                            {row.formato === 'currency' && <span className="text-gray-500/60 text-[10px] font-light">R$</span>}
-                                            <input 
-                                                className="w-20 text-center bg-transparent focus:outline-none font-bold text-base text-gray-800 placeholder-gray-400/50"
-                                                placeholder="-"
-                                                defaultValue={dados.realizado}
-                                                onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
-                                            />
-                                            {row.formato === 'percent' && <span className="text-gray-500/60 text-[10px] font-light">%</span>}
-                                        </div>
-                                    </div>
-
-                                    <div className="h-6 flex items-center justify-center text-[10px] gap-1 opacity-60 text-gray-600">
-                                        <Target size={8} />
-                                        <span className="font-medium">
-                                            {temMeta ? Number(dados.meta).toFixed(row.formato === 'percent' ? 0 : 0) : ''}
-                                        </span>
-                                    </div>
-                                    
-                                </div>
-                            </td>
-                        );
-                    })}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rotinas.map((row, idx) => (
+                    <tr
+                      key={row.id || idx}
+                      className="hover:bg-gray-50 transition-colors"
+                    >
+                      {/* Coluna Indicador */}
+                      <td className="p-3 border border-gray-200 sticky left-0 bg-white z-10 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
+                        <div className="flex items-start gap-2">
+                          <div className="w-1.5 h-10 rounded-full bg-blue-500/20" />
+                          <div className="flex flex-col">
+                            <span
+                              className="truncate text-[13px] font-semibold text-gray-800"
+                              title={row.indicador}
+                            >
+                              {row.indicador}
+                            </span>
+                            <span className="text-[9px] text-gray-400 uppercase">
+                              {row.tipo_comparacao === '<='
+                                ? 'Menor é melhor'
+                                : 'Meta mínima'}
+                            </span>
+                            {row.responsavel && (
+                              <span className="text-[9px] text-gray-400">
+                                Resp.: {row.responsavel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Meses */}
+                      {MESES.map(mes => {
+                        const dados = row.meses[mes.id];
+                        const temMeta =
+                          dados.meta !== null && dados.meta !== undefined;
+                        const bgStatus = getCellStatus(
+                          dados.realizado,
+                          dados.meta,
+                          row.tipo_comparacao
+                        );
+
+                        return (
+                          <td
+                            key={mes.id}
+                            className={`border border-gray-200 p-0 align-middle ${bgStatus}`}
+                          >
+                            <div className="flex flex-col h-full min-h-[64px] justify-between">
+                              {/* Meta (alvo) no topo, pequeno */}
+                              <div className="flex items-center justify-center pt-1 text-[10px] text-gray-600 gap-1 bg-white/40">
+                                <Target size={9} className="opacity-60" />
+                                <span className="font-medium">
+                                  {temMeta
+                                    ? Number(dados.meta).toFixed(
+                                        row.formato === 'percent' ? 0 : 0
+                                      )
+                                    : ''}
+                                  {temMeta && row.formato === 'percent' && '%'}
+                                </span>
+                              </div>
+
+                              {/* Valor realizado (input) no centro */}
+                              <div className="flex-1 flex items-center justify-center pb-1">
+                                <div className="flex items-baseline gap-0.5">
+                                  {row.formato === 'currency' && (
+                                    <span className="text-gray-500/70 text-[10px]">
+                                      R$
+                                    </span>
+                                  )}
+                                  <input
+                                    className="w-20 text-center bg-transparent focus:outline-none font-bold text-[13px] text-gray-900 placeholder-gray-400/70 focus:bg-white/60 rounded-sm"
+                                    placeholder="-"
+                                    defaultValue={dados.realizado ?? ''}
+                                    onBlur={e =>
+                                      handleSave(
+                                        row.id,
+                                        mes.id,
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                  {row.formato === 'percent' && (
+                                    <span className="text-gray-500/70 text-[10px]">
+                                      %
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchRotinasData(); }} />
+        <ConfiguracaoGeral
+          onClose={() => {
+            setShowConfig(false);
+            fetchRotinasData();
+          }}
+        />
       )}
     </div>
   );
