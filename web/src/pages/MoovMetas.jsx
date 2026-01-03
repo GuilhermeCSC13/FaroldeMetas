@@ -37,7 +37,7 @@ const MoovMetas = () => {
         .select('*')
         .eq('ano', 2026);
 
-      // 3. Resultados Realizados (O que foi digitado)
+      // 3. Resultados Realizados
       const { data: resultados } = await supabase
         .from('resultados_farol')
         .select('*')
@@ -46,20 +46,26 @@ const MoovMetas = () => {
       // 4. Cruzamento de Dados
       const combined = (metasDef || []).map(m => {
         const row = { ...m, meses: {} };
-        
+
         MESES.forEach(mes => {
           const alvoObj = metasMensais?.find(x => x.meta_id === m.id && x.mes === mes.id);
           const realObj = resultados?.find(x => x.meta_id === m.id && x.mes === mes.id);
-          
+
           const alvo = alvoObj ? parseFloat(alvoObj.valor_meta) : null;
-          const real = realObj ? parseFloat(realObj.valor_realizado) : '';
+
+          let realizado = '';
+          if (realObj && realObj.valor_realizado !== null && realObj.valor_realizado !== '') {
+            const parsed = parseFloat(realObj.valor_realizado);
+            realizado = isNaN(parsed) ? '' : parsed;
+          }
 
           row.meses[mes.id] = {
-            alvo: alvo,
-            realizado: real,
-            ...calculateScore(alvo, real, m.tipo_comparacao, parseFloat(m.peso))
+            alvo,
+            realizado,
+            ...calculateScore(alvo, realizado, m.tipo_comparacao, parseFloat(m.peso))
           };
         });
+
         return row;
       });
 
@@ -71,7 +77,7 @@ const MoovMetas = () => {
     }
   };
 
-  // --- LÓGICA DE CÁLCULO ---
+  // --- LÓGICA DE CÁLCULO BLINDADA ---
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
       return { score: 0, faixa: 0, color: 'bg-white' };
@@ -93,33 +99,33 @@ const MoovMetas = () => {
     let multiplicador = 0;
     let cor = 'bg-red-200';
 
-    if (atingimento >= 1.0) {      
+    if (atingimento >= 1.0) {
       multiplicador = 1.0;
       cor = 'bg-green-300';
-    } else if (atingimento >= 0.99) { 
+    } else if (atingimento >= 0.99) {
       multiplicador = 0.75;
       cor = 'bg-green-100';
-    } else if (atingimento >= 0.98) { 
+    } else if (atingimento >= 0.98) {
       multiplicador = 0.50;
       cor = 'bg-yellow-100';
-    } else if (atingimento >= 0.97) { 
+    } else if (atingimento >= 0.97) {
       multiplicador = 0.25;
       cor = 'bg-orange-100';
-    } else {                          
+    } else {
       multiplicador = 0.0;
       cor = 'bg-red-200';
     }
 
-    return { 
-      score: pesoTotal * multiplicador, 
+    return {
+      score: pesoTotal * multiplicador,
       multiplicador,
-      color: cor 
+      color: cor
     };
   };
 
   const handleSave = async (metaId, mesId, valor) => {
     const valorNum = valor === '' ? null : parseFloat(valor.replace(',', '.'));
-    
+
     setMetas(prev => prev.map(m => {
       if (m.id !== metaId) return m;
       const novoMeses = { ...m.meses };
@@ -133,12 +139,15 @@ const MoovMetas = () => {
 
     const { error } = await supabase
       .from('resultados_farol')
-      .upsert({
-        meta_id: metaId,
-        ano: 2026,
-        mes: mesId,
-        valor_realizado: valorNum
-      }, { onConflict: 'meta_id, ano, mes' });
+      .upsert(
+        {
+          meta_id: metaId,
+          ano: 2026,
+          mes: mesId,
+          valor_realizado: valorNum
+        },
+        { onConflict: 'meta_id, ano, mes' }
+      );
 
     if (error) console.error("Erro ao salvar:", error);
   };
@@ -154,37 +163,54 @@ const MoovMetas = () => {
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Moov</h2>
         <div className="flex items-center gap-3">
-             <button 
-                onClick={() => window.location.hash = 'rotinas'} 
-                className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded transition-colors"
-             >
-                Ir para Rotinas
-             </button>
-             <button 
-                onClick={() => setShowConfig(true)} 
-                className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-gray-100"
-             >
-                <Settings size={18} />
-             </button>
-             <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">MOOV</div>
+          <button
+            onClick={() => (window.location.hash = 'rotinas')}
+            className="px-3 py-1 text-sm font-medium text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded transition-colors"
+          >
+            Ir para Rotinas
+          </button>
+          <button
+            onClick={() => setShowConfig(true)}
+            className="p-2 text-gray-400 hover:text-blue-600 rounded-full hover:bg-gray-100"
+            title="Configurações"
+          >
+            <Settings size={18} />
+          </button>
+          <div className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded border border-blue-100">
+            MOOV
+          </div>
         </div>
       </div>
 
       {/* Tabela de Dados */}
       <div className="flex-1 overflow-auto p-4">
         {loading ? (
-          <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
+          <div className="text-center py-10 text-gray-500 animate-pulse">
+            Carregando dados...
+          </div>
         ) : (
-          <div className="border border-gray-300 rounded overflow-hidden shadow-sm">
+          <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-xs border-collapse">
               <thead>
-                {/* Cabeçalho Cinza Igual Operação */}
+                {/* Cabeçalho Cinza igual Operação/Administrativo */}
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
-                  <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">Indicador</th>
-                  <th className="p-2 border border-gray-300 w-12">Peso</th>
-                  <th className="p-2 border border-gray-300 w-12">Tipo</th>
+                  <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">
+                    Indicador
+                  </th>
+                  <th className="p-2 border border-gray-300 w-32">
+                    Responsável
+                  </th>
+                  <th className="p-2 border border-gray-300 w-12">
+                    Peso
+                  </th>
+                  <th className="p-2 border border-gray-300 w-12">
+                    Tipo
+                  </th>
                   {MESES.map(mes => (
-                    <th key={mes.id} className="p-2 border border-gray-300 min-w-[70px]">
+                    <th
+                      key={mes.id}
+                      className="p-2 border border-gray-300 min-w-[70px]"
+                    >
                       {mes.label}
                     </th>
                   ))}
@@ -193,27 +219,51 @@ const MoovMetas = () => {
               <tbody>
                 {metas.map(meta => (
                   <tr key={meta.id} className="hover:bg-gray-50 text-center">
-                    <td className="p-2 border border-gray-300 text-left font-medium text-gray-800 sticky left-0 bg-white z-10">
+                    {/* Indicador */}
+                    <td className="p-2 border border-gray-300 text-left font-semibold text-gray-800 sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
-                      <span className='block text-[9px] text-gray-400 font-normal'>{meta.unidade}</span>
+                      <span className="block text-[9px] text-gray-400 font-normal">
+                        {meta.unidade}
+                      </span>
                     </td>
-                    <td className="p-2 border border-gray-300 bg-gray-50">{parseInt(meta.peso)}</td>
-                    <td className="p-2 border border-gray-300 font-mono text-gray-500">{meta.tipo_comparacao}</td>
-                    
+
+                    {/* Responsável */}
+                    <td className="p-2 border border-gray-300 text-left text-[11px] text-gray-700">
+                      {meta.responsavel || '-'}
+                    </td>
+
+                    <td className="p-2 border border-gray-300 bg-gray-50">
+                      {parseInt(meta.peso)}
+                    </td>
+                    <td className="p-2 border border-gray-300 font-mono text-gray-500">
+                      {meta.tipo_comparacao}
+                    </td>
+
                     {MESES.map(mes => {
                       const dados = meta.meses[mes.id];
+
+                      const valorRealizado =
+                        dados.realizado === null ||
+                        dados.realizado === '' ||
+                        isNaN(dados.realizado)
+                          ? ''
+                          : dados.realizado;
+
                       return (
-                        <td key={mes.id} className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}>
+                        <td
+                          key={mes.id}
+                          className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
+                        >
                           <div className="flex flex-col h-full justify-between">
-                            {/* Meta Pequena (Alvo) */}
-                            <div className="text-[9px] text-gray-500 text-right px-1 pt-0.5 bg-white/40">
+                            {/* META (Alvo) */}
+                            <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                               {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
                             </div>
-                            {/* Input Principal (Realizado) */}
-                            <input 
+                            {/* Realizado */}
+                            <input
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                               placeholder="-"
-                              defaultValue={dados.realizado}
+                              defaultValue={valorRealizado === '' ? '' : String(valorRealizado)}
                               onBlur={(e) => handleSave(meta.id, mes.id, e.target.value)}
                             />
                           </div>
@@ -222,14 +272,22 @@ const MoovMetas = () => {
                     })}
                   </tr>
                 ))}
-                
-                {/* Rodapé Totalizador (Vermelho - Igual Operação) */}
+
+                {/* Rodapé Totalizador */}
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
-                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">TOTAL SCORE</td>
-                  <td className="p-2 border-r border-red-500 text-center">100</td>
+                  <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                    TOTAL SCORE
+                  </td>
+                  <td className="p-2 border-r border-red-500"></td>
+                  <td className="p-2 border-r border-red-500 text-center">
+                    100
+                  </td>
                   <td className="p-2 border-r border-red-500"></td>
                   {MESES.map(mes => (
-                    <td key={mes.id} className="p-2 text-center border-r border-red-500 text-sm">
+                    <td
+                      key={mes.id}
+                      className="p-2 text-center border-r border-red-500 text-sm"
+                    >
                       {getTotalScore(mes.id)}
                     </td>
                   ))}
@@ -241,9 +299,12 @@ const MoovMetas = () => {
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral 
-            areasContexto={[{ id: 3, nome: 'Moov' }]} // Garante edição da Moov
-            onClose={() => { setShowConfig(false); fetchMetasData(); }} 
+        <ConfiguracaoGeral
+          areasContexto={[{ id: ID_MOOV, nome: 'Moov' }]}
+          onClose={() => {
+            setShowConfig(false);
+            fetchMetasData();
+          }}
         />
       )}
     </div>
