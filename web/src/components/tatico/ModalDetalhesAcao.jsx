@@ -195,7 +195,7 @@ const ModalDetalhesAcao = ({
       "Para excluir a ação, digite a senha de autorização:"
     );
     if (senha === null) return;
-    if (senha !== "Excluir") {
+    if (senha !== "excluir") {
       alert("Senha incorreta. A ação não será excluída.");
       return;
     }
