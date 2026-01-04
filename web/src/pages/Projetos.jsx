@@ -3,11 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 
-const ASANA_PROJECTS_SYNC_URL =
-  "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/clever-endpoint";
+// Não precisamos mais das URLs diretas, o invoke já resolve o endpoint
+// const ASANA_PROJECTS_SYNC_URL =
+//   "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/clever-endpoint";
 
-const ASANA_TASKS_SYNC_URL =
-  "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/bright-processor";
+// const ASANA_TASKS_SYNC_URL =
+//   "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/bright-processor";
 
 const AREAS = [
   { id: 0, label: "Todas as Áreas" },
@@ -59,20 +60,54 @@ export default function Projetos() {
     setLoading(false);
   }
 
+  // NOVO: sincronizar chamando as edge functions via supabase.functions.invoke
   async function sincronizarAsana() {
     try {
       setSyncing(true);
 
-      // 1) Atualiza projetos (com área e permalink)
-      await fetch(ASANA_PROJECTS_SYNC_URL, { method: "POST" });
+      // 1) Atualiza PROJETOS (clever-endpoint)
+      const { data: projData, error: projError } =
+        await supabase.functions.invoke("clever-endpoint", {
+          body: {}, // se sua function não usa body, pode até omitir
+        });
 
-      // 2) Atualiza tarefas
-      await fetch(ASANA_TASKS_SYNC_URL, { method: "POST" });
+      if (projError) {
+        console.error(
+          "Erro ao sincronizar projetos (clever-endpoint):",
+          projError
+        );
+        alert(
+          "Erro ao sincronizar PROJETOS com o Asana. Verifique o console para detalhes."
+        );
+        return;
+      }
+      console.log("Projetos sincronizados:", projData);
+
+      // 2) Atualiza TAREFAS (bright-processor)
+      const { data: taskData, error: taskError } =
+        await supabase.functions.invoke("bright-processor", {
+          body: {},
+        });
+
+      if (taskError) {
+        console.error(
+          "Erro ao sincronizar tarefas (bright-processor):",
+          taskError
+        );
+        alert(
+          "Erro ao sincronizar TAREFAS com o Asana. Verifique o console para detalhes."
+        );
+        return;
+      }
+      console.log("Tarefas sincronizadas:", taskData);
 
       // 3) Recarrega visão consolidada
       await carregarStatus();
     } catch (err) {
-      console.error("Erro ao sincronizar Asana:", err);
+      console.error("Erro inesperado ao sincronizar Asana:", err);
+      alert(
+        "Erro inesperado ao sincronizar com o Asana. Verifique o console para detalhes."
+      );
     } finally {
       setSyncing(false);
     }
