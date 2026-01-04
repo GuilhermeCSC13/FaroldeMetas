@@ -1,7 +1,7 @@
 import React from 'react';
 import { Calendar, Clock, User, Tag, Repeat, AlignLeft } from 'lucide-react';
 
-export default function DetalhesReuniao({ formData, setFormData, editingReuniao }) {
+export default function DetalhesReuniao({ formData, setFormData, editingReuniao, categorias = [] }) {
   const handleChange = (name, value) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
@@ -9,7 +9,7 @@ export default function DetalhesReuniao({ formData, setFormData, editingReuniao 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
       
-      {/* COLUNA ESQUERDA: CONFIGURAÇÕES (5/12) */}
+      {/* COLUNA ESQUERDA: CONFIGURAÇÕES */}
       <div className="lg:col-span-5 space-y-8">
         <section>
           <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-[0.2em] mb-4">Informações Básicas</h3>
@@ -64,22 +64,31 @@ export default function DetalhesReuniao({ formData, setFormData, editingReuniao 
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
                   value={formData.responsavel}
                   onChange={(e) => handleChange('responsavel', e.target.value)}
-                  placeholder="Nome"
+                  placeholder="Responsável"
                 />
               </div>
               <div>
                 <label className="block text-[12px] font-semibold text-slate-700 mb-1.5">Categoria</label>
                 <input
+                  list="categorias-list"
                   className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
                   value={formData.tipo_reuniao}
                   onChange={(e) => handleChange('tipo_reuniao', e.target.value)}
-                  placeholder="Ex: Geral"
+                  placeholder="Selecione..."
                 />
+                <datalist id="categorias-list">
+                  {categorias.map((cat, index) => (
+                    <option key={index} value={cat} />
+                  ))}
+                  <option value="Geral" />
+                  <option value="Tático" />
+                  <option value="Operacional" />
+                </datalist>
               </div>
             </div>
 
             <div className="flex items-center justify-between pt-2">
-              <span className="text-sm font-medium text-slate-600">Cor de exibição</span>
+              <span className="text-[12px] font-semibold text-slate-700">Cor na agenda</span>
               <input
                 type="color"
                 className="w-12 h-8 rounded cursor-pointer bg-transparent border-none"
@@ -90,7 +99,9 @@ export default function DetalhesReuniao({ formData, setFormData, editingReuniao 
 
             {!editingReuniao && (
               <div className="pt-2">
-                <label className="block text-[12px] font-semibold text-slate-700 mb-2">Recorrência</label>
+                <label className="block text-[12px] font-semibold text-slate-700 mb-2 flex items-center gap-2">
+                   <Repeat size={14} /> Recorrência
+                </label>
                 <div className="flex gap-2">
                   {['unica', 'semanal', 'mensal'].map(t => (
                     <button
@@ -113,18 +124,17 @@ export default function DetalhesReuniao({ formData, setFormData, editingReuniao 
         </section>
       </div>
 
-      {/* COLUNA DIREITA: PAUTA (7/12) */}
+      {/* COLUNA DIREITA: PAUTA */}
       <div className="lg:col-span-7 flex flex-col">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-[0.2em] flex items-center gap-2">
             <AlignLeft size={14} /> Pauta Principal do Ritual
           </h3>
-          <span className="text-[10px] text-slate-400 font-medium italic">O conteúdo é salvo automaticamente ao finalizar</span>
         </div>
         
         <textarea
           className="flex-1 w-full min-h-[450px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono"
-          placeholder="Estruture aqui os tópicos da reunião, objetivos e cronograma..."
+          placeholder="Estruture aqui os tópicos da reunião..."
           value={formData.pauta || ''}
           onChange={(e) => handleChange('pauta', e.target.value)}
         />
