@@ -67,7 +67,12 @@ const AdministrativoRotinas = () => {
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
-    if (m === 0) return 0;
+
+    // 👉 AJUSTE 1: aceitar META = 0
+    // Regra: se meta é 0, só pontua quando o realizado também é 0
+    if (m === 0) {
+      return r === 0 ? peso : 0;
+    }
 
     let atingimento = 0;
 
@@ -393,7 +398,8 @@ const AdministrativoRotinas = () => {
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
-                                      row.formato === 'percent' ? 0 : 0
+                                      // 👉 AJUSTE 2: até 2 casas decimais para valores numéricos
+                                      row.formato === 'percent' ? 0 : 2
                                     )
                                   : ''}
                                 {temMeta && row.formato === 'percent' && '%'}
