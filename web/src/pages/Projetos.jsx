@@ -7,7 +7,7 @@ const ASANA_PROJECTS_SYNC_URL =
   "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/clever-endpoint";
 
 const ASANA_TASKS_SYNC_URL =
-  "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/asana-tarefas-sync";
+  "https://zgmxylsmbremaprebifq.supabase.co/functions/v1/bright-processor";
 
 const AREAS = [
   { id: 0, label: "Todas as Áreas" },
