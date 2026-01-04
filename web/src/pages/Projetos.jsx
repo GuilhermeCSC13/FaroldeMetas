@@ -93,6 +93,7 @@ export default function Projetos() {
     return baseFiltrada.filter((d) => d.area_id === areaAtiva);
   }, [baseFiltrada, areaAtiva]);
 
+  // Clique no PROJETO → abre modal com TODAS as tarefas
   async function abrirModalProjeto(row) {
     setProjetoSelecionado(row);
     setModalAberto(true);
@@ -193,7 +194,8 @@ export default function Projetos() {
                   return (
                     <tr
                       key={row.projeto_gid}
-                      className="border-t border-slate-100 hover:bg-slate-50/60"
+                      className="border-t border-slate-100 hover:bg-slate-50/60 cursor-pointer"
+                      onClick={() => abrirModalProjeto(row)} // CLIQUE NO PROJETO → MODAL
                     >
                       <td className="px-3 py-2 text-slate-800">
                         {row.projeto_nome}
@@ -221,12 +223,21 @@ export default function Projetos() {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <button
-                          onClick={() => abrirModalProjeto(row)}
-                          className="px-3 py-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700"
-                        >
-                          Abrir no Asana
-                        </button>
+                        {row.permalink_url ? (
+                          <a
+                            href={row.permalink_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()} // não abre o modal
+                            className="px-3 py-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700"
+                          >
+                            Abrir no Asana
+                          </a>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">
+                            Sem link
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
