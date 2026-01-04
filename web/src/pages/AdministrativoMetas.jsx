@@ -252,11 +252,14 @@ const AdministrativoMetas = () => {
                           ? ''
                           : dados.realizado;
 
+                      // ✅ aceita meta 0 (mostra 0,00)
+                      const temMeta = dados.alvo !== null && dados.alvo !== undefined && !Number.isNaN(dados.alvo);
+
                       return (
                         <td key={mes.id} className={`border p-0 ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
+                              {temMeta ? Number(dados.alvo).toFixed(2) : ''}
                             </div>
 
                             <input
