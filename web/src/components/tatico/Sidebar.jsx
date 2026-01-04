@@ -165,6 +165,20 @@ export default function Sidebar() {
             <FaClipboardList className="text-sm" />
             <span>Banco de Atas</span>
           </NavLink>
+
+          {/* NOVA ABA: Projetos */}
+          <NavLink
+            to="/projetos"
+            className={({ isActive }) =>
+              `${linkBaseClasses} ${
+                isActive ? linkActiveClasses : linkInactiveClasses
+              }`
+            }
+          >
+            <FaTasks className="text-sm" />
+            <span>Projetos</span>
+          </NavLink>
+
           <NavLink
             to="/gestao-acoes"
             className={({ isActive }) =>
