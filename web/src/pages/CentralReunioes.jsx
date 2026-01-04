@@ -8,7 +8,7 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, List, 
-  X, Save, Trash2
+  X, AlignLeft, Save, Trash2
 } from 'lucide-react';
 import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 import DetalhesReuniao from '../components/tatico/DetalhesReuniao';
@@ -21,6 +21,7 @@ export default function CentralReunioes() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
+  const [activeTab, setActiveTab] = useState('detalhes'); 
   
   const [formData, setFormData] = useState({
     titulo: '', 
@@ -29,7 +30,7 @@ export default function CentralReunioes() {
     hora: '09:00', 
     cor: '#3B82F6', 
     responsavel: '',
-    pauta: '',          // continua existindo, mas por enquanto só usada se você quiser preencher em outro lugar
+    pauta: '', 
     recorrencia: 'unica'
   });
 
@@ -51,6 +52,7 @@ export default function CentralReunioes() {
   // --- Helper para ignorar fuso horário (Visual = Banco) ---
   const parseDataLocal = (dataString) => {
     if (!dataString) return new Date();
+    // Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:mm:ss) ignorando o 'Z' ou offset
     return parseISO(dataString.substring(0, 19));
   };
 
@@ -76,6 +78,7 @@ export default function CentralReunioes() {
       pauta: '', 
       recorrencia: 'unica' 
     });
+    setActiveTab('detalhes');
     setIsModalOpen(true);
   };
 
@@ -93,12 +96,14 @@ export default function CentralReunioes() {
       recorrencia: 'unica'
     });
     setEditingReuniao(reuniao);
+    setActiveTab('ata');
     setIsModalOpen(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
+    // grava como string "local" sem .toISOString()
     const dataHoraIso = `${formData.data}T${formData.hora}:00`;
     
     const dados = {
@@ -121,7 +126,42 @@ export default function CentralReunioes() {
     }
 
     setIsModalOpen(false);
+    setEditingReuniao(null);
     fetchReunioes();
+  };
+
+  // --- NOVO: excluir reunião com “senha” ---
+  const handleDelete = async () => {
+    if (!editingReuniao) return;
+
+    const confirmText = window.prompt(
+      'Para excluir esta reunião, digite EXCLUIR e confirme:'
+    );
+
+    if (confirmText !== 'EXCLUIR') {
+      alert('Exclusão cancelada.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('reunioes')
+        .delete()
+        .eq('id', editingReuniao.id);
+
+      if (error) {
+        console.error(error);
+        alert('Erro ao excluir a reunião.');
+        return;
+      }
+
+      setIsModalOpen(false);
+      setEditingReuniao(null);
+      fetchReunioes();
+    } catch (err) {
+      console.error(err);
+      alert('Erro inesperado ao excluir.');
+    }
   };
 
   const monthStart = startOfMonth(currentDate);
@@ -179,6 +219,7 @@ export default function CentralReunioes() {
 
       if (error) throw error;
 
+      // Atualiza localmente
       setReunioes((prev) =>
         prev.map((r) =>
           r.id === draggingReuniao.id ? { ...r, data_hora: novaIso } : r
@@ -533,25 +574,77 @@ export default function CentralReunioes() {
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 {editingReuniao ? 'Editar Reunião' : 'Nova Reunião'}
               </h2>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="p-2 hover:bg-slate-200 rounded-full"
-              >
-                <X size={20} className="text-slate-500" />
-              </button>
+              <div className="flex gap-2">
+                {/* Abas */}
+                <div className="flex bg-slate-200 p-1 rounded-lg mr-4">
+                  <button
+                    onClick={() => setActiveTab('detalhes')}
+                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
+                      activeTab === 'detalhes'
+                        ? 'bg-white shadow text-blue-700'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Detalhes
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('ata')}
+                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
+                      activeTab === 'ata'
+                        ? 'bg-white shadow text-blue-700'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    Ata / Pauta
+                  </button>
+                </div>
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-2 hover:bg-slate-200 rounded-full"
+                >
+                  <X size={20} className="text-slate-500" />
+                </button>
+              </div>
             </div>
 
-            {/* Corpo do Modal (apenas detalhes + pauta principal) */}
+            {/* Corpo do Modal (Scrollável) */}
             <form
               onSubmit={handleSubmit}
-              className="flex-1 overflow-hidden"
+              className="flex-1 flex flex-col md:flex-row overflow-hidden"
             >
-              <div className="h-full overflow-y-auto p-8">
+              {/* COLUNA ESQUERDA: Detalhes (COMPONENTE) */}
+              <div
+                className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${
+                  activeTab === 'ata' ? 'hidden md:block' : ''
+                }`}
+              >
                 <DetalhesReuniao
                   formData={formData}
                   setFormData={setFormData}
                   editingReuniao={editingReuniao}
                 />
+              </div>
+
+              {/* COLUNA DIREITA: ATA / PAUTA COMPLETA */}
+              <div
+                className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${
+                  activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'
+                }`}
+              >
+                <label className="label-form flex items-center gap-2 mb-2">
+                  <AlignLeft size={16} /> Ata da Reunião / Pauta Completa
+                  <span className="text-xs font-normal text-slate-400 ml-auto">
+                    Markdown suportado
+                  </span>
+                </label>
+                <textarea
+                  className="flex-1 w-full bg-white border border-slate-200 rounded-xl p-6 text-slate-700 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500 resize-none shadow-sm"
+                  placeholder="Detalhe aqui a ata completa: tópicos discutidos, decisões, encaminhamentos, responsáveis..."
+                  value={formData.pauta}
+                  onChange={(e) =>
+                    setFormData({ ...formData, pauta: e.target.value })
+                  }
+                ></textarea>
               </div>
             </form>
 
@@ -560,6 +653,7 @@ export default function CentralReunioes() {
               {editingReuniao && (
                 <button
                   type="button"
+                  onClick={handleDelete}
                   className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4"
                 >
                   <Trash2 size={16} /> Excluir
