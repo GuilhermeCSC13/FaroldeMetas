@@ -77,50 +77,67 @@ const MoovMetas = () => {
     }
   };
 
-  // --- LÓGICA DE CÁLCULO BLINDADA ---
+  // --- LÓGICA DE CÁLCULO BLINDADA (igual Administrativo, aceitando meta = 0) ---
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
+    if (
+      meta === null ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
       return { score: 0, faixa: 0, color: 'bg-white' };
     }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
-    if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
+    // Tratamento especial para meta = 0
+    if (m === 0) {
+      let multiplicador = 0;
+      let cor = 'bg-red-200';
 
-    let atingimento = 0;
+      // Menor é melhor: meta 0 → se realizou 0, 100%; se >0, 0%
+      if (tipo === '<=' || tipo === 'menor') {
+        if (r === 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      } else {
+        // Maior é melhor com meta 0 (caso raro): qualquer valor >= 0 conta como batida
+        if (r >= 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      }
 
-    if (tipo === '>=' || tipo === 'maior') {
-      atingimento = r / m;
-    } else {
-      atingimento = 1 + ((m - r) / m);
+      return {
+        score: pesoTotal * multiplicador,
+        multiplicador,
+        color: cor
+      };
     }
+
+    // Caso geral (meta > 0)
+    let atingimento =
+      (tipo === '>=' || tipo === 'maior')
+        ? r / m
+        : 1 + ((m - r) / m);
 
     let multiplicador = 0;
     let cor = 'bg-red-200';
 
-    if (atingimento >= 1.0) {
-      multiplicador = 1.0;
-      cor = 'bg-green-300';
-    } else if (atingimento >= 0.99) {
-      multiplicador = 0.75;
-      cor = 'bg-green-100';
-    } else if (atingimento >= 0.98) {
-      multiplicador = 0.50;
-      cor = 'bg-yellow-100';
-    } else if (atingimento >= 0.97) {
-      multiplicador = 0.25;
-      cor = 'bg-orange-100';
-    } else {
-      multiplicador = 0.0;
-      cor = 'bg-red-200';
-    }
+    if (atingimento >= 1.0) { multiplicador = 1.0; cor = 'bg-green-300'; }
+    else if (atingimento >= 0.99) { multiplicador = 0.75; cor = 'bg-green-100'; }
+    else if (atingimento >= 0.98) { multiplicador = 0.50; cor = 'bg-yellow-100'; }
+    else if (atingimento >= 0.97) { multiplicador = 0.25; cor = 'bg-orange-100'; }
 
-    return {
-      score: pesoTotal * multiplicador,
-      multiplicador,
-      color: cor
-    };
+    return { score: pesoTotal * multiplicador, multiplicador, color: cor };
   };
 
   const handleSave = async (metaId, mesId, valor) => {
@@ -192,7 +209,7 @@ const MoovMetas = () => {
           <div className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-xs border-collapse">
               <thead>
-                {/* Cabeçalho Cinza igual Operação/Administrativo */}
+                {/* Cabeçalho Cinza padrão */}
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
                   <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">
                     Indicador
@@ -255,9 +272,11 @@ const MoovMetas = () => {
                           className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
                         >
                           <div className="flex flex-col h-full justify-between">
-                            {/* META (Alvo) */}
+                            {/* META (Alvo) – mostra 0,00 também */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
+                                : ''}
                             </div>
                             {/* Realizado */}
                             <input
