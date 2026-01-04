@@ -73,17 +73,53 @@ const ManutencaoMetas = () => {
     }
   };
 
-  // LÓGICA DE SCORE BLINDADA
+  // LÓGICA DE SCORE (aceita meta = 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
+    if (
+      meta === null ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
       return { score: 0, faixa: 0, color: 'bg-white' };
     }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
-    if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
+    // Tratamento especial para meta = 0
+    if (m === 0) {
+      let multiplicador = 0;
+      let cor = 'bg-red-200';
 
+      // Menor é melhor: meta 0 → se realizou 0, 100%; se >0, 0%
+      if (tipo === '<=' || tipo === 'menor') {
+        if (r === 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      } else {
+        // Maior é melhor com meta 0 (caso raro): qualquer valor >= 0 conta como batida
+        if (r >= 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      }
+
+      return {
+        score: pesoTotal * multiplicador,
+        multiplicador,
+        color: cor
+      };
+    }
+
+    // Caso geral (meta > 0)
     let atingimento =
       (tipo === '>=' || tipo === 'maior')
         ? r / m
@@ -129,7 +165,7 @@ const ManutencaoMetas = () => {
         { onConflict: 'meta_id, ano, mes' }
       );
 
-    if (error) console.error("Erro ao salvar:", error);
+    if (error) console.error('Erro ao salvar:', error);
   };
 
   const getTotalScore = (mesId) =>
@@ -173,14 +209,12 @@ const ManutencaoMetas = () => {
         ) : (
           <div className="border rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-xs border-collapse">
-
               <thead>
                 <tr className="bg-[#d0e0e3] font-bold text-center">
                   <th className="p-2 sticky left-0 bg-[#d0e0e3] z-10">Indicador</th>
                   <th className="p-2 w-32">Responsável</th>
                   <th className="p-2 w-12">Peso</th>
                   <th className="p-2 w-12">Tipo</th>
-
                   {MESES.map(m => (
                     <th key={m.id} className="p-2">{m.label}</th>
                   ))}
@@ -190,7 +224,6 @@ const ManutencaoMetas = () => {
               <tbody>
                 {metas.map(meta => (
                   <tr key={meta.id} className="hover:bg-gray-50 text-center">
-
                     <td className="p-2 text-left font-semibold sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
                       <span className="block text-[9px] text-gray-400">{meta.unidade}</span>
@@ -219,9 +252,11 @@ const ManutencaoMetas = () => {
                       return (
                         <td key={mes.id} className={`border p-0 ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
-
+                            {/* alvo: agora mostra 0,00 também */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 bg-white/40">
-                              {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
+                                : ''}
                             </div>
 
                             <input
@@ -241,17 +276,15 @@ const ManutencaoMetas = () => {
                   <td className="p-2 sticky left-0 bg-red-600 z-10 text-right pr-4">
                     TOTAL SCORE
                   </td>
-                  <td></td>
+                  <td />
                   <td className="text-center">100</td>
-                  <td></td>
-
+                  <td />
                   {MESES.map(m => (
                     <td key={m.id} className="text-center">
                       {getTotalScore(m.id)}
                     </td>
                   ))}
                 </tr>
-
               </tbody>
             </table>
           </div>
