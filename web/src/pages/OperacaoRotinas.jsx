@@ -44,7 +44,7 @@ const OperacaoRotinas = () => {
     }
   };
 
-  // mesma lógica de score do Farol de Metas
+  // mesma lógica de score do modelo novo (aceita META = 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     const peso = parseFloat(pesoTotal);
     if (
@@ -60,7 +60,11 @@ const OperacaoRotinas = () => {
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
-    if (m === 0) return 0;
+
+    // Regra META = 0 → só pontua se realizado também for 0
+    if (m === 0) {
+      return r === 0 ? peso : 0;
+    }
 
     let atingimento = 0;
 
@@ -72,13 +76,13 @@ const OperacaoRotinas = () => {
 
     let multiplicador = 0;
 
-    if ( atingimento >= 1.0 ) {
+    if (atingimento >= 1.0) {
       multiplicador = 1.0;
-    } else if ( atingimento >= 0.99 ) {
+    } else if (atingimento >= 0.99) {
       multiplicador = 0.75;
-    } else if ( atingimento >= 0.98 ) {
+    } else if (atingimento >= 0.98) {
       multiplicador = 0.5;
-    } else if ( atingimento >= 0.97 ) {
+    } else if (atingimento >= 0.97) {
       multiplicador = 0.25;
     } else {
       multiplicador = 0.0;
@@ -219,8 +223,6 @@ const OperacaoRotinas = () => {
     return total.toFixed(0);
   };
 
-  const isPCO = areaSelecionada == ID_PCO;
-
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
       {/* Header */}
@@ -247,7 +249,7 @@ const OperacaoRotinas = () => {
             </select>
           </div>
 
-          {/* Apenas botão de Configuração (removido "Ir para Metas") */}
+          {/* Apenas botão de Configuração */}
           <button
             onClick={() => setShowConfig(true)}
             className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
@@ -327,7 +329,7 @@ const OperacaoRotinas = () => {
                               {row.indicador}
                             </span>
                             <span className="text-[9px] text-gray-400 uppercase">
-                              {row.tipo_comparacao === '<='
+                              {row.tipo_comparacao === '<=' || row.tipo_comparacao === 'menor'
                                 ? 'Menor é melhor'
                                 : 'Meta mínima'}
                             </span>
@@ -354,14 +356,15 @@ const OperacaoRotinas = () => {
                       {MESES.map(mes => {
                         const dados = row.meses[mes.id];
                         const temMeta =
-                          dados.meta !== null && dados.meta !== undefined;
+                          dados?.meta !== null && dados?.meta !== undefined;
                         const bgStatus = getCellStatus(
-                          dados.realizado,
-                          dados.meta,
+                          dados?.realizado,
+                          dados?.meta,
                           row.tipo_comparacao
                         );
 
                         const valorRealizado =
+                          !dados ||
                           dados.realizado === null ||
                           dados.realizado === '' ||
                           isNaN(dados.realizado)
@@ -374,11 +377,11 @@ const OperacaoRotinas = () => {
                             className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* META (ALVO) - estilo igual Metas */}
+                              {/* META (ALVO) - 0 casas p/ %, 2 p/ demais */}
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
-                                      row.formato === 'percent' ? 0 : 0
+                                      row.formato === 'percent' ? 0 : 2
                                     )
                                   : ''}
                                 {temMeta && row.formato === 'percent' && '%'}
@@ -422,7 +425,7 @@ const OperacaoRotinas = () => {
                     </tr>
                   ))}
 
-                  {/* TOTAL SCORE (igual Metas) */}
+                  {/* TOTAL SCORE */}
                   <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                     <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                       TOTAL SCORE
