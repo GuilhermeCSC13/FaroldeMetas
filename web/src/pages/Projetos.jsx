@@ -38,8 +38,9 @@ export default function Projetos() {
   const [syncing, setSyncing] = useState(false);
   const [areaAtiva, setAreaAtiva] = useState(0);
 
+  const [modalAberto, setModalAberto] = useState(false);
   const [projetoSelecionado, setProjetoSelecionado] = useState(null);
-  const [tarefasAtrasadas, setTarefasAtrasadas] = useState([]);
+  const [tarefasProjeto, setTarefasProjeto] = useState([]);
   const [loadingTarefas, setLoadingTarefas] = useState(false);
 
   async function carregarStatus() {
@@ -81,7 +82,7 @@ export default function Projetos() {
     carregarStatus();
   }, []);
 
-  // Apenas projetos de áreas 1..5 (nada de "Outros")
+  // Apenas projetos de áreas 1..5
   const baseFiltrada = useMemo(
     () => dados.filter((d) => d.area_id && [1, 2, 3, 4, 5].includes(d.area_id)),
     [dados]
@@ -92,29 +93,32 @@ export default function Projetos() {
     return baseFiltrada.filter((d) => d.area_id === areaAtiva);
   }, [baseFiltrada, areaAtiva]);
 
-  async function abrirDetalhesProjeto(row) {
+  async function abrirModalProjeto(row) {
     setProjetoSelecionado(row);
+    setModalAberto(true);
     setLoadingTarefas(true);
-    setTarefasAtrasadas([]);
-
-    const hoje = new Date().toISOString().slice(0, 10);
+    setTarefasProjeto([]);
 
     const { data, error } = await supabase
       .from("asana_tarefas")
-      .select("gid, name, due_on, assignee_name, permalink_url")
+      .select("gid, name, due_on, completed, assignee_name, permalink_url")
       .eq("project_gid", row.projeto_gid)
-      .eq("completed", false)
-      .not("due_on", "is", null)
-      .lt("due_on", hoje)
+      .order("completed", { ascending: true })
       .order("due_on", { ascending: true });
 
     if (error) {
-      console.error("Erro ao carregar tarefas atrasadas:", error);
+      console.error("Erro ao carregar tarefas do projeto:", error);
     } else {
-      setTarefasAtrasadas(data || []);
+      setTarefasProjeto(data || []);
     }
 
     setLoadingTarefas(false);
+  }
+
+  function fecharModal() {
+    setModalAberto(false);
+    setProjetoSelecionado(null);
+    setTarefasProjeto([]);
   }
 
   return (
@@ -143,7 +147,7 @@ export default function Projetos() {
           </button>
         </header>
 
-        {/* Filtro por área (apenas 1..5) */}
+        {/* Filtro por área (somente 1..5) */}
         <div className="flex flex-wrap gap-2">
           {AREAS.map((area) => (
             <button
@@ -179,6 +183,7 @@ export default function Projetos() {
                   <th className="px-3 py-2 text-center">Atrasadas</th>
                   <th className="px-3 py-2 text-center">% Conclusão</th>
                   <th className="px-3 py-2 text-center">Status</th>
+                  <th className="px-3 py-2 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,10 +193,9 @@ export default function Projetos() {
                   return (
                     <tr
                       key={row.projeto_gid}
-                      className="border-t border-slate-100 hover:bg-slate-50/60 cursor-pointer"
-                      onClick={() => abrirDetalhesProjeto(row)}
+                      className="border-t border-slate-100 hover:bg-slate-50/60"
                     >
-                      <td className="px-3 py-2 text-slate-800 underline decoration-dotted">
+                      <td className="px-3 py-2 text-slate-800">
                         {row.projeto_nome}
                       </td>
                       <td className="px-3 py-2 text-slate-600">
@@ -216,6 +220,14 @@ export default function Projetos() {
                           {statusLabel}
                         </span>
                       </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => abrirModalProjeto(row)}
+                          className="px-3 py-1 rounded-full bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700"
+                        >
+                          Abrir no Asana
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -224,71 +236,113 @@ export default function Projetos() {
           </div>
         )}
 
-        {/* Detalhe do projeto selecionado: tarefas atrasadas + links Asana */}
-        {projetoSelecionado && (
-          <div className="mt-4 border border-slate-200 rounded-xl bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h2 className="text-sm font-bold text-slate-800">
-                  {projetoSelecionado.projeto_nome}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Área: {projetoSelecionado.area_nome || "–"}
-                </p>
+        {/* MODAL: Tarefas do projeto selecionado */}
+        {modalAberto && projetoSelecionado && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full mx-4 max-h-[80vh] flex flex-col">
+              {/* Cabeçalho do modal */}
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-800">
+                    {projetoSelecionado.projeto_nome}
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Área: {projetoSelecionado.area_nome || "–"}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {projetoSelecionado.permalink_url && (
+                    <a
+                      href={projetoSelecionado.permalink_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold"
+                    >
+                      Abrir projeto no Asana
+                    </a>
+                  )}
+                  <button
+                    onClick={fecharModal}
+                    className="text-[11px] px-3 py-1 rounded-full bg-red-100 text-red-700 font-semibold"
+                  >
+                    Fechar
+                  </button>
+                </div>
               </div>
 
-              {projetoSelecionado.permalink_url && (
-                <a
-                  href={projetoSelecionado.permalink_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs px-3 py-1 rounded-full bg-blue-600 text-white font-semibold"
-                >
-                  Abrir projeto no Asana
-                </a>
-              )}
+              {/* Corpo do modal */}
+              <div className="flex-1 overflow-y-auto p-4">
+                <h3 className="text-xs font-semibold text-slate-700 mb-2">
+                  Tarefas do projeto
+                </h3>
+
+                {loadingTarefas ? (
+                  <p className="text-xs text-slate-500">
+                    Carregando tarefas...
+                  </p>
+                ) : tarefasProjeto.length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    Nenhuma tarefa encontrada para este projeto.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {tarefasProjeto.map((t) => {
+                      const atrasada =
+                        !t.completed &&
+                        t.due_on &&
+                        new Date(t.due_on) < new Date();
+
+                      return (
+                        <div
+                          key={t.gid}
+                          className="border border-slate-200 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+                        >
+                          <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-slate-800">
+                              {t.name}
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              Vencimento: {t.due_on || "—"} · Status:{" "}
+                              {t.completed ? "Concluída" : "Em aberto"}
+                              {atrasada ? " (atrasada)" : ""}
+                              {t.assignee_name && ` · Resp.: ${t.assignee_name}`}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                t.completed
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : atrasada
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              {t.completed
+                                ? "Concluída"
+                                : atrasada
+                                ? "Atrasada"
+                                : "Em aberto"}
+                            </span>
+                            {t.permalink_url && (
+                              <a
+                                href={t.permalink_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold"
+                              >
+                                Abrir no Asana
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-
-            <h3 className="text-xs font-semibold text-slate-700 mb-2">
-              Tarefas atrasadas
-            </h3>
-
-            {loadingTarefas ? (
-              <p className="text-xs text-slate-500">Carregando tarefas...</p>
-            ) : tarefasAtrasadas.length === 0 ? (
-              <p className="text-xs text-emerald-600">
-                Nenhuma tarefa atrasada neste projeto.
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {tarefasAtrasadas.map((t) => (
-                  <li
-                    key={t.gid}
-                    className="text-xs flex items-center justify-between gap-2 border-b border-slate-100 pb-1"
-                  >
-                    <div className="flex flex-col">
-                      <span className="font-medium text-slate-800">
-                        {t.name}
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        Vencimento: {t.due_on}{" "}
-                        {t.assignee_name && `· Responsável: ${t.assignee_name}`}
-                      </span>
-                    </div>
-                    {t.permalink_url && (
-                      <a
-                        href={t.permalink_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold"
-                      >
-                        Abrir no Asana
-                      </a>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
         )}
       </div>
