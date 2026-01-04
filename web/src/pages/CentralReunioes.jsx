@@ -8,10 +8,13 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, List, 
-  X, AlignLeft, Save, Trash2
+  X, AlignLeft, Save
 } from 'lucide-react';
 import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 import DetalhesReuniao from '../components/tatico/DetalhesReuniao';
+
+// defina aqui a senha de exclusão
+const SENHA_EXCLUSAO = 'KM2026';
 
 export default function CentralReunioes() {
   const [view, setView] = useState('calendar'); // 'calendar' | 'week' | 'list'
@@ -52,7 +55,6 @@ export default function CentralReunioes() {
   // --- Helper para ignorar fuso horário (Visual = Banco) ---
   const parseDataLocal = (dataString) => {
     if (!dataString) return new Date();
-    // Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:mm:ss) ignorando o 'Z' ou offset
     return parseISO(dataString.substring(0, 19));
   };
 
@@ -103,7 +105,6 @@ export default function CentralReunioes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // grava como string "local" sem .toISOString()
     const dataHoraIso = `${formData.data}T${formData.hora}:00`;
     
     const dados = {
@@ -126,6 +127,31 @@ export default function CentralReunioes() {
     }
 
     setIsModalOpen(false);
+    setEditingReuniao(null);
+    fetchReunioes();
+  };
+
+  // exclusão com senha
+  const handleDelete = async (senhaDigitada) => {
+    if (!editingReuniao) return;
+    if (senhaDigitada !== SENHA_EXCLUSAO) {
+      alert('Senha inválida para exclusão.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('reunioes')
+      .delete()
+      .eq('id', editingReuniao.id);
+
+    if (error) {
+      console.error(error);
+      alert('Erro ao excluir reunião.');
+      return;
+    }
+
+    setIsModalOpen(false);
+    setEditingReuniao(null);
     fetchReunioes();
   };
 
@@ -184,7 +210,6 @@ export default function CentralReunioes() {
 
       if (error) throw error;
 
-      // Atualiza localmente
       setReunioes((prev) =>
         prev.map((r) =>
           r.id === draggingReuniao.id ? { ...r, data_hora: novaIso } : r
@@ -577,20 +602,15 @@ export default function CentralReunioes() {
               onSubmit={handleSubmit}
               className="flex-1 flex flex-col md:flex-row overflow-hidden"
             >
-              {/* COLUNA ESQUERDA: Detalhes (AGORA COMPONENTE) */}
-              <div
-                className={`flex-1 p-8 overflow-y-auto border-r border-slate-100 ${
-                  activeTab === 'ata' ? 'hidden md:block' : ''
-                }`}
-              >
-                <DetalhesReuniao
-                  formData={formData}
-                  setFormData={setFormData}
-                  editingReuniao={editingReuniao}
-                />
-              </div>
+              {/* COLUNA ESQUERDA: Detalhes */}
+              <DetalhesReuniao
+                formData={formData}
+                setFormData={setFormData}
+                editingReuniao={editingReuniao}
+                onDelete={handleDelete}
+              />
 
-              {/* COLUNA DIREITA: ATA / PAUTA */}
+              {/* COLUNA DIREITA: Ata / Pauta */}
               <div
                 className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${
                   activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'
@@ -615,22 +635,21 @@ export default function CentralReunioes() {
 
             {/* Footer Ações */}
             <div className="bg-white p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-              {editingReuniao && (
-                <button
-                  type="button"
-                  className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4"
-                >
-                  <Trash2 size={16} /> Excluir
-                </button>
-              )}
               <button
+                type="button"
                 onClick={() => setIsModalOpen(false)}
                 className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleSubmit}
+                type="submit"
+                form="__ignored" // não é necessário, pois usamos o form pai
+                className="hidden"
+              />
+              <button
+                type="submit"
+                form="" // apenas para deixar claro que é do form pai
                 className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2"
               >
                 <Save size={18} /> Salvar Reunião
