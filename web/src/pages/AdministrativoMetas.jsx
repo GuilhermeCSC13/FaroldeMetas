@@ -104,19 +104,57 @@ const AdministrativoMetas = () => {
     }
   };
 
-  // LÓGICA DE SCORE BLINDADA
+  // LÓGICA DE SCORE (agora aceita meta = 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado)))
+    if (
+      meta === null ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
       return { score: 0, faixa: 0, color: 'bg-white' };
+    }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
-    if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
+    // Tratamento especial para meta = 0
+    if (m === 0) {
+      let multiplicador = 0;
+      let cor = 'bg-red-200';
 
-    let atingimento = tipo === '>=' || tipo === 'maior'
-      ? r / m
-      : 1 + ((m - r) / m);
+      // Menor é melhor: meta 0 => se realizou 0, 100%; se >0, 0%
+      if (tipo === '<=' || tipo === 'menor') {
+        if (r === 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      } else {
+        // Maior é melhor com meta 0 (caso raro): qualquer valor >= 0 conta como meta batida
+        if (r >= 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      }
+
+      return {
+        score: pesoTotal * multiplicador,
+        multiplicador,
+        color: cor
+      };
+    }
+
+    // Caso geral (meta > 0)
+    let atingimento =
+      tipo === '>=' || tipo === 'maior'
+        ? r / m
+        : 1 + ((m - r) / m);
 
     let multiplicador = 0;
     let cor = 'bg-red-200';
@@ -147,12 +185,15 @@ const AdministrativoMetas = () => {
 
     const { error } = await supabase
       .from('resultados_farol')
-      .upsert({
-        meta_id: metaId,
-        ano: 2026,
-        mes: mesId,
-        valor_realizado: valorNum
-      }, { onConflict: 'meta_id, ano, mes' });
+      .upsert(
+        {
+          meta_id: metaId,
+          ano: 2026,
+          mes: mesId,
+          valor_realizado: valorNum
+        },
+        { onConflict: 'meta_id, ano, mes' }
+      );
 
     if (error) console.error("Erro ao salvar:", error);
   };
@@ -248,18 +289,19 @@ const AdministrativoMetas = () => {
                       const dados = meta.meses[mes.id];
 
                       const valorRealizado =
-                        dados.realizado === '' || dados.realizado === null || isNaN(dados.realizado)
+                        dados.realizado === '' ||
+                        dados.realizado === null ||
+                        isNaN(dados.realizado)
                           ? ''
                           : dados.realizado;
-
-                      // ✅ aceita meta 0 (mostra 0,00)
-                      const temMeta = dados.alvo !== null && dados.alvo !== undefined && !Number.isNaN(dados.alvo);
 
                       return (
                         <td key={mes.id} className={`border p-0 ${dados.color}`}>
                           <div className="flex flex-col h-full justify-between">
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {temMeta ? Number(dados.alvo).toFixed(2) : ''}
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
+                                : ''}
                             </div>
 
                             <input
