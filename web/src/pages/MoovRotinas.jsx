@@ -43,7 +43,7 @@ const MoovRotinas = () => {
     }
   };
 
-  // mesma lógica de score do Farol de Metas
+  // mesma lógica de score do modelo novo (aceita META = 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     const peso = parseFloat(pesoTotal);
     if (
@@ -59,7 +59,11 @@ const MoovRotinas = () => {
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
-    if (m === 0) return 0;
+
+    // Regra para META = 0 → só pontua se realizado também for 0
+    if (m === 0) {
+      return r === 0 ? peso : 0;
+    }
 
     let atingimento = 0;
 
@@ -73,11 +77,11 @@ const MoovRotinas = () => {
 
     if (atingimento >= 1.0) {
       multiplicador = 1.0;
-    } else if ( atingimento >= 0.99 ) {
+    } else if (atingimento >= 0.99) {
       multiplicador = 0.75;
-    } else if ( atingimento >= 0.98 ) {
+    } else if (atingimento >= 0.98) {
       multiplicador = 0.5;
-    } else if ( atingimento >= 0.97 ) {
+    } else if (atingimento >= 0.97) {
       multiplicador = 0.25;
     } else {
       multiplicador = 0.0;
@@ -217,8 +221,6 @@ const MoovRotinas = () => {
     );
     return total.toFixed(0);
   };
-
-  const isMoov = areaSelecionada == ID_MOOV;
 
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
@@ -374,11 +376,11 @@ const MoovRotinas = () => {
                             className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* META (ALVO) - estilo igual Metas */}
+                              {/* META (ALVO) - até 2 casas (0 para %) */}
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
-                                      row.formato === 'percent' ? 0 : 0
+                                      row.formato === 'percent' ? 0 : 2
                                     )
                                   : ''}
                                 {temMeta && row.formato === 'percent' && '%'}
@@ -422,7 +424,7 @@ const MoovRotinas = () => {
                     </tr>
                   ))}
 
-                  {/* TOTAL SCORE (igual Metas) */}
+                  {/* TOTAL SCORE (igual modelo) */}
                   <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                     <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                       TOTAL SCORE
