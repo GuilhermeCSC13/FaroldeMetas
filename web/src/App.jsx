@@ -24,6 +24,9 @@ import Copiloto from "./pages/Copiloto";
 // Configurações
 import Configuracoes from "./pages/Configuracoes";
 
+// Projetos (NOVO)
+import Projetos from "./pages/Projetos";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -38,7 +41,7 @@ export default function App() {
         <Route path="/manutencao" element={<Manutencao />} />
 
         {/* (opcional) compatibilidade com rotas antigas */}
-        {/* 
+        {/*
         <Route path="/planejamento/financeiro" element={<Administrativo />} />
         <Route path="/planejamento/pessoas" element={<Administrativo />} />
         */}
@@ -47,6 +50,9 @@ export default function App() {
         <Route path="/central-reunioes" element={<CentralReunioes />} />
         <Route path="/central-atas" element={<CentralAtas />} />
         <Route path="/gestao-acoes" element={<GestaoAcoes />} />
+
+        {/* Projetos (NOVO) */}
+        <Route path="/projetos" element={<Projetos />} />
 
         {/* Rotas legado */}
         <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
