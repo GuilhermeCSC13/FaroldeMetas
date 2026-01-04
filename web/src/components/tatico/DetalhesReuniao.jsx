@@ -1,100 +1,101 @@
-// src/components/tatico/DetalhesReuniao.jsx
-import React from 'react';
-import { Repeat, User, AlignLeft } from 'lucide-react';
+import { Repeat, User, Tag, Calendar, Clock } from "lucide-react";
 
-/**
- * Componente de detalhes da reunião (lado esquerdo do modal).
- *
- * Props esperadas:
- * - formData: {
- *     titulo, tipo_reuniao, data, hora, cor,
- *     responsavel, pauta, recorrencia
- *   }
- * - setFormData: função do useState para atualizar formData
- * - editingReuniao: objeto da reunião em edição (ou null para nova)
- */
-const DetalhesReuniao = ({ formData, setFormData, editingReuniao }) => {
+export default function DetalhesReuniao({
+  formData,
+  setFormData,
+  editingReuniao,
+  onDelete,
+}) {
   return (
-    <div className="space-y-6 max-w-xl mx-auto">
-      {/* Header interno + título */}
-      <div>
-        <p className="text-[11px] font-bold tracking-wide text-slate-400 uppercase mb-1">
-          Detalhes da reunião
-        </p>
+    <div className="flex-1 p-8 overflow-y-auto border-r border-slate-200">
+
+      {/* TÍTULO SEÇÃO */}
+      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+        Detalhes da Reunião
+      </p>
+
+      {/* TÍTULO REUNIÃO */}
+      <div className="mb-6">
         <input
           required
-          className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-lg font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
+          className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-lg font-semibold text-slate-800 shadow-sm focus:border-blue-600 focus:ring-2 focus:ring-blue-200 outline-none transition-all"
+          placeholder="Ex: Reunião Mensal de Resultados"
           value={formData.titulo}
           onChange={(e) =>
-            setFormData((prev) => ({ ...prev, titulo: e.target.value }))
+            setFormData({ ...formData, titulo: e.target.value })
           }
-          placeholder="Ex: Reunião Mensal de Resultados"
         />
-        <p className="mt-1 text-xs text-slate-400">
-          Defina um título claro que identifique a pauta principal da reunião.
+
+        <p className="text-xs text-slate-500 mt-1">
+          Defina um título claro que identifique o propósito da reunião.
         </p>
       </div>
 
-      {/* Card de informações principais */}
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-        {/* Data / Hora */}
-        <div className="grid grid-cols-2 gap-4">
+      {/* CARD PRINCIPAL DE INFORMAÇÕES */}
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm mb-6">
+
+        {/* LINHA 1 — DATA / HORA */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="label-form">Data</label>
+            <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
+              <Calendar size={14} /> Data
+            </label>
             <input
               type="date"
               required
-              className="input-form"
+              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400"
               value={formData.data}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, data: e.target.value }))
+                setFormData({ ...formData, data: e.target.value })
               }
             />
           </div>
+
           <div>
-            <label className="label-form">Hora</label>
+            <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
+              <Clock size={14} /> Hora
+            </label>
             <input
               type="time"
               required
-              className="input-form"
+              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400"
               value={formData.hora}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, hora: e.target.value }))
+                setFormData({ ...formData, hora: e.target.value })
               }
             />
           </div>
         </div>
 
-        {/* Responsável / Tipo */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* LINHA 2 — RESPONSÁVEL / TIPO */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="label-form">Responsável (Organizador)</label>
-            <div className="relative">
-              <User className="absolute left-3 top-3 text-slate-400" size={18} />
-              <input
-                className="input-form pl-10"
-                value={formData.responsavel}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, responsavel: e.target.value }))
-                }
-                placeholder="Quem está liderando?"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="label-form">Tipo / Categoria</label>
+            <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+              <User size={14} /> Responsável (Organizador)
+            </label>
             <input
-              className="input-form"
+              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400"
+              placeholder="Quem está liderando?"
+              value={formData.responsavel}
+              onChange={(e) =>
+                setFormData({ ...formData, responsavel: e.target.value })
+              }
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+              <Tag size={14} /> Tipo / Categoria
+            </label>
+            <input
+              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400"
               value={formData.tipo_reuniao}
               onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  tipo_reuniao: e.target.value,
-                }))
+                setFormData({ ...formData, tipo_reuniao: e.target.value })
               }
-              list="tipos-reuniao"
+              list="tipos"
             />
-            <datalist id="tipos-reuniao">
+            <datalist id="tipos">
               <option value="Operacional" />
               <option value="Estratégica" />
               <option value="Feedback" />
@@ -103,90 +104,99 @@ const DetalhesReuniao = ({ formData, setFormData, editingReuniao }) => {
           </div>
         </div>
 
-        {/* Recorrência / Cor */}
-        <div className="grid grid-cols-2 gap-4 items-start">
+        {/* LINHA 3 — RECORRÊNCIA + COR */}
+        <div className="grid grid-cols-2 gap-6 items-start">
+          
+          {/* RECORRÊNCIA */}
+          {!editingReuniao && (
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                <Repeat size={14} /> Recorrência
+              </label>
+
+              <div className="flex gap-2 mt-1">
+                {["unica", "semanal", "mensal"].map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() =>
+                      setFormData({ ...formData, recorrencia: t })
+                    }
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg uppercase border transition-all ${
+                      formData.recorrencia === t
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-slate-600 border-slate-300"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* COR */}
           <div>
-            {!editingReuniao && (
-              <>
-                <label className="label-form flex items-center gap-2">
-                  <Repeat size={14} />
-                  Recorrência
-                </label>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {['unica', 'semanal', 'mensal'].map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() =>
-                        setFormData((prev) => ({ ...prev, recorrencia: t }))
-                      }
-                      className={`px-3 py-1 text-[11px] font-bold rounded-full uppercase tracking-wide ${
-                        formData.recorrencia === t
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'bg-white border border-slate-300 text-slate-600'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {editingReuniao && (
-              <>
-                <label className="label-form">Recorrência</label>
-                <p className="text-xs text-slate-400">
-                  A lógica de recorrência é aplicada na gravação da série.
-                </p>
-              </>
-            )}
-          </div>
-          <div>
-            <label className="label-form">Cor na agenda</label>
-            <div className="flex items-center gap-3 h-11">
+            <label className="text-xs font-bold text-slate-500 uppercase mb-1">
+              Cor na Agenda
+            </label>
+
+            <div className="flex items-center gap-3">
               <input
                 type="color"
-                className="w-10 h-10 rounded border-none cursor-pointer"
+                className="w-10 h-10 rounded-lg border shadow-sm cursor-pointer"
                 value={formData.cor}
                 onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, cor: e.target.value }))
+                  setFormData({ ...formData, cor: e.target.value })
                 }
               />
-              <span className="text-xs text-slate-400">
-                A cor será usada nas visões de calendário e lista.
+              <span className="text-xs text-slate-500">
+                A cor será usada no calendário e listas.
               </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Pauta principal fixa */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <AlignLeft size={16} className="text-slate-500" />
-            <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-              Pauta principal desta reunião
-            </span>
-          </div>
-          <span className="text-[10px] text-slate-400">
-            Resumo executivo em 1–3 linhas
-          </span>
-        </div>
+      {/* PAUTA PRINCIPAL */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <p className="text-xs font-bold text-slate-500 uppercase mb-2">
+          Pauta Principal desta Reunião
+        </p>
+
         <textarea
-          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none min-h-[64px]"
-          placeholder="Ex: Revisar indicadores DBO, validar plano de ação de KM/L e tratar pendências de segurança."
+          rows={3}
+          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400"
+          placeholder="Resumo executivo em 1–3 linhas..."
           value={formData.pauta}
           onChange={(e) =>
-            setFormData((prev) => ({ ...prev, pauta: e.target.value }))
+            setFormData({ ...formData, pauta: e.target.value })
           }
         />
-        <p className="mt-1 text-[11px] text-slate-400">
-          Este campo será utilizado como resumo em listas e na visão semanal.
+
+        <p className="text-xs text-slate-500 mt-2">
+          Esse resumo será exibido na lista e na visão semanal.
         </p>
       </div>
+
+      {/* BOTÃO EXCLUIR — COM SENHA */}
+      {editingReuniao && (
+        <div className="mt-6">
+          <button
+            className="text-red-600 hover:text-red-800 text-sm font-bold px-3 py-2 border border-red-300 rounded-lg"
+            onClick={async () => {
+              const senha = prompt("Digite a senha para excluir:");
+
+              if (!senha) return;
+
+              onDelete(senha);
+            }}
+          >
+            Excluir reunião
+          </button>
+        </div>
+      )}
+
     </div>
   );
-};
-
-export default DetalhesReuniao;
+}
