@@ -8,13 +8,10 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, List, 
-  X, AlignLeft, Save
+  X, Save, Trash2
 } from 'lucide-react';
 import { salvarReuniao, atualizarReuniao } from '../services/agendaService';
 import DetalhesReuniao from '../components/tatico/DetalhesReuniao';
-
-// defina aqui a senha de exclusão
-const SENHA_EXCLUSAO = 'KM2026';
 
 export default function CentralReunioes() {
   const [view, setView] = useState('calendar'); // 'calendar' | 'week' | 'list'
@@ -24,7 +21,6 @@ export default function CentralReunioes() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
-  const [activeTab, setActiveTab] = useState('detalhes'); 
   
   const [formData, setFormData] = useState({
     titulo: '', 
@@ -33,7 +29,7 @@ export default function CentralReunioes() {
     hora: '09:00', 
     cor: '#3B82F6', 
     responsavel: '',
-    pauta: '', 
+    pauta: '',          // continua existindo, mas por enquanto só usada se você quiser preencher em outro lugar
     recorrencia: 'unica'
   });
 
@@ -80,7 +76,6 @@ export default function CentralReunioes() {
       pauta: '', 
       recorrencia: 'unica' 
     });
-    setActiveTab('detalhes');
     setIsModalOpen(true);
   };
 
@@ -98,7 +93,6 @@ export default function CentralReunioes() {
       recorrencia: 'unica'
     });
     setEditingReuniao(reuniao);
-    setActiveTab('ata');
     setIsModalOpen(true);
   };
 
@@ -127,31 +121,6 @@ export default function CentralReunioes() {
     }
 
     setIsModalOpen(false);
-    setEditingReuniao(null);
-    fetchReunioes();
-  };
-
-  // exclusão com senha
-  const handleDelete = async (senhaDigitada) => {
-    if (!editingReuniao) return;
-    if (senhaDigitada !== SENHA_EXCLUSAO) {
-      alert('Senha inválida para exclusão.');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('reunioes')
-      .delete()
-      .eq('id', editingReuniao.id);
-
-    if (error) {
-      console.error(error);
-      alert('Erro ao excluir reunião.');
-      return;
-    }
-
-    setIsModalOpen(false);
-    setEditingReuniao(null);
     fetchReunioes();
   };
 
@@ -564,92 +533,46 @@ export default function CentralReunioes() {
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 {editingReuniao ? 'Editar Reunião' : 'Nova Reunião'}
               </h2>
-              <div className="flex gap-2">
-                {/* Abas */}
-                <div className="flex bg-slate-200 p-1 rounded-lg mr-4">
-                  <button
-                    onClick={() => setActiveTab('detalhes')}
-                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
-                      activeTab === 'detalhes'
-                        ? 'bg-white shadow text-blue-700'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    Detalhes
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('ata')}
-                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${
-                      activeTab === 'ata'
-                        ? 'bg-white shadow text-blue-700'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    Ata / Pauta
-                  </button>
-                </div>
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-2 hover:bg-slate-200 rounded-full"
-                >
-                  <X size={20} className="text-slate-500" />
-                </button>
-              </div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-2 hover:bg-slate-200 rounded-full"
+              >
+                <X size={20} className="text-slate-500" />
+              </button>
             </div>
 
-            {/* Corpo do Modal (Scrollável) */}
+            {/* Corpo do Modal (apenas detalhes + pauta principal) */}
             <form
               onSubmit={handleSubmit}
-              className="flex-1 flex flex-col md:flex-row overflow-hidden"
+              className="flex-1 overflow-hidden"
             >
-              {/* COLUNA ESQUERDA: Detalhes */}
-              <DetalhesReuniao
-                formData={formData}
-                setFormData={setFormData}
-                editingReuniao={editingReuniao}
-                onDelete={handleDelete}
-              />
-
-              {/* COLUNA DIREITA: Ata / Pauta */}
-              <div
-                className={`flex-1 bg-slate-50/50 p-8 flex flex-col ${
-                  activeTab === 'detalhes' ? 'hidden md:flex' : 'flex'
-                }`}
-              >
-                <label className="label-form flex items-center gap-2 mb-2">
-                  <AlignLeft size={16} /> Ata da Reunião / Pauta Completa
-                  <span className="text-xs font-normal text-slate-400 ml-auto">
-                    Markdown suportado
-                  </span>
-                </label>
-                <textarea
-                  className="flex-1 w-full bg-white border border-slate-200 rounded-xl p-6 text-slate-700 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500 resize-none shadow-sm"
-                  placeholder="Detalhe aqui a ata completa: tópicos discutidos, decisões, encaminhamentos, responsáveis..."
-                  value={formData.pauta}
-                  onChange={(e) =>
-                    setFormData({ ...formData, pauta: e.target.value })
-                  }
-                ></textarea>
+              <div className="h-full overflow-y-auto p-8">
+                <DetalhesReuniao
+                  formData={formData}
+                  setFormData={setFormData}
+                  editingReuniao={editingReuniao}
+                />
               </div>
             </form>
 
             {/* Footer Ações */}
             <div className="bg-white p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+              {editingReuniao && (
+                <button
+                  type="button"
+                  className="mr-auto text-red-500 hover:text-red-700 text-sm font-bold flex items-center gap-2 px-4"
+                >
+                  <Trash2 size={16} /> Excluir
+                </button>
+              )}
               <button
-                type="button"
                 onClick={() => setIsModalOpen(false)}
                 className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg"
               >
                 Cancelar
               </button>
               <button
-                type="submit"
-                form="__ignored" // não é necessário, pois usamos o form pai
-                className="hidden"
-              />
-              <button
-                type="submit"
-                form="" // apenas para deixar claro que é do form pai
+                onClick={handleSubmit}
                 className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2"
               >
                 <Save size={18} /> Salvar Reunião
