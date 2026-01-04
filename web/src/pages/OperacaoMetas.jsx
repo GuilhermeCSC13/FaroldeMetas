@@ -98,7 +98,7 @@ const OperacaoMetas = () => {
           }
 
           row.meses[mes.id] = {
-            alvo: alvo,
+            alvo,
             realizado: real,
             ...calculateScore(alvo, real, m.tipo_comparacao, parseFloat(m.peso))
           };
@@ -114,17 +114,53 @@ const OperacaoMetas = () => {
     }
   };
 
-  // --- LÓGICA DE CÁLCULO BLINDADA (SEM NaN) ---
+  // --- LÓGICA DE CÁLCULO BLINDADA (aceita meta = 0) ---
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    if (meta === null || realizado === '' || realizado === null || isNaN(parseFloat(realizado))) {
+    if (
+      meta === null ||
+      realizado === '' ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
       return { score: 0, faixa: 0, color: 'bg-white' };
     }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
-    if (m === 0) return { score: 0, faixa: 0, color: 'bg-white' };
+    // Tratamento especial para meta = 0
+    if (m === 0) {
+      let multiplicador = 0;
+      let cor = 'bg-red-200';
 
+      // Menor é melhor: meta 0 → se realizou 0, 100%; se >0, 0%
+      if (tipo === '<=' || tipo === 'menor') {
+        if (r === 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      } else {
+        // Maior é melhor com meta 0 (caso raro): qualquer valor >= 0 conta como batida
+        if (r >= 0) {
+          multiplicador = 1.0;
+          cor = 'bg-green-300';
+        } else {
+          multiplicador = 0.0;
+          cor = 'bg-red-200';
+        }
+      }
+
+      return {
+        score: pesoTotal * multiplicador,
+        multiplicador,
+        color: cor
+      };
+    }
+
+    // Caso geral (meta > 0)
     let atingimento = 0;
 
     if (tipo === '>=' || tipo === 'maior') {
@@ -288,9 +324,11 @@ const OperacaoMetas = () => {
                           className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
                         >
                           <div className="flex flex-col h-full justify-between">
-                            {/* META (ALVO) */}
+                            {/* META (ALVO) – mostra 0,00 também */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {dados.alvo ? Number(dados.alvo).toFixed(2) : ''}
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
+                                : ''}
                             </div>
                             <input 
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
