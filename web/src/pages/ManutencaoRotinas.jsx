@@ -43,7 +43,7 @@ const ManutencaoRotinas = () => {
     }
   };
 
-  // mesma lógica de score do Farol de Metas / Operação Rotinas
+  // mesma lógica de score do modelo AdministrativoRotinas (aceita META = 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal) => {
     const peso = parseFloat(pesoTotal);
 
@@ -60,7 +60,12 @@ const ManutencaoRotinas = () => {
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
-    if (m === 0) return 0;
+
+    // Aceitar META = 0
+    // Regra: se meta = 0, só pontua quando realizado também é 0
+    if (m === 0) {
+      return r === 0 ? peso : 0;
+    }
 
     let atingimento = 0;
 
@@ -220,8 +225,6 @@ const ManutencaoRotinas = () => {
     return total.toFixed(0);
   };
 
-  const isManutencao = areaSelecionada == ID_MANUTENCAO;
-
   return (
     <div className="flex flex-col h-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative font-sans">
       {/* Header */}
@@ -376,11 +379,11 @@ const ManutencaoRotinas = () => {
                             className={`border border-gray-300 p-0 align-middle ${bgStatus}`}
                           >
                             <div className="flex flex-col h-full min-h-[64px] justify-between">
-                              {/* META (ALVO) - estilo igual Metas */}
+                              {/* META (ALVO) - até 2 casas (0 para %) */}
                               <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
                                 {temMeta
                                   ? Number(dados.meta).toFixed(
-                                      row.formato === 'percent' ? 0 : 0
+                                      row.formato === 'percent' ? 0 : 2
                                     )
                                   : ''}
                                 {temMeta && row.formato === 'percent' && '%'}
@@ -424,7 +427,7 @@ const ManutencaoRotinas = () => {
                     </tr>
                   ))}
 
-                  {/* TOTAL SCORE (igual modelo) */}
+                  {/* TOTAL SCORE */}
                   <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                     <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                       TOTAL SCORE
