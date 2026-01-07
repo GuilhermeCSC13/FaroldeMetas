@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { 
-  Square, Cpu, Monitor, Loader2
-} from 'lucide-react';
+import { Square, Cpu, Monitor, Loader2, AlertCircle } from 'lucide-react';
 
+// VARIÁVEIS GLOBAIS - Proteção total contra re-render do React
 let globalRecorder = null;
 let globalChunks = [];
-let globalReuniao = null;
+let globalStream = null;
 let globalStartTime = null;
 
 const Copiloto = () => {
@@ -17,20 +16,14 @@ const Copiloto = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
-  const [acoesCriadasAgora, setAcoesCriadasAgora] = useState([]);
-  const [novaAcao, setNovaAcao] = useState({ descricao: '', responsavel: '' });
 
-  const mediaRecorderRef = useRef(null);
-  const streamRef = useRef(null);
   const timerIntervalRef = useRef(null);
 
   useEffect(() => {
     fetchReunioesPorData();
-    // Recupera estado se o recorder global estiver ativo
-    if (globalRecorder?.state === 'recording') {
+    // Recuperação de desastre: se o globalRecorder existe, sincroniza o estado
+    if (globalRecorder && globalRecorder.state === 'recording') {
       setIsRecording(true);
-      setReuniaoSelecionada(globalReuniao);
-      setTimer(Math.floor((Date.now() - globalStartTime) / 1000));
       iniciarTimerVisual();
     }
     return () => clearInterval(timerIntervalRef.current);
@@ -45,8 +38,11 @@ const Copiloto = () => {
   };
 
   const iniciarTimerVisual = () => {
+    clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
-      setTimer(Math.floor((Date.now() - (globalStartTime || Date.now())) / 1000));
+      if (globalStartTime) {
+        setTimer(Math.floor((Date.now() - globalStartTime) / 1000));
+      }
     }, 1000);
   };
 
@@ -54,18 +50,24 @@ const Copiloto = () => {
     if (!reuniaoSelecionada) return alert("Selecione uma reunião.");
     
     try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      // 1. Captura com tratamento de erro específico
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: { frameRate: 20 }, 
+        audio: true 
+      });
+      
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+      // 2. Mixagem Robusta
       const audioCtx = new AudioContext();
       const dest = audioCtx.createMediaStreamDestination();
       
-      // Conecta microfone
-      audioCtx.createMediaStreamSource(micStream).connect(dest);
+      const micSource = audioCtx.createMediaStreamSource(micStream);
+      micSource.connect(dest);
 
-      // CORREÇÃO DO ERRO: Só conecta áudio da tela se ele existir
       if (screenStream.getAudioTracks().length > 0) {
-        audioCtx.createMediaStreamSource(screenStream).connect(dest);
+        const screenAudioSource = audioCtx.createMediaStreamSource(screenStream);
+        screenAudioSource.connect(dest);
       }
 
       const finalStream = new MediaStream([
@@ -73,58 +75,87 @@ const Copiloto = () => {
         ...dest.stream.getAudioTracks()
       ]);
 
-      streamRef.current = finalStream;
-      const recorder = new MediaRecorder(finalStream, { mimeType: 'video/webm' });
+      // 3. Configuração do Gravador
+      const recorder = new MediaRecorder(finalStream, { mimeType: 'video/webm;codecs=vp8,opus' });
       
       globalChunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) globalChunks.push(e.data); };
-      
-      // Quando parar, executa o salvamento
-      recorder.onstop = salvarDadosReuniao;
-      
-      recorder.start(5000); 
+      globalStream = finalStream;
       globalRecorder = recorder;
-      globalReuniao = reuniaoSelecionada;
       globalStartTime = Date.now();
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          globalChunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => salvarGravacaoNoBanco();
+
+      // Inicia gravando em fatias de 5s (Proteção contra perda)
+      recorder.start(5000); 
 
       setIsRecording(true);
       iniciarTimerVisual();
-
+      
       await supabase.from('reunioes').update({ status: 'Em Andamento' }).eq('id', reuniaoSelecionada.id);
+
     } catch (err) {
-      alert("Erro ao iniciar: Certifique-se de compartilhar o ÁUDIO na janela de seleção da tela.");
+      console.error("Falha no Start:", err);
+      alert("Erro ao iniciar: Verifique se você permitiu TELA e MICROFONE.");
     }
   };
 
   const stopRecording = () => {
-    if (globalRecorder) {
+    console.log("Comando STOP disparado");
+    
+    // 1. Para o gravador (dispara o onstop)
+    if (globalRecorder && globalRecorder.state !== 'inactive') {
       globalRecorder.stop();
-      streamRef.current?.getTracks().forEach(t => t.stop());
     }
+
+    // 2. Mata todos os tracks (Isso remove o ícone de gravação do navegador)
+    if (globalStream) {
+      globalStream.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
+    }
+
+    // 3. Limpa estados visuais
     setIsRecording(false);
     clearInterval(timerIntervalRef.current);
+    globalRecorder = null;
+    globalStream = null;
   };
 
-  const salvarDadosReuniao = async () => {
+  const salvarGravacaoNoBanco = async () => {
     setIsProcessing(true);
-    try {
-      // 1. Atualiza status para Finalizado
-      await supabase.from('reunioes')
-        .update({ status: 'Finalizada', duracao: timer })
-        .eq('id', globalReuniao.id);
+    console.log("Salvando dados finais...");
 
-      // 2. Aqui entraria o upload para o Drive/Storage se necessário
-      console.log("Reunião salva com sucesso.");
-      
-      // Limpa globais
-      globalRecorder = null;
-      globalReuniao = null;
-      globalStartTime = null;
-    } catch (error) {
-      console.error("Erro ao salvar:", error);
+    try {
+      const finalBlob = new Blob(globalChunks, { type: 'video/webm' });
+      const duracaoFinal = timer;
+
+      // Atualiza Supabase
+      const { error } = await supabase.from('reunioes')
+        .update({ 
+          status: 'Realizada', 
+          duracao_segundos: duracaoFinal,
+          horario_fim: new Date().toISOString()
+        })
+        .eq('id', reuniaoSelecionada.id);
+
+      if (error) throw error;
+
+      alert("Reunião finalizada e salva com sucesso!");
+      fetchReunioesPorData();
+    } catch (err) {
+      console.error("Erro ao salvar no banco:", err);
+      alert("A gravação parou, mas houve erro ao atualizar o banco. O vídeo ainda está na memória.");
     } finally {
       setIsProcessing(false);
-      fetchReunioesPorData();
+      globalChunks = [];
+      globalStartTime = null;
     }
   };
 
@@ -132,52 +163,88 @@ const Copiloto = () => {
 
   return (
     <Layout>
-      <div className="h-screen bg-[#0f172a] text-white flex overflow-hidden">
-        {/* COLUNA ESQUERDA */}
-        <div className="w-8/12 flex flex-col p-6 border-r border-slate-800">
-          <header className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold flex items-center gap-2"><Cpu className="text-blue-500" /> Copiloto Tático</h1>
-            <input type="date" className="bg-slate-800 border-none rounded-lg p-2 text-sm" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
+      <div className="h-screen bg-[#0f172a] text-white flex overflow-hidden font-sans">
+        <div className="w-full flex flex-col p-8 max-w-5xl mx-auto">
+          
+          <header className="flex justify-between items-center mb-10">
+            <div>
+              <h1 className="text-3xl font-black tracking-tighter flex items-center gap-3">
+                <Cpu className="text-blue-500 w-10 h-10" /> COPILOTO <span className="text-blue-500">TÁTICO</span>
+              </h1>
+              <p className="text-slate-400 text-sm mt-1">Gerenciamento de Reuniões com Robustez de Dados</p>
+            </div>
+            <div className="flex gap-4">
+              <input type="date" className="bg-slate-800 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 ring-blue-500 outline-none" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
+            </div>
           </header>
 
-          <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-xl overflow-y-auto mb-6">
-            {listaReunioes.map(r => (
-              <div key={r.id} onClick={() => setReuniaoSelecionada(r)} className={`p-4 border-b border-slate-800 cursor-pointer transition ${reuniaoSelecionada?.id === r.id ? 'bg-blue-600/20 border-l-4 border-l-blue-500' : 'hover:bg-slate-800'}`}>
-                <div className="flex justify-between">
-                  <span className="font-semibold">{r.titulo}</span>
-                  <span className="text-[10px] uppercase bg-slate-700 px-2 py-1 rounded">{r.status}</span>
-                </div>
+          <div className="grid grid-cols-12 gap-8 flex-1 overflow-hidden">
+            {/* LISTA */}
+            <div className="col-span-7 flex flex-col gap-4 overflow-hidden">
+              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto flex-1 custom-scrollbar">
+                {listaReunioes.length > 0 ? listaReunioes.map(r => (
+                  <div key={r.id} onClick={() => !isRecording && setReuniaoSelecionada(r)} className={`p-5 border-b border-slate-800 cursor-pointer transition-all ${reuniaoSelecionada?.id === r.id ? 'bg-blue-600/10 border-l-4 border-l-blue-500' : 'hover:bg-slate-800/50'}`}>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-bold text-slate-200">{r.titulo}</h3>
+                        <p className="text-xs text-slate-500 mt-1 flex items-center gap-2"> <Clock size={12}/> {new Date(r.data_hora).toLocaleTimeString()}</p>
+                      </div>
+                      <span className={`text-[10px] font-black px-2 py-1 rounded-md ${r.status === 'Realizada' ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 text-slate-300'}`}>
+                        {r.status || 'PENDENTE'}
+                      </span>
+                    </div>
+                  </div>
+                )) : <div className="p-10 text-center text-slate-600">Nenhuma reunião para esta data</div>}
               </div>
-            ))}
-          </div>
 
-          <div className="h-32 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-center">
-            {isProcessing ? (
-              <div className="flex items-center gap-3 text-blue-400"><Loader2 className="animate-spin" /> Processando e Salvando...</div>
-            ) : isRecording ? (
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                  <span className="text-3xl font-mono">{formatTime(timer)}</span>
+              {/* CONTROLES */}
+              <div className="bg-slate-800/50 border border-slate-700 rounded-3xl p-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${isRecording ? 'bg-red-500/20 text-red-500' : 'bg-blue-500/20 text-blue-500'}`}>
+                    {isRecording ? <div className="w-4 h-4 bg-red-500 rounded-full animate-ping"/> : <Monitor size={32}/>}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">{isRecording ? "Gravando agora" : "Aguardando"}</p>
+                    <p className="text-xl font-mono font-bold">{isRecording ? formatTime(timer) : "00:00"}</p>
+                  </div>
                 </div>
-                <button onClick={stopRecording} className="bg-white text-red-600 p-4 rounded-full hover:scale-105 transition"><Square size={24} fill="currentColor" /></button>
-              </div>
-            ) : (
-              <button onClick={startRecording} disabled={!reuniaoSelecionada} className="bg-red-600 p-5 rounded-full hover:bg-red-700 disabled:opacity-30 transition"><Monitor size={28} /></button>
-            )}
-          </div>
-        </div>
 
-        {/* COLUNA DIREITA */}
-        <div className="w-4/12 p-6 flex flex-col bg-[#0f172a]">
-          <h2 className="text-slate-500 text-xs font-bold uppercase mb-4 tracking-widest">Ações da Reunião</h2>
-          <div className="flex-1 space-y-3 overflow-y-auto">
-             {/* Lista de ações recuperadas do Supabase */}
-          </div>
-          
-          <div className="mt-6 pt-6 border-t border-slate-800">
-             <textarea className="w-full bg-slate-800 border-none rounded-xl p-3 text-sm h-24 mb-3" placeholder="Anotar ação rápida..."></textarea>
-             <button className="w-full bg-blue-600 py-3 rounded-xl font-bold hover:bg-blue-700 transition">Adicionar Ação</button>
+                {isProcessing ? (
+                  <div className="flex items-center gap-3 text-blue-400 font-bold animate-pulse">
+                    <Loader2 className="animate-spin" /> SALVANDO...
+                  </div>
+                ) : isRecording ? (
+                  <button onClick={stopRecording} className="bg-white text-slate-900 px-8 py-4 rounded-2xl font-black hover:bg-red-50 transition-all flex items-center gap-2">
+                    <Square size={20} fill="currentColor"/> ENCERRAR
+                  </button>
+                ) : (
+                  <button onClick={startRecording} disabled={!reuniaoSelecionada} className="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black hover:bg-blue-500 disabled:opacity-20 transition-all shadow-lg shadow-blue-900/40">
+                    INICIAR GRAVAÇÃO
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* PAINEL LATERAL */}
+            <div className="col-span-5 flex flex-col gap-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex-1">
+                <h2 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-4">Informações</h2>
+                {reuniaoSelecionada ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-slate-800/30 rounded-xl border border-slate-700">
+                      <p className="text-xs text-slate-500 font-bold">REUNIÃO SELECIONADA</p>
+                      <p className="text-lg font-bold text-blue-400">{reuniaoSelecionada.titulo}</p>
+                    </div>
+                    <div className="flex items-start gap-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                      <AlertCircle className="text-amber-500 shrink-0" size={18}/>
+                      <p className="text-[11px] text-amber-200/70 leading-relaxed">
+                        Certifique-se de marcar <b>"Compartilhar áudio do sistema"</b> na janela de seleção para capturar os outros participantes.
+                      </p>
+                    </div>
+                  </div>
+                ) : <p className="text-slate-600 text-sm italic">Selecione uma reunião na lista ao lado para começar.</p>}
+              </div>
+            </div>
           </div>
         </div>
       </div>
