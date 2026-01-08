@@ -13,6 +13,23 @@ let globalChunks = [];
 let globalStream = null;
 let globalStartTime = null;
 
+// URL do Cloud Run que envia para o Google Drive
+const CLOUD_RUN_URL = "https://upload-gravacoes-drive-368024743026.southamerica-east1.run.app";
+
+// Helper para converter Blob em base64
+const blobToBase64 = (blob) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+      const base64 = String(result).split(",")[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
 const Copiloto = () => {
   // Estados de Interface e Filtros
   const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split('T')[0]);
@@ -105,7 +122,10 @@ const Copiloto = () => {
       retomarTimer();
 
       await supabase.from('reunioes').update({ status: 'Em Andamento' }).eq('id', selecionada.id);
-    } catch (e) { alert("Erro ao iniciar. Verifique permissões de tela e áudio."); }
+    } catch (e) { 
+      console.error(e);
+      alert("Erro ao iniciar. Verifique permissões de tela e áudio."); 
+    }
   };
 
   const stopRecording = () => {
@@ -116,33 +136,108 @@ const Copiloto = () => {
     localStorage.removeItem('reuniao_ativa');
   };
 
+  // NOVO: envia vídeo para Supabase e em seguida para o Drive via Cloud Run
+  const enviarVideoParaSupabaseEDrive = async (videoBlob) => {
+    if (!selecionada) return;
+
+    const agora = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `reuniao-${selecionada.id}-${agora}.webm`;
+    const path = `reunioes/${fileName}`;
+
+    // 1) Upload no Supabase (bucket gravacoes)
+    const { error: uploadError } = await supabase.storage
+      .from("gravacoes")
+      .upload(path, videoBlob, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: "video/webm",
+      });
+
+    if (uploadError) {
+      console.error("Erro ao subir vídeo no Supabase:", uploadError);
+      throw uploadError;
+    }
+
+    // 2) Envio para Cloud Run / Drive
+    const base64Full = await blobToBase64(videoBlob);
+
+    const resp = await fetch(CLOUD_RUN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fileName,
+        fileBufferBase64: base64Full,
+        mimeType: "video/webm",
+      }),
+    });
+
+    const json = await resp.json().catch(() => ({}));
+
+    if (!resp.ok || !json.success) {
+      console.error("Erro ao enviar para Cloud Run / Drive:", json);
+      throw new Error("Falha ao mover gravação para o Drive");
+    }
+
+    // 3) Apaga do Supabase (opcional)
+    const { error: delError } = await supabase.storage
+      .from("gravacoes")
+      .remove([path]);
+
+    if (delError) {
+      console.warn("Não conseguiu apagar do Supabase (já está no Drive):", delError);
+    }
+
+    // 4) Atualiza reunião com link do Drive (se existir esse campo)
+    try {
+      await supabase
+        .from("reunioes")
+        .update({ drive_link: json.link })
+        .eq("id", selecionada.id);
+    } catch (e) {
+      console.warn("Não foi possível salvar drive_link na reunião:", e);
+    }
+
+    return json.link;
+  };
+
+  // PROCESSAMENTO FINAL: ATA + Upload + Drive
   const processarFinalizacao = async () => {
     setIsProcessing(true);
     const videoBlob = new Blob(globalChunks, { type: 'video/webm' });
     
     try {
-      // IA Flash para Ata
+      // 1) IA Flash para ATA usando amostra de 30MB
       const model = getGeminiFlash();
-      const reader = new FileReader();
-      reader.readAsDataURL(videoBlob.slice(0, 30 * 1024 * 1024)); // Amostra para IA
-      
-      reader.onloadend = async () => {
-        const base64 = reader.result.split(',')[1];
-        const result = await model.generateContent([
-          "Gere ATA detalhada: RESUMO, DECISÕES, AÇÕES.",
-          { inlineData: { data: base64, mimeType: "video/webm" } }
-        ]);
-        
-        await supabase.from('reunioes').update({
-          pauta: result.response.text(),
-          status: 'Realizada',
-          duracao_segundos: timer
-        }).eq('id', selecionada.id);
+      const sampleBlob = videoBlob.slice(0, 30 * 1024 * 1024);
+      const base64Sample = await blobToBase64(sampleBlob);
 
-        fetchReunioes();
-        setIsProcessing(false);
-      };
-    } catch (e) { setIsProcessing(false); }
+      const result = await model.generateContent([
+        "Gere ATA detalhada: RESUMO, DECISÕES, AÇÕES.",
+        { inlineData: { data: base64Sample, mimeType: "video/webm" } }
+      ]);
+
+      const textoAta = result.response.text();
+
+      // 2) Atualiza reunião
+      await supabase.from('reunioes').update({
+        pauta: textoAta,
+        status: 'Realizada',
+        duracao_segundos: timer
+      }).eq('id', selecionada.id);
+
+      // 3) Envia vídeo completo para Supabase + Drive
+      await enviarVideoParaSupabaseEDrive(videoBlob);
+
+      // 4) Recarrega reuniões
+      fetchReunioes();
+    } catch (e) {
+      console.error("Erro no processamento final:", e);
+      alert("Ocorreu um erro ao salvar a reunião. Verifique o console para mais detalhes.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const salvarAcao = async () => {
@@ -195,11 +290,22 @@ const Copiloto = () => {
             </div>
 
             {isProcessing ? (
-              <div className="flex items-center gap-2 text-blue-400 font-bold animate-pulse"><Loader2 className="animate-spin"/> SALVANDO...</div>
+              <div className="flex items-center gap-2 text-blue-400 font-bold animate-pulse">
+                <Loader2 className="animate-spin"/> SALVANDO...
+              </div>
             ) : isRecording ? (
-              <button onClick={stopRecording} className="bg-white text-slate-900 px-8 py-3 rounded-2xl font-black text-xs hover:bg-red-50 transition-all">ENCERRAR</button>
+              <button 
+                onClick={stopRecording} 
+                className="bg-white text-slate-900 px-8 py-3 rounded-2xl font-black text-xs hover:bg-red-50 transition-all">
+                ENCERRAR
+              </button>
             ) : (
-              <button onClick={startRecording} disabled={!selecionada} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs hover:bg-blue-500 disabled:opacity-20 transition-all shadow-lg shadow-blue-900/40">INICIAR GRAVAÇÃO</button>
+              <button 
+                onClick={startRecording} 
+                disabled={!selecionada} 
+                className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs hover:bg-blue-500 disabled:opacity-20 transition-all shadow-lg shadow-blue-900/40">
+                INICIAR GRAVAÇÃO
+              </button>
             )}
           </div>
         </div>
@@ -208,16 +314,29 @@ const Copiloto = () => {
         <div className="w-5/12 p-6 flex flex-col bg-slate-900/80">
           <div className="mb-6">
             <h2 className="text-xs font-bold text-slate-500 uppercase mb-4 tracking-tighter">Nova Ação Direta</h2>
-            <textarea className="w-full bg-slate-800 border-none rounded-2xl p-4 text-sm h-24 mb-3 outline-none focus:ring-2 ring-blue-500" 
-                      placeholder="O que precisa ser feito?" value={novaAcao.descricao} onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})} />
+            <textarea 
+              className="w-full bg-slate-800 border-none rounded-2xl p-4 text-sm h-24 mb-3 outline-none focus:ring-2 ring-blue-500" 
+              placeholder="O que precisa ser feito?" 
+              value={novaAcao.descricao} 
+              onChange={e => setNovaAcao({...novaAcao, descricao: e.target.value})} 
+            />
             <div className="flex gap-2">
-              <input className="bg-slate-800 rounded-xl px-4 py-2 text-xs flex-1" placeholder="Responsável" value={novaAcao.responsavel} onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})} />
-              <button onClick={salvarAcao} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500"><Plus size={20}/></button>
+              <input 
+                className="bg-slate-800 rounded-xl px-4 py-2 text-xs flex-1" 
+                placeholder="Responsável" 
+                value={novaAcao.responsavel} 
+                onChange={e => setNovaAcao({...novaAcao, responsavel: e.target.value})} 
+              />
+              <button onClick={salvarAcao} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500">
+                <Plus size={20}/>
+              </button>
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-            <h2 className="text-xs font-bold text-green-500 uppercase flex items-center gap-2"><CheckCircle size={14}/> Ações Confirmadas</h2>
+            <h2 className="text-xs font-bold text-green-500 uppercase flex items-center gap-2">
+              <CheckCircle size={14}/> Ações Confirmadas
+            </h2>
             {acoes.map(a => (
               <div key={a.id} className="p-4 bg-slate-800/40 border border-slate-800 rounded-2xl text-xs">
                 <p className="text-slate-200">{a.descricao}</p>
