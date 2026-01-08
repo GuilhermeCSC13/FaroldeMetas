@@ -1,20 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
-import {
-  Loader2,
-  Cpu,
-  CheckCircle,
-  Monitor,
-  Plus,
-} from "lucide-react";
+import { Loader2, Cpu, CheckCircle, Monitor, Plus } from "lucide-react";
 
 /**
  * CONFIG
  */
 const STORAGE_BUCKET = "gravacoes"; // bucket do Supabase Storage
-const CHUNK_TIMESLICE_MS = 5000; // 5s (equilíbrio bom)
-const MIME_TYPE = "video/webm;codecs=vp8,opus";
+const SEGMENT_MS = 5 * 60 * 1000; // 5 minutos por arquivo (segmento tocável)
+const MIME_TYPE_PRIMARY = "video/webm;codecs=vp8,opus";
+const MIME_TYPE_FALLBACK = "video/webm";
 
 /**
  * Helpers
@@ -22,26 +17,38 @@ const MIME_TYPE = "video/webm;codecs=vp8,opus";
 function nowIso() {
   return new Date().toISOString();
 }
-
 function safeFilePart(n) {
   return String(n).padStart(6, "0");
 }
-
 function secondsToMMSS(s) {
   const mm = Math.floor(s / 60).toString().padStart(2, "0");
   const ss = Math.floor(s % 60).toString().padStart(2, "0");
   return `${mm}:${ss}`;
 }
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) {
+        const backoff = baseDelayMs * Math.pow(2, attempt - 1);
+        await sleep(backoff);
+      }
+    }
+  }
+  throw lastErr;
+}
 
-/**
- * OBS:
- * - Não usamos variáveis globais para não “vazar estado” entre reuniões.
- * - Em caso de refresh no meio, a gravação do navegador será interrompida mesmo.
- *   O que garantimos aqui é robustez para gravações longas e encerramento correto.
- */
 export default function Copiloto() {
   // UI / filtros
-  const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split("T")[0]);
+  const [dataFiltro, setDataFiltro] = useState(
+    new Date().toISOString().split("T")[0]
+  );
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
   const [busca, setBusca] = useState("");
@@ -53,30 +60,45 @@ export default function Copiloto() {
 
   // gravação
   const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false); // aqui é “finalização rápida”
+  const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
 
-  // refs (estado de gravação)
+  // refs (media)
   const recorderRef = useRef(null);
+  const mixedStreamRef = useRef(null);
   const displayStreamRef = useRef(null);
   const micStreamRef = useRef(null);
   const audioCtxRef = useRef(null);
+
+  // temporizadores
   const startTimeRef = useRef(null);
   const timerRef = useRef(null);
+  const segmentIntervalRef = useRef(null);
 
-  // sessão/chunks
+  // sessão / partes
   const sessionIdRef = useRef(null);
-  const chunkIndexRef = useRef(0);
-  const uploadsInFlightRef = useRef(new Set()); // guarda promises de upload para aguardar no stop
-  const stopRequestedRef = useRef(false);
+  const partNumberRef = useRef(0);
+
+  // flags
+  const stopAllRequestedRef = useRef(false);
+  const rotatingRef = useRef(false);
   const lastErrorRef = useRef(null);
+
+  // fila de upload (para não travar encoder/UI)
+  const uploadQueueRef = useRef([]); // items: { blob, partNumber }
+  const uploadWorkerRunningRef = useRef(false);
+  const uploadsInFlightRef = useRef(new Set()); // promises
+  const queueDrainPromiseRef = useRef(null);
 
   /**
    * Data fetch
    */
   useEffect(() => {
     fetchReunioes();
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      clearInterval(segmentIntervalRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataFiltro]);
 
@@ -141,58 +163,55 @@ export default function Copiloto() {
       setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
   };
-
-  const stopTimer = () => {
-    clearInterval(timerRef.current);
-  };
+  const stopTimer = () => clearInterval(timerRef.current);
 
   /**
    * Storage path builder
    */
-  const buildChunkPath = (reuniaoId, sessionId, partNumber) => {
-    // Ex: reunioes/123/sess_.../part_000001.webm
+  const buildPartPath = (reuniaoId, sessionId, partNumber) => {
     return `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
   };
 
   /**
-   * Upload chunk (sem base64; sobe Blob direto)
+   * Upload (segmento) + metadata
    */
-  const uploadChunk = async (blob) => {
+  const uploadPart = async (blob, partNumber) => {
     if (!selecionada?.id) return;
     if (!sessionIdRef.current) return;
 
     const reuniaoId = selecionada.id;
     const sessionId = sessionIdRef.current;
 
-    const partNumber = ++chunkIndexRef.current;
-    const path = buildChunkPath(reuniaoId, sessionId, partNumber);
+    const path = buildPartPath(reuniaoId, sessionId, partNumber);
 
-    // upload do chunk no Storage
     const uploadPromise = (async () => {
-      const { error: upErr } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .upload(path, blob, {
-          contentType: "video/webm",
-          cacheControl: "3600",
-          upsert: false,
-        });
+      await withRetry(async () => {
+        const { error: upErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, blob, {
+            contentType: "video/webm",
+            cacheControl: "3600",
+            upsert: false,
+          });
+        if (upErr) throw upErr;
+      });
 
-      if (upErr) throw upErr;
-
-      // registra metadata do chunk
-      const { error: insErr } = await supabase
-        .from("reuniao_gravacao_partes")
-        .insert([{
-          reuniao_id: reuniaoId,
-          session_id: sessionId,
-          part_number: partNumber,
-          storage_bucket: STORAGE_BUCKET,
-          storage_path: path,
-          bytes: blob.size,
-          status: "UPLOADED",
-        }]);
-
-      if (insErr) throw insErr;
+      await withRetry(async () => {
+        const { error: insErr } = await supabase
+          .from("reuniao_gravacao_partes")
+          .insert([
+            {
+              reuniao_id: reuniaoId,
+              session_id: sessionId,
+              part_number: partNumber,
+              storage_bucket: STORAGE_BUCKET,
+              storage_path: path,
+              bytes: blob.size,
+              status: "UPLOADED",
+            },
+          ]);
+        if (insErr) throw insErr;
+      });
     })();
 
     uploadsInFlightRef.current.add(uploadPromise);
@@ -200,18 +219,19 @@ export default function Copiloto() {
     try {
       await uploadPromise;
     } catch (e) {
-      console.error("uploadChunk error:", e);
+      console.error("uploadPart error:", e);
       lastErrorRef.current = e;
-      // se falhar, marcamos a reunião como erro de gravação
+
       await supabase
         .from("reunioes")
         .update({
           gravacao_status: "ERRO",
           gravacao_erro: String(e?.message || e),
-          updated_at: nowIso?.() ? nowIso() : new Date().toISOString(),
+          updated_at: nowIso(),
         })
         .eq("id", reuniaoId);
-      // encerramos a gravação para não seguir “gravando sem salvar”
+
+      // Se falhar upload, pedimos stop geral para não seguir gravando “no vazio”
       await safeStopRecording();
     } finally {
       uploadsInFlightRef.current.delete(uploadPromise);
@@ -219,23 +239,162 @@ export default function Copiloto() {
   };
 
   /**
-   * Start recording: tela + áudio do mic (mix)
+   * Queue worker: processa uploads sequencialmente (sem travar o MediaRecorder)
+   */
+  const runUploadWorker = async () => {
+    if (uploadWorkerRunningRef.current) return;
+    uploadWorkerRunningRef.current = true;
+
+    try {
+      while (uploadQueueRef.current.length > 0) {
+        const item = uploadQueueRef.current.shift();
+        if (!item) continue;
+
+        // executa upload do segmento
+        await uploadPart(item.blob, item.partNumber);
+      }
+    } finally {
+      uploadWorkerRunningRef.current = false;
+      // se alguém estava aguardando dreno
+      if (
+        queueDrainPromiseRef.current &&
+        uploadQueueRef.current.length === 0 &&
+        uploadsInFlightRef.current.size === 0
+      ) {
+        queueDrainPromiseRef.current.resolve?.();
+        queueDrainPromiseRef.current = null;
+      }
+    }
+  };
+
+  const enqueueUpload = (blob, partNumber) => {
+    uploadQueueRef.current.push({ blob, partNumber });
+    // dispara worker async
+    runUploadWorker();
+  };
+
+  const waitQueueDrain = async () => {
+    // já drenou?
+    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) {
+      return;
+    }
+
+    // cria promessa “drain”
+    if (!queueDrainPromiseRef.current) {
+      let resolve;
+      const p = new Promise((r) => (resolve = r));
+      queueDrainPromiseRef.current = { promise: p, resolve };
+    }
+
+    // garante worker rodando
+    runUploadWorker();
+    await queueDrainPromiseRef.current.promise;
+  };
+
+  /**
+   * Cria MediaRecorder para o stream já mixado
+   */
+  const createRecorder = () => {
+    const stream = mixedStreamRef.current;
+    if (!stream) throw new Error("Stream de gravação não inicializado.");
+
+    let options = {};
+    if (window.MediaRecorder?.isTypeSupported?.(MIME_TYPE_PRIMARY)) {
+      options = { mimeType: MIME_TYPE_PRIMARY };
+    } else if (window.MediaRecorder?.isTypeSupported?.(MIME_TYPE_FALLBACK)) {
+      options = { mimeType: MIME_TYPE_FALLBACK };
+    }
+
+    const recorder = new MediaRecorder(stream, options);
+    return recorder;
+  };
+
+  /**
+   * Inicia um segmento: recorder.start() e aguarda stop para gerar blob “tocável”
+   */
+  const startSegment = () => {
+    const rec = createRecorder();
+    recorderRef.current = rec;
+
+    const chunks = [];
+
+    rec.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
+      chunks.push(e.data);
+    };
+
+    rec.onerror = (e) => {
+      console.error("MediaRecorder error:", e);
+      lastErrorRef.current = e?.error || e;
+    };
+
+    rec.onstop = async () => {
+      // gera arquivo completo do segmento
+      const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
+      const partNumber = ++partNumberRef.current;
+
+      // joga na fila (não await aqui)
+      if (blob.size > 0) {
+        enqueueUpload(blob, partNumber);
+      }
+
+      // se não for stop geral, inicia próximo segmento imediatamente
+      if (!stopAllRequestedRef.current) {
+        try {
+          startSegment();
+        } catch (e) {
+          console.error("Falha ao iniciar novo segmento:", e);
+          lastErrorRef.current = e;
+          await safeStopRecording();
+        }
+      } else {
+        // stop geral: finaliza depois
+        await finalizeRecording();
+      }
+    };
+
+    rec.start(); // sem timeslice => segmento “fechado” fica tocável
+  };
+
+  /**
+   * Rotaciona segmento a cada SEGMENT_MS
+   */
+  const rotateSegment = async () => {
+    if (rotatingRef.current) return;
+    rotatingRef.current = true;
+
+    try {
+      const rec = recorderRef.current;
+      if (!rec) return;
+      if (rec.state === "recording") {
+        rec.stop(); // onstop enfileira upload e inicia próximo (se não for stop geral)
+      }
+    } catch (e) {
+      console.error("rotateSegment:", e);
+      lastErrorRef.current = e;
+      await safeStopRecording();
+    } finally {
+      rotatingRef.current = false;
+    }
+  };
+
+  /**
+   * Start recording: tela + áudio do mic (mix) e segmentação em arquivos tocáveis
    */
   const startRecording = async () => {
     if (!selecionada) return alert("Selecione uma reunião.");
     if (isRecording) return;
 
     lastErrorRef.current = null;
-    stopRequestedRef.current = false;
+    stopAllRequestedRef.current = false;
+    rotatingRef.current = false;
     setTimer(0);
 
     try {
-      // cria session_id (uuid v4 via crypto)
       const sessionId = `sess_${crypto.randomUUID()}`;
       sessionIdRef.current = sessionId;
-      chunkIndexRef.current = 0;
+      partNumberRef.current = 0;
 
-      // marca reunião como em andamento
       await supabase
         .from("reunioes")
         .update({
@@ -261,7 +420,7 @@ export default function Copiloto() {
       displayStreamRef.current = displayStream;
       micStreamRef.current = micStream;
 
-      // se o usuário encerrar compartilhamento, parar gravação corretamente
+      // stop se usuário encerrar compartilhamento
       const videoTrack = displayStream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.onended = () => {
@@ -270,7 +429,7 @@ export default function Copiloto() {
         };
       }
 
-      // mix de áudio (mic + audio da tela, se existir)
+      // mix de áudio
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
 
@@ -285,42 +444,31 @@ export default function Copiloto() {
         ...displayStream.getVideoTracks(),
         ...dest.stream.getAudioTracks(),
       ]);
+      mixedStreamRef.current = mixedStream;
 
-      // valida mimeType
-      let options = {};
-      if (MediaRecorder.isTypeSupported(MIME_TYPE)) {
-        options = { mimeType: MIME_TYPE };
-      }
+      // inicia primeiro segmento
+      startSegment();
 
-      const recorder = new MediaRecorder(mixedStream, options);
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = async (e) => {
-        if (!e.data || e.data.size === 0) return;
-        // faz upload do chunk (não acumula em memória)
-        await uploadChunk(e.data);
-      };
-
-      recorder.onstop = async () => {
-        // o stop real chama finalize (abaixo)
-        await finalizeRecording();
-      };
+      // agenda rotação a cada 5 min
+      clearInterval(segmentIntervalRef.current);
+      segmentIntervalRef.current = setInterval(() => {
+        if (!stopAllRequestedRef.current) rotateSegment();
+      }, SEGMENT_MS);
 
       startTimeRef.current = Date.now();
       setIsRecording(true);
       startTimer();
-
-      recorder.start(CHUNK_TIMESLICE_MS);
     } catch (e) {
       console.error("startRecording:", e);
       alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
-      // marca erro
+
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
           .update({ gravacao_status: "ERRO", gravacao_erro: String(e?.message || e) })
           .eq("id", selecionada.id);
       }
+
       setIsRecording(false);
       stopTimer();
       cleanupMedia();
@@ -328,32 +476,28 @@ export default function Copiloto() {
   };
 
   /**
-   * stop: solicita parada, encerra tracks, espera uploads e finaliza status rápido
+   * Stop geral: para intervalo, pede stop do recorder atual e finaliza ao drenar fila
    */
   const safeStopRecording = async () => {
-    if (stopRequestedRef.current) return;
-    stopRequestedRef.current = true;
+    if (stopAllRequestedRef.current) return;
+    stopAllRequestedRef.current = true;
 
     try {
-      // parar UI
       setIsRecording(false);
       stopTimer();
+      clearInterval(segmentIntervalRef.current);
 
-      // parar recorder
       const rec = recorderRef.current;
-      if (rec && rec.state !== "inactive") {
-        rec.stop();
+      if (rec && rec.state === "recording") {
+        rec.stop(); // vai cair em onstop => finalizeRecording()
       } else {
-        // se já inativo, finalize direto
         await finalizeRecording();
       }
     } catch (e) {
       console.error("safeStopRecording:", e);
-      // tenta finalizar mesmo assim
       await finalizeRecording();
     } finally {
-      // sempre para streams
-      cleanupMedia();
+      // streams fecham no finalize (para evitar cortar audio/video antes do stop completar)
     }
   };
 
@@ -362,7 +506,7 @@ export default function Copiloto() {
   };
 
   /**
-   * Finalização rápida: aguarda uploads em voo e marca PRONTO_PROCESSAR
+   * Finalização: aguarda fila e uploads, marca PRONTO_PROCESSAR/ERRO e limpa mídia
    */
   const finalizeRecording = async () => {
     if (!selecionada?.id) return;
@@ -371,15 +515,14 @@ export default function Copiloto() {
     setIsProcessing(true);
 
     try {
-      // aguarda uploads pendentes
+      // aguarda uploads pendentes (fila + in-flight)
+      await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
 
       const duracao = startTimeRef.current
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      // Se houve erro em algum chunk, gravacao_status já foi setado ERRO
-      // Caso contrário, marca como pronto para processamento assíncrono.
       const { data: reuniaoAtual, error: selErr } = await supabase
         .from("reunioes")
         .select("gravacao_status")
@@ -394,7 +537,7 @@ export default function Copiloto() {
         await supabase
           .from("reunioes")
           .update({
-            status: "Realizada", // ou "Gravada" se preferir separar
+            status: "Realizada",
             duracao_segundos: duracao,
             gravacao_fim: nowIso(),
             gravacao_status: "PRONTO_PROCESSAR",
@@ -421,11 +564,20 @@ export default function Copiloto() {
       }
     } finally {
       setIsProcessing(false);
-      // reseta refs de sessão
+
+      // limpa mídia e refs
+      cleanupMedia();
+
       sessionIdRef.current = null;
-      chunkIndexRef.current = 0;
+      partNumberRef.current = 0;
       startTimeRef.current = null;
-      stopRequestedRef.current = false;
+      stopAllRequestedRef.current = false;
+      rotatingRef.current = false;
+
+      // limpa queue
+      uploadQueueRef.current = [];
+      uploadsInFlightRef.current.clear();
+      queueDrainPromiseRef.current = null;
     }
   };
 
@@ -434,7 +586,6 @@ export default function Copiloto() {
    */
   const cleanupMedia = () => {
     try {
-      const rec = recorderRef.current;
       recorderRef.current = null;
 
       const ds = displayStreamRef.current;
@@ -445,14 +596,11 @@ export default function Copiloto() {
       if (ms) ms.getTracks().forEach((t) => t.stop());
       micStreamRef.current = null;
 
+      mixedStreamRef.current = null;
+
       const ac = audioCtxRef.current;
       if (ac && ac.state !== "closed") ac.close();
       audioCtxRef.current = null;
-
-      // evita “ícone preso” se algo falhar
-      if (rec && rec.state !== "inactive") {
-        try { rec.stop(); } catch {}
-      }
     } catch (e) {
       console.warn("cleanupMedia:", e);
     }
@@ -487,7 +635,9 @@ export default function Copiloto() {
 
           <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto mb-6 custom-scrollbar">
             {(reunioes || [])
-              .filter((r) => (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase()))
+              .filter((r) =>
+                (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase())
+              )
               .map((r) => (
                 <div
                   key={r.id}
@@ -530,6 +680,9 @@ export default function Copiloto() {
                 <p className="text-2xl font-mono font-bold leading-none">
                   {secondsToMMSS(timer)}
                 </p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Segmentos: {Math.max(partNumberRef.current, 0)} (a cada 5 min)
+                </p>
               </div>
             </div>
 
@@ -567,9 +720,7 @@ export default function Copiloto() {
               className="w-full bg-slate-800 border-none rounded-2xl p-4 text-sm h-24 mb-3 outline-none focus:ring-2 ring-blue-500"
               placeholder="O que precisa ser feito?"
               value={novaAcao.descricao}
-              onChange={(e) =>
-                setNovaAcao({ ...novaAcao, descricao: e.target.value })
-              }
+              onChange={(e) => setNovaAcao({ ...novaAcao, descricao: e.target.value })}
             />
 
             <div className="flex gap-2">
@@ -581,10 +732,7 @@ export default function Copiloto() {
                   setNovaAcao({ ...novaAcao, responsavel: e.target.value })
                 }
               />
-              <button
-                onClick={salvarAcao}
-                className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500"
-              >
+              <button onClick={salvarAcao} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500">
                 <Plus size={20} />
               </button>
             </div>
