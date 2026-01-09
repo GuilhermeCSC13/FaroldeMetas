@@ -144,7 +144,11 @@ export default function Copiloto() {
       status: "Aberta",
     };
 
-    const { data, error } = await supabase.from("acoes").insert([payload]).select();
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert([payload])
+      .select();
+
     if (error) {
       console.error("salvarAcao:", error);
       return;
@@ -169,7 +173,55 @@ export default function Copiloto() {
    * Storage path builder
    */
   const buildPartPath = (reuniaoId, sessionId, partNumber) => {
-    return `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
+    return `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(
+      partNumber
+    )}.webm`;
+  };
+
+  /**
+   * >>> NOVO: cria a fila de upload pro Drive (drive_upload_queue)
+   * - Busca bucket/prefix da reunião (fonte de verdade)
+   * - Valida prefix esperado: reunioes/<reuniao_uuid>/sess_<uuid>/
+   * - Insere na fila SEM session_id (sua tabela não tem essa coluna)
+   * - Atualiza status da reunião para FILA_CRIADA (pra você enxergar no painel)
+   */
+  const enqueueDriveJob = async () => {
+    if (!selecionada?.id) return;
+
+    const { data: r, error: e1 } = await supabase
+      .from("reunioes")
+      .select("id, gravacao_bucket, gravacao_prefix")
+      .eq("id", selecionada.id)
+      .single();
+
+    if (e1) throw e1;
+
+    const prefix = String(r?.gravacao_prefix || "").trim();
+
+    // valida prefix para evitar “UUID_COMPLETO...” e afins
+    if (!prefix.startsWith(`reunioes/${selecionada.id}/sess_`)) {
+      throw new Error(`Prefix inválido para fila: ${prefix}`);
+    }
+
+    const { error: e2 } = await supabase.from("drive_upload_queue").insert([
+      {
+        reuniao_id: selecionada.id,
+        status: "PENDENTE",
+        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
+        storage_prefix: prefix,
+        last_error: null,
+      },
+    ]);
+
+    if (e2) throw e2;
+
+    await supabase
+      .from("reunioes")
+      .update({
+        gravacao_status: "FILA_CRIADA",
+        updated_at: nowIso(),
+      })
+      .eq("id", selecionada.id);
   };
 
   /**
@@ -275,7 +327,10 @@ export default function Copiloto() {
 
   const waitQueueDrain = async () => {
     // já drenou?
-    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) {
+    if (
+      uploadQueueRef.current.length === 0 &&
+      uploadsInFlightRef.current.size === 0
+    ) {
       return;
     }
 
@@ -465,7 +520,10 @@ export default function Copiloto() {
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
-          .update({ gravacao_status: "ERRO", gravacao_erro: String(e?.message || e) })
+          .update({
+            gravacao_status: "ERRO",
+            gravacao_erro: String(e?.message || e),
+          })
           .eq("id", selecionada.id);
       }
 
@@ -507,6 +565,7 @@ export default function Copiloto() {
 
   /**
    * Finalização: aguarda fila e uploads, marca PRONTO_PROCESSAR/ERRO e limpa mídia
+   * >>> ALTERADO: depois de marcar PRONTO_PROCESSAR, cria a fila no drive_upload_queue
    */
   const finalizeRecording = async () => {
     if (!selecionada?.id) return;
@@ -543,6 +602,9 @@ export default function Copiloto() {
             gravacao_status: "PRONTO_PROCESSAR",
           })
           .eq("id", selecionada.id);
+
+        // >>> AQUI: cria a fila para o Job juntar e enviar para o Drive
+        await enqueueDriveJob();
       } else {
         await supabase
           .from("reunioes")
@@ -559,7 +621,10 @@ export default function Copiloto() {
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
-          .update({ gravacao_status: "ERRO", gravacao_erro: String(e?.message || e) })
+          .update({
+            gravacao_status: "ERRO",
+            gravacao_erro: String(e?.message || e),
+          })
           .eq("id", selecionada.id);
       }
     } finally {
@@ -636,7 +701,9 @@ export default function Copiloto() {
           <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto mb-6 custom-scrollbar">
             {(reunioes || [])
               .filter((r) =>
-                (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase())
+                (r.titulo || "")
+                  .toLowerCase()
+                  .includes((busca || "").toLowerCase())
               )
               .map((r) => (
                 <div
@@ -663,7 +730,9 @@ export default function Copiloto() {
             <div className="flex items-center gap-4">
               <div
                 className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-                  isRecording ? "bg-red-500/20 text-red-500" : "bg-blue-500/20 text-blue-500"
+                  isRecording
+                    ? "bg-red-500/20 text-red-500"
+                    : "bg-blue-500/20 text-blue-500"
                 }`}
               >
                 {isRecording ? (
@@ -720,7 +789,9 @@ export default function Copiloto() {
               className="w-full bg-slate-800 border-none rounded-2xl p-4 text-sm h-24 mb-3 outline-none focus:ring-2 ring-blue-500"
               placeholder="O que precisa ser feito?"
               value={novaAcao.descricao}
-              onChange={(e) => setNovaAcao({ ...novaAcao, descricao: e.target.value })}
+              onChange={(e) =>
+                setNovaAcao({ ...novaAcao, descricao: e.target.value })
+              }
             />
 
             <div className="flex gap-2">
@@ -732,7 +803,10 @@ export default function Copiloto() {
                   setNovaAcao({ ...novaAcao, responsavel: e.target.value })
                 }
               />
-              <button onClick={salvarAcao} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500">
+              <button
+                onClick={salvarAcao}
+                className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500"
+              >
                 <Plus size={20} />
               </button>
             </div>
