@@ -179,11 +179,11 @@ export default function Copiloto() {
   };
 
   /**
-   * >>> NOVO: cria a fila de upload pro Drive (drive_upload_queue)
+   * >>> Drive Queue Job (apenas fila; não muda gravacao_status)
    * - Busca bucket/prefix da reunião (fonte de verdade)
    * - Valida prefix esperado: reunioes/<reuniao_uuid>/sess_<uuid>/
    * - Insere na fila SEM session_id (sua tabela não tem essa coluna)
-   * - Atualiza status da reunião para FILA_CRIADA (pra você enxergar no painel)
+   * - NÃO altera gravacao_status (evita conflito com PRONTO_PROCESSAR / worker)
    */
   const enqueueDriveJob = async () => {
     if (!selecionada?.id) return;
@@ -198,9 +198,10 @@ export default function Copiloto() {
 
     const prefix = String(r?.gravacao_prefix || "").trim();
 
-    // valida prefix para evitar “UUID_COMPLETO...” e afins
     if (!prefix.startsWith(`reunioes/${selecionada.id}/sess_`)) {
-      throw new Error(`Prefix inválido para fila: ${prefix}`);
+      throw new Error(
+        `Prefix inválido: "${prefix}". Esperado: reunioes/${selecionada.id}/sess_<uuid>/`
+      );
     }
 
     const { error: e2 } = await supabase.from("drive_upload_queue").insert([
@@ -215,12 +216,10 @@ export default function Copiloto() {
 
     if (e2) throw e2;
 
+    // mantém apenas "updated_at" para rastreio (sem trocar gravacao_status)
     await supabase
       .from("reunioes")
-      .update({
-        gravacao_status: "FILA_CRIADA",
-        updated_at: nowIso(),
-      })
+      .update({ updated_at: nowIso() })
       .eq("id", selecionada.id);
   };
 
@@ -446,7 +445,12 @@ export default function Copiloto() {
     setTimer(0);
 
     try {
-      const sessionId = `sess_${crypto.randomUUID()}`;
+      // blindagem simples caso ambiente não suporte randomUUID
+      const sessionUuid =
+        (crypto?.randomUUID?.() ||
+          `${Date.now()}_${Math.random().toString(16).slice(2)}`);
+      const sessionId = `sess_${sessionUuid}`;
+
       sessionIdRef.current = sessionId;
       partNumberRef.current = 0;
 
@@ -565,7 +569,8 @@ export default function Copiloto() {
 
   /**
    * Finalização: aguarda fila e uploads, marca PRONTO_PROCESSAR/ERRO e limpa mídia
-   * >>> ALTERADO: depois de marcar PRONTO_PROCESSAR, cria a fila no drive_upload_queue
+   * - Mantém PRONTO_PROCESSAR como status (não sobrescreve)
+   * - Cria fila no drive_upload_queue após finalizar
    */
   const finalizeRecording = async () => {
     if (!selecionada?.id) return;
@@ -603,7 +608,7 @@ export default function Copiloto() {
           })
           .eq("id", selecionada.id);
 
-        // >>> AQUI: cria a fila para o Job juntar e enviar para o Drive
+        // cria a fila para o Job juntar e enviar para o Drive (sem mudar gravacao_status)
         await enqueueDriveJob();
       } else {
         await supabase
