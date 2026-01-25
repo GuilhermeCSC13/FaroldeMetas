@@ -1,3 +1,4 @@
+// src/components/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -9,6 +10,7 @@ import {
   FaCalendarAlt,
   FaTasks,
   FaMicrophone,
+  FaTags, // ✅ NOVO
 } from "react-icons/fa";
 
 const setores = [
@@ -143,6 +145,7 @@ export default function Sidebar() {
           <p className="px-4 text-[10px] font-bold text-blue-300 uppercase tracking-wider mb-1">
             Ferramentas
           </p>
+
           <NavLink
             to="/central-reunioes"
             className={({ isActive }) =>
@@ -154,6 +157,20 @@ export default function Sidebar() {
             <FaCalendarAlt className="text-sm" />
             <span>Agenda Tática</span>
           </NavLink>
+
+          {/* ✅ NOVO: Tipos de Reunião (logo abaixo de Agenda Tática) */}
+          <NavLink
+            to="/tipos-reuniao"
+            className={({ isActive }) =>
+              `${linkBaseClasses} ${
+                isActive ? linkActiveClasses : linkInactiveClasses
+              }`
+            }
+          >
+            <FaTags className="text-sm" />
+            <span>Tipos de Reunião</span>
+          </NavLink>
+
           <NavLink
             to="/central-atas"
             className={({ isActive }) =>
@@ -190,6 +207,7 @@ export default function Sidebar() {
             <FaTasks className="text-sm" />
             <span>Central de Ações</span>
           </NavLink>
+
           <NavLink
             to="/configuracoes"
             className={({ isActive }) =>
