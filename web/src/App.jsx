@@ -1,3 +1,4 @@
+// src/App.jsx
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 // Páginas Principais
@@ -17,6 +18,9 @@ import GestaoAcoes from "./pages/GestaoAcoes";
 // Novos Módulos de Gestão
 import CentralReunioes from "./pages/CentralReunioes";
 import CentralAtas from "./pages/CentralAtas";
+
+// ✅ Tipos de Reunião (NOVO)
+import TiposReuniao from "./pages/TiposReuniao";
 
 // Inteligência Artificial
 import Copiloto from "./pages/Copiloto";
@@ -40,14 +44,12 @@ export default function App() {
         <Route path="/moov" element={<Moov />} />
         <Route path="/manutencao" element={<Manutencao />} />
 
-        {/* (opcional) compatibilidade com rotas antigas */}
-        {/*
-        <Route path="/planejamento/financeiro" element={<Administrativo />} />
-        <Route path="/planejamento/pessoas" element={<Administrativo />} />
-        */}
-
         {/* --- MÓDULO REUNIÕES & ATAS --- */}
         <Route path="/central-reunioes" element={<CentralReunioes />} />
+
+        {/* ✅ NOVO: Tipos de Reunião */}
+        <Route path="/tipos-reuniao" element={<TiposReuniao />} />
+
         <Route path="/central-atas" element={<CentralAtas />} />
         <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
