@@ -26,292 +26,186 @@ import {
   Trash2,
 } from "lucide-react";
 import { salvarReuniao, atualizarReuniao } from "../services/agendaService";
-
-// ✅ IMPORTANTE: use a versão atualizada do DetalhesReuniao (com tiposReuniao + hora_fim)
 import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
+
+function parseDataLocal(dataString) {
+  if (!dataString) return new Date();
+  return parseISO(String(dataString).substring(0, 19));
+}
+
+function statusBadge(status) {
+  const s = String(status || "").toLowerCase();
+  if (s.includes("realiz")) {
+    return { text: "✅", title: "Realizada" };
+  }
+  if (s.includes("nao") || s.includes("não") || s.includes("cancel")) {
+    return { text: "✖", title: "Não realizada" };
+  }
+  return { text: "●", title: "Agendada" };
+}
 
 export default function CentralReunioes() {
   const [view, setView] = useState("calendar"); // 'calendar' | 'week' | 'list'
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reunioes, setReunioes] = useState([]);
-  const [tiposReuniao, setTiposReuniao] = useState([]);
+  const [tipos, setTipos] = useState([]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
 
   const [formData, setFormData] = useState({
     titulo: "",
-    // ✅ agora é FK
-    tipo_reuniao_id: null,
-    // (opcional/legado) mantém para compatibilidade com telas antigas e para backfill
-    tipo_reuniao_nome: "Geral",
-
+    tipo_reuniao_id: "",
     data: "",
-    hora: "09:00",
-    hora_fim: "09:15", // ✅ novo campo no form (término)
-
+    hora_inicio: "09:00",
+    hora_fim: "09:15",
     cor: "#3B82F6",
     responsavel: "",
-    pauta: "",
-    recorrencia: "unica",
+    ata: "",
+    status: "Agendada",
   });
 
   const [draggingReuniao, setDraggingReuniao] = useState(null);
 
-  // -----------------------------
-  // Helpers
-  // -----------------------------
-  const parseDataLocal = (dataString) => {
-    if (!dataString) return new Date();
-    return parseISO(String(dataString).substring(0, 19));
-  };
-
-  // Normaliza "Oferta_Demanda" -> "oferta_demanda" para achar pelo slug
-  const normalizeKey = (txt) =>
-    String(txt || "")
-      .trim()
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // remove acentos
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
-
-  const tiposById = useMemo(() => {
-    const m = new Map();
-    (tiposReuniao || []).forEach((t) => m.set(String(t.id), t));
-    return m;
-  }, [tiposReuniao]);
-
-  const tiposBySlug = useMemo(() => {
-    const m = new Map();
-    (tiposReuniao || []).forEach((t) => {
-      if (t.slug) m.set(String(t.slug), t);
-    });
-    return m;
-  }, [tiposReuniao]);
-
-  const getTipoDefaultGeral = () => {
-    // prioridade: slug "geral"
-    const t1 = tiposBySlug.get("geral");
-    if (t1) return t1;
-
-    // fallback: nome "Geral"
-    const t2 = (tiposReuniao || []).find((t) => (t.nome || "").toLowerCase() === "geral");
-    if (t2) return t2;
-
-    // último fallback: primeiro ativo
-    const t3 = (tiposReuniao || []).find((t) => t.ativo !== false);
-    return t3 || null;
-  };
-
-  const getMeetingTipoNome = (m) => m?.tipo?.nome || m?.tipo_reuniao || "";
-
-  const getMeetingCor = (m) => m?.cor || m?.tipo?.cor || "#CBD5E1";
-
-  const getMeetingInicio = (m) => {
-    const dt = parseDataLocal(m.data_hora);
-    // se reunião tem horario_inicio gravado, usa ele; senão usa do datetime
-    const hi = m?.horario_inicio ? String(m.horario_inicio).slice(0, 5) : format(dt, "HH:mm");
-    return hi;
-  };
-
-  const getMeetingFim = (m) => {
-    // se reunião tem horario_fim gravado, usa ele; senão tenta o do tipo; senão vazio
-    const hf = m?.horario_fim ? String(m.horario_fim).slice(0, 5) : "";
-    const tipoFim = m?.tipo?.horario_fim ? String(m.tipo.horario_fim).slice(0, 5) : "";
-    return hf || tipoFim || "";
-  };
-
-  // -----------------------------
-  // Fetch
-  // -----------------------------
   useEffect(() => {
     fetchTipos();
   }, []);
 
   useEffect(() => {
     fetchReunioes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDate]);
 
   const fetchTipos = async () => {
     const { data, error } = await supabase
       .from("tipos_reuniao")
-      .select("id, slug, nome, horario_inicio, horario_fim, ata_principal, cor, ativo")
+      .select("*")
       .order("nome");
 
     if (error) {
-      console.error("Erro ao buscar tipos_reuniao:", error);
-      setTiposReuniao([]);
+      console.error(error);
+      alert("Erro ao carregar tipos de reunião.");
       return;
     }
-    setTiposReuniao(data || []);
+    setTipos(data || []);
   };
 
   const fetchReunioes = async () => {
-    // Se quiser otimizar por período depois, fazemos.
     const { data, error } = await supabase
       .from("reunioes")
       .select(
-        `
-        *,
-        tipo:tipos_reuniao (
-          id, slug, nome, cor, horario_inicio, horario_fim, ata_principal
-        )
-      `
+        `*,
+         tipos_reuniao:tipo_reuniao_id ( id, nome, ata_principal, cor )`
       )
       .order("data_hora");
 
-    if (error) {
-      console.error("Erro ao buscar reunioes:", error);
-      setReunioes([]);
-      return;
-    }
+    if (error) console.error(error);
     setReunioes(data || []);
   };
 
-  // -----------------------------
-  // Open modal (new)
-  // -----------------------------
-  const onDateClick = (day) => {
-    const tipoDefault = getTipoDefaultGeral();
+  const getTipoById = (id) => tipos.find((t) => String(t.id) === String(id)) || null;
 
+  const onDateClick = (day) => {
     setEditingReuniao(null);
+
     setFormData({
       titulo: "",
-      tipo_reuniao_id: tipoDefault?.id || null,
-      tipo_reuniao_nome: tipoDefault?.nome || "Geral",
-
+      tipo_reuniao_id: "",
       data: format(day, "yyyy-MM-dd"),
-      hora: (tipoDefault?.horario_inicio ? String(tipoDefault.horario_inicio).slice(0, 5) : "09:00"),
-      hora_fim: (tipoDefault?.horario_fim ? String(tipoDefault.horario_fim).slice(0, 5) : "09:15"),
-
-      cor: tipoDefault?.cor || "#3B82F6",
+      hora_inicio: "09:00",
+      hora_fim: "09:15",
+      cor: "#3B82F6",
       responsavel: "",
-      pauta: tipoDefault?.ata_principal || "",
-      recorrencia: "unica",
+      ata: "",
+      status: "Agendada",
     });
+
     setIsModalOpen(true);
   };
 
-  // -----------------------------
-  // Edit
-  // -----------------------------
   const handleEdit = (reuniao) => {
     const dt = parseDataLocal(reuniao.data_hora);
 
-    // Resolve tipo: prioridade FK já preenchida; fallback pelo texto tipo_reuniao -> slug
-    let tipoId = reuniao.tipo_reuniao_id || reuniao.tipo?.id || null;
-    let tipoNome = reuniao.tipo?.nome || reuniao.tipo_reuniao || "Geral";
-
-    if (!tipoId && reuniao.tipo_reuniao) {
-      const slug = normalizeKey(reuniao.tipo_reuniao);
-      const t = tiposBySlug.get(slug);
-      if (t?.id) {
-        tipoId = t.id;
-        tipoNome = t.nome || tipoNome;
-      }
-    }
-
-    const inicio = reuniao.horario_inicio
-      ? String(reuniao.horario_inicio).slice(0, 5)
-      : format(dt, "HH:mm");
-
-    const fim = reuniao.horario_fim
-      ? String(reuniao.horario_fim).slice(0, 5)
-      : reuniao.tipo?.horario_fim
-        ? String(reuniao.tipo.horario_fim).slice(0, 5)
-        : "";
-
     setFormData({
       titulo: reuniao.titulo || "",
-      tipo_reuniao_id: tipoId,
-      tipo_reuniao_nome: tipoNome,
-
+      tipo_reuniao_id: reuniao.tipo_reuniao_id || "",
       data: format(dt, "yyyy-MM-dd"),
-      hora: inicio,
-      hora_fim: fim || "09:15",
-
-      cor: reuniao.cor || reuniao.tipo?.cor || "#3B82F6",
+      hora_inicio: reuniao.horario_inicio
+        ? String(reuniao.horario_inicio).slice(0, 5)
+        : format(dt, "HH:mm"),
+      hora_fim: reuniao.horario_fim
+        ? String(reuniao.horario_fim).slice(0, 5)
+        : "09:15",
+      cor: reuniao.cor || "#3B82F6",
       responsavel: reuniao.responsavel || "",
-      pauta: reuniao.pauta || "",
-      recorrencia: "unica",
+      ata: reuniao.ata || "",
+      status: reuniao.status || "Agendada",
     });
 
     setEditingReuniao(reuniao);
     setIsModalOpen(true);
   };
 
-  // -----------------------------
-  // Submit
-  // -----------------------------
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    // data_hora = data + hora
-    const dataHoraIso = `${formData.data}T${formData.hora}:00`;
-
-    // ✅ grava também horários separados (sua tabela tem horario_inicio/horario_fim no CSV)
-    const dados = {
-      titulo: formData.titulo,
-      data_hora: dataHoraIso,
-
-      horario_inicio: formData.hora || null,
-      horario_fim: formData.hora_fim || null,
-
-      cor: formData.cor || null,
-      responsavel: formData.responsavel || null,
-      pauta: formData.pauta || null,
-
-      // ✅ FK do tipo
-      tipo_reuniao_id: formData.tipo_reuniao_id || null,
-
-      // ✅ compatibilidade temporária (mantém texto)
-      tipo_reuniao: formData.tipo_reuniao_nome || null,
-
-      // seu campo atual
-      area_id: 4,
-    };
-
+  const calcDuracaoSegundos = (inicioHHMM, fimHHMM) => {
     try {
-      if (editingReuniao) {
-        const aplicar = window.confirm(
-          "Deseja aplicar as mudanças para reuniões futuras desta série?"
-        );
-        await atualizarReuniao(editingReuniao.id, dados, aplicar);
-      } else {
-        await salvarReuniao(dados, formData.recorrencia);
-      }
-
-      setIsModalOpen(false);
-      await fetchReunioes();
-    } catch (err) {
-      console.error(err);
-      alert("Erro ao salvar.");
+      if (!inicioHHMM || !fimHHMM) return null;
+      const [hi, mi] = inicioHHMM.split(":").map(Number);
+      const [hf, mf] = fimHHMM.split(":").map(Number);
+      const ini = hi * 60 + mi;
+      const fim = hf * 60 + mf;
+      const diff = Math.max(0, fim - ini);
+      return diff * 60;
+    } catch {
+      return null;
     }
   };
 
-  // -----------------------------
-  // Delete
-  // -----------------------------
-  const handleDelete = async () => {
-    if (!editingReuniao) return;
-    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO) return;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
-    const { error } = await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
-    if (error) {
-      console.error(error);
-      alert("Erro ao excluir.");
-      return;
+    const tipo = getTipoById(formData.tipo_reuniao_id);
+    const tipoNome = tipo?.nome || null;
+
+    const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
+    const duracao_segundos = calcDuracaoSegundos(formData.hora_inicio, formData.hora_fim);
+
+    const dados = {
+      titulo: formData.titulo,
+      data_hora: dataHoraIso,
+      tipo_reuniao_id: formData.tipo_reuniao_id || null,
+      tipo_reuniao: tipoNome || "Geral",
+      horario_inicio: formData.hora_inicio,
+      horario_fim: formData.hora_fim,
+      duracao_segundos,
+      cor: formData.cor,
+      responsavel: formData.responsavel,
+      ata: formData.ata,
+      status: formData.status,
+      area_id: 4,
+    };
+
+    if (editingReuniao) {
+      const aplicar = window.confirm(
+        "Deseja aplicar as mudanças para reuniões futuras desta série?"
+      );
+      await atualizarReuniao(editingReuniao.id, dados, aplicar);
+    } else {
+      // aqui continua como você já usa (semanal/mensal/unica foi removido do seu fluxo atual)
+      await salvarReuniao(dados, "unica");
     }
+
     setIsModalOpen(false);
     fetchReunioes();
   };
 
-  // -----------------------------
-  // Calendar intervals
-  // -----------------------------
+  const handleDelete = async () => {
+    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO) return;
+    await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
+    setIsModalOpen(false);
+    fetchReunioes();
+  };
+
   const calendarDays = eachDayOfInterval({
     start: startOfWeek(startOfMonth(currentDate)),
     end: endOfWeek(endOfMonth(currentDate)),
@@ -322,9 +216,6 @@ export default function CentralReunioes() {
     end: endOfWeek(currentDate),
   });
 
-  // -----------------------------
-  // Drag & Drop
-  // -----------------------------
   const handleDragStart = (e, reuniao) => {
     setDraggingReuniao(reuniao);
     e.dataTransfer.effectAllowed = "move";
@@ -338,14 +229,13 @@ export default function CentralReunioes() {
 
     try {
       const dtOrig = parseDataLocal(draggingReuniao.data_hora);
-      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${format(dtOrig, "HH:mm:ss")}`;
+      const hora = format(dtOrig, "HH:mm:ss");
+      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${hora}`;
 
-      const { error } = await supabase
+      await supabase
         .from("reunioes")
         .update({ data_hora: novaDataHora })
         .eq("id", draggingReuniao.id);
-
-      if (error) throw error;
 
       fetchReunioes();
     } catch (err) {
@@ -354,17 +244,17 @@ export default function CentralReunioes() {
     }
   };
 
-  // -----------------------------
-  // List grouping
-  // -----------------------------
+  // Agrupamento para lista
   const reunioesAgrupadas = useMemo(() => {
-    return (reunioes || []).reduce((acc, r) => {
+    return reunioes.reduce((acc, r) => {
       const day = format(parseDataLocal(r.data_hora), "yyyy-MM-dd");
       if (!acc[day]) acc[day] = [];
       acc[day].push(r);
       return acc;
     }, {});
   }, [reunioes]);
+
+  const tipoLabel = (r) => r.tipos_reuniao?.nome || r.tipo_reuniao || "Geral";
 
   return (
     <Layout>
@@ -373,24 +263,30 @@ export default function CentralReunioes() {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1>
           </div>
-
           <div className="flex gap-2">
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
               <button
                 onClick={() => setView("calendar")}
-                className={`p-2 rounded ${view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`}
+                className={`p-2 rounded ${
+                  view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                }`}
               >
                 <CalIcon size={18} />
               </button>
               <button
                 onClick={() => setView("week")}
-                className={`p-2 rounded ${view === "week" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`}
+                className={`p-2 rounded ${
+                  view === "week" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                }`}
+                title="Semanal"
               >
                 S
               </button>
               <button
                 onClick={() => setView("list")}
-                className={`p-2 rounded ${view === "list" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`}
+                className={`p-2 rounded ${
+                  view === "list" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                }`}
               >
                 <List size={18} />
               </button>
@@ -405,7 +301,7 @@ export default function CentralReunioes() {
           </div>
         </div>
 
-        {/* VIEW: CALENDAR */}
+        {/* MODO CALENDÁRIO */}
         {view === "calendar" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b">
@@ -452,8 +348,10 @@ export default function CentralReunioes() {
                   {reunioes
                     .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
                     .map((m) => {
-                      const cor = getMeetingCor(m);
-                      const horaInicio = getMeetingInicio(m);
+                      const badge = statusBadge(m.status);
+                      const hhmm = m.horario_inicio
+                        ? String(m.horario_inicio).slice(0, 5)
+                        : format(parseDataLocal(m.data_hora), "HH:mm");
 
                       return (
                         <div
@@ -464,11 +362,30 @@ export default function CentralReunioes() {
                             e.stopPropagation();
                             handleEdit(m);
                           }}
-                          className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer"
-                          style={{ borderLeftColor: cor, backgroundColor: cor + "15" }}
-                          title={`${horaInicio} • ${m.titulo} • ${getMeetingTipoNome(m)}`}
+                          className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer flex items-center justify-between gap-2"
+                          style={{
+                            borderLeftColor: m.cor,
+                            backgroundColor: (m.cor || "#3B82F6") + "15",
+                          }}
+                          title={m.titulo}
                         >
-                          {horaInicio} {m.titulo}
+                          <span className="truncate">
+                            {hhmm} {m.titulo}
+                          </span>
+
+                          {/* ✅ ● ✖ */}
+                          <span
+                            className={`text-[10px] font-black ${
+                              badge.text === "✅"
+                                ? "text-green-600"
+                                : badge.text === "✖"
+                                ? "text-red-600"
+                                : "text-yellow-500"
+                            }`}
+                            title={badge.title}
+                          >
+                            {badge.text}
+                          </span>
                         </div>
                       );
                     })}
@@ -478,7 +395,7 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* VIEW: WEEK */}
+        {/* MODO SEMANAL */}
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
             <div className="grid grid-cols-7 flex-1">
@@ -495,25 +412,37 @@ export default function CentralReunioes() {
                   {reunioes
                     .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
                     .map((m) => {
-                      const cor = getMeetingCor(m);
-                      const horaInicio = getMeetingInicio(m);
-                      const horaFim = getMeetingFim(m);
+                      const badge = statusBadge(m.status);
+                      const hhmm = m.horario_inicio
+                        ? String(m.horario_inicio).slice(0, 5)
+                        : format(parseDataLocal(m.data_hora), "HH:mm");
 
                       return (
                         <div
                           key={m.id}
                           onClick={() => handleEdit(m)}
-                          className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
-                          style={{ borderLeft: `4px solid ${cor}` }}
+                          className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2"
+                          style={{ borderLeft: `4px solid ${m.cor}` }}
                         >
-                          <p className="text-[10px] font-bold text-slate-400">
-                            {horaInicio}
-                            {horaFim ? `–${horaFim}` : ""}
-                          </p>
-                          <p className="text-xs font-bold text-slate-700">{m.titulo}</p>
-                          <p className="text-[10px] text-slate-500 uppercase font-bold">
-                            {getMeetingTipoNome(m)}
-                          </p>
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-400">{hhmm}</p>
+                            <p className="text-xs font-bold text-slate-700">{m.titulo}</p>
+                            <p className="text-[10px] text-slate-500 uppercase font-bold">
+                              {tipoLabel(m)}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-sm font-black ${
+                              badge.text === "✅"
+                                ? "text-green-600"
+                                : badge.text === "✖"
+                                ? "text-red-600"
+                                : "text-yellow-500"
+                            }`}
+                            title={badge.title}
+                          >
+                            {badge.text}
+                          </span>
                         </div>
                       );
                     })}
@@ -523,7 +452,7 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* VIEW: LIST */}
+        {/* MODO LISTA */}
         {view === "list" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-6">
             {Object.entries(reunioesAgrupadas)
@@ -536,27 +465,40 @@ export default function CentralReunioes() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {meetings.map((m) => {
-                      const cor = getMeetingCor(m);
-                      const horaInicio = getMeetingInicio(m);
-                      const horaFim = getMeetingFim(m);
+                      const badge = statusBadge(m.status);
+                      const hhmm = m.horario_inicio
+                        ? String(m.horario_inicio).slice(0, 5)
+                        : format(parseDataLocal(m.data_hora), "HH:mm");
 
                       return (
                         <div
                           key={m.id}
                           onClick={() => handleEdit(m)}
-                          className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4"
+                          className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4 justify-between"
                         >
-                          <div className="w-2 h-10 rounded-full" style={{ backgroundColor: cor }} />
-                          <div>
-                            <p className="text-xs font-bold text-blue-600">
-                              {horaInicio}
-                              {horaFim ? `–${horaFim}` : ""}
-                            </p>
-                            <h4 className="font-bold text-slate-800">{m.titulo}</h4>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold">
-                              {getMeetingTipoNome(m)}
-                            </p>
+                          <div className="flex items-center gap-4">
+                            <div className="w-2 h-10 rounded-full" style={{ backgroundColor: m.cor }} />
+                            <div>
+                              <p className="text-xs font-bold text-blue-600">{hhmm}</p>
+                              <h4 className="font-bold text-slate-800">{m.titulo}</h4>
+                              <p className="text-[10px] text-slate-500 uppercase font-bold">
+                                {tipoLabel(m)}
+                              </p>
+                            </div>
                           </div>
+
+                          <span
+                            className={`text-sm font-black ${
+                              badge.text === "✅"
+                                ? "text-green-600"
+                                : badge.text === "✖"
+                                ? "text-red-600"
+                                : "text-yellow-500"
+                            }`}
+                            title={badge.title}
+                          >
+                            {badge.text}
+                          </span>
                         </div>
                       );
                     })}
@@ -573,7 +515,7 @@ export default function CentralReunioes() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
             <div className="bg-white px-8 py-5 border-b flex justify-between items-center shrink-0">
               <h2 className="text-xl font-bold text-slate-800">
-                {editingReuniao ? "Editar Ritual" : "Novo Ritual"}
+                {editingReuniao ? "Editar Reunião" : "Nova Reunião"}
               </h2>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -584,7 +526,7 @@ export default function CentralReunioes() {
             </div>
 
             <form
-              id="form-ritual"
+              id="form-reuniao"
               onSubmit={handleSubmit}
               className="flex-1 overflow-y-auto p-8 bg-white"
             >
@@ -592,7 +534,7 @@ export default function CentralReunioes() {
                 formData={formData}
                 setFormData={setFormData}
                 editingReuniao={editingReuniao}
-                tiposReuniao={tiposReuniao}
+                tipos={tipos}
               />
             </form>
 
@@ -603,20 +545,18 @@ export default function CentralReunioes() {
                   onClick={handleDelete}
                   className="mr-auto text-red-500 font-bold flex items-center gap-2 px-4 hover:bg-red-50 rounded-lg"
                 >
-                  <Trash2 size={16} /> Excluir Ritual
+                  <Trash2 size={16} /> Excluir Reunião
                 </button>
               )}
-
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="px-6 py-2 text-slate-500 font-bold"
               >
                 Cancelar
               </button>
-
               <button
                 type="submit"
-                form="form-ritual"
+                form="form-reuniao"
                 className="px-10 py-2 bg-blue-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 active:scale-95 transition-all"
               >
                 <Save size={18} /> Salvar Alterações
