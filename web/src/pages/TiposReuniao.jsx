@@ -25,7 +25,8 @@ import {
 /**
  * TABELAS ESPERADAS
  * - public.tipos_reuniao:
- *   id, nome, slug, periodicidade, dias_semana (int[]), horario_inicio (time),
+ *   id, nome, slug, periodicidade, dias_semana (int[]),
+ *   horario_inicio (time), horario_fim (time),
  *   ata_principal (text), cor (text), ordem (int)
  *
  * - public.reunioes:
@@ -84,10 +85,6 @@ function snippet(text, max = 160) {
   return clean.length > max ? clean.slice(0, max) + "..." : clean;
 }
 
-function nowISO() {
-  return new Date().toISOString();
-}
-
 export default function TiposReuniao() {
   const navigate = useNavigate();
 
@@ -117,6 +114,7 @@ export default function TiposReuniao() {
     periodicidade: "SEMANAL",
     dias_semana: [1],
     horario_inicio: "09:00",
+    horario_fim: "", // ✅ NOVO
     ata_principal: "",
     cor: "#111827",
     ordem: null,
@@ -135,7 +133,7 @@ export default function TiposReuniao() {
     const { data, error } = await supabase
       .from("tipos_reuniao")
       .select(
-        "id, nome, slug, periodicidade, dias_semana, horario_inicio, ata_principal, cor, ordem"
+        "id, nome, slug, periodicidade, dias_semana, horario_inicio, horario_fim, ata_principal, cor, ordem"
       )
       .order("ordem", { ascending: true, nullsFirst: false })
       .order("nome", { ascending: true });
@@ -160,7 +158,6 @@ export default function TiposReuniao() {
   };
 
   const fetchCounts = async (list) => {
-    // evita rodar em loop se usuário estiver mexendo muito
     setCountsLoading(true);
     try {
       const results = await Promise.all(
@@ -168,14 +165,12 @@ export default function TiposReuniao() {
           const tipoKey = t?.nome || t?.slug || "";
           if (!tipoKey) return [t.id, 0];
 
-          // count exact via head
           const { count, error } = await supabase
             .from("reunioes")
             .select("id", { count: "exact", head: true })
             .eq(REUNIOES_TIPO_FIELD, tipoKey);
 
           if (error) {
-            // não quebra a tela se não existir campo, apenas mostra vazio
             console.warn("Count erro:", error?.message);
             return [t.id, null];
           }
@@ -226,8 +221,6 @@ export default function TiposReuniao() {
       const tipoKey = tipo?.nome || tipo?.slug || "";
       if (!tipoKey) return;
 
-      // Próximas + recentes (limit 30), ordenadas
-      // (mostra tanto futuras quanto as últimas já ocorridas)
       const { data, error } = await supabase
         .from("reunioes")
         .select("id, titulo, data_hora, tipo_reuniao, pauta, cor")
@@ -257,6 +250,7 @@ export default function TiposReuniao() {
       periodicidade: "SEMANAL",
       dias_semana: [1],
       horario_inicio: "09:00",
+      horario_fim: "", // ✅
       ata_principal: "",
       cor: "#111827",
       ordem: null,
@@ -272,7 +266,10 @@ export default function TiposReuniao() {
       slug: tipo?.slug ?? "",
       periodicidade: tipo?.periodicidade ?? "SEMANAL",
       dias_semana: Array.isArray(tipo?.dias_semana) ? tipo.dias_semana : [],
-      horario_inicio: formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
+      horario_inicio:
+        formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
+      horario_fim:
+        formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim), // ✅
       ata_principal: tipo?.ata_principal ?? "",
       cor: tipo?.cor ?? "#111827",
       ordem: tipo?.ordem ?? null,
@@ -286,7 +283,6 @@ export default function TiposReuniao() {
       const next = exists
         ? (prev.dias_semana || []).filter((x) => x !== val)
         : [...(prev.dias_semana || []), val];
-      // mantém ordenado
       next.sort((a, b) => a - b);
       return { ...prev, dias_semana: next };
     });
@@ -296,9 +292,10 @@ export default function TiposReuniao() {
     if (!String(form.nome || "").trim()) return "Informe o nome.";
     const finalSlug = String(form.slug || "").trim() || slugify(form.nome);
     if (!finalSlug) return "Slug inválido.";
-    // horário opcional (mas recomendável)
     if (form.horario_inicio && !/^\d{2}:\d{2}$/.test(form.horario_inicio))
-      return "Horário inválido (use HH:MM).";
+      return "Horário início inválido (use HH:MM).";
+    if (form.horario_fim && !/^\d{2}:\d{2}$/.test(form.horario_fim))
+      return "Horário término inválido (use HH:MM).";
     return null;
   };
 
@@ -317,6 +314,7 @@ export default function TiposReuniao() {
         periodicidade: form.periodicidade || "SEMANAL",
         dias_semana: Array.isArray(form.dias_semana) ? form.dias_semana : [],
         horario_inicio: form.horario_inicio ? `${form.horario_inicio}:00` : null,
+        horario_fim: form.horario_fim ? `${form.horario_fim}:00` : null, // ✅
         ata_principal: form.ata_principal || null,
         cor: form.cor || null,
         ordem:
@@ -339,7 +337,6 @@ export default function TiposReuniao() {
       setFormOpen(false);
       await fetchTipos();
 
-      // se estava no drawer, atualiza seleção
       if (selectedTipo?.id && formMode === "edit" && selectedTipo.id === form.id) {
         const updated = (tipos || []).find((t) => t.id === form.id);
         if (updated) setSelectedTipo(updated);
@@ -363,7 +360,6 @@ export default function TiposReuniao() {
     if (!selectedTipo?.id) return;
     setDeleting(true);
     try {
-      // Segurança: se existir reuniões vinculadas, avisa (não bloqueia — pois depende da regra do seu negócio)
       const tipoKey = selectedTipo?.nome || selectedTipo?.slug || "";
       const { count } = await supabase
         .from("reunioes")
@@ -491,9 +487,7 @@ export default function TiposReuniao() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col">
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              {loading
-                ? "Carregando..."
-                : `${tiposFiltrados.length} tipo(s)`}
+              {loading ? "Carregando..." : `${tiposFiltrados.length} tipo(s)`}
               {countsLoading && (
                 <span className="ml-2 text-xs text-gray-400">(contando reuniões...)</span>
               )}
@@ -526,7 +520,8 @@ export default function TiposReuniao() {
                     t?.periodicidade ||
                     "—";
                   const dias = formatDiasSemana(t?.dias_semana);
-                  const hora = formatHora(t?.horario_inicio);
+                  const horaIni = formatHora(t?.horario_inicio);
+                  const horaFim = formatHora(t?.horario_fim);
                   const preview = snippet(t?.ata_principal, 160);
                   const c = counts[t.id];
 
@@ -575,7 +570,7 @@ export default function TiposReuniao() {
                       <div className="mt-3 flex flex-wrap gap-2">
                         {badge(<CalendarDays size={12} />, periodicidade)}
                         {badge(<CalendarDays size={12} />, dias)}
-                        {badge(<Clock size={12} />, hora)}
+                        {badge(<Clock size={12} />, `${horaIni} • ${horaFim}`)}
                         <span className="inline-flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-1 rounded-full">
                           <Hash size={12} />
                           {c === null || c === undefined ? "—" : `${c} reuniões`}
@@ -613,7 +608,6 @@ export default function TiposReuniao() {
                 })}
               </div>
             ) : (
-              // TABLE VIEW
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border border-gray-200">
@@ -650,7 +644,9 @@ export default function TiposReuniao() {
                           </td>
                           <td className="px-3 py-2">{periodicidade}</td>
                           <td className="px-3 py-2">{formatDiasSemana(t?.dias_semana)}</td>
-                          <td className="px-3 py-2">{formatHora(t?.horario_inicio)}</td>
+                          <td className="px-3 py-2">
+                            {formatHora(t?.horario_inicio)} • {formatHora(t?.horario_fim)}
+                          </td>
                           <td className="px-3 py-2">
                             {c === null || c === undefined ? "—" : c}
                           </td>
@@ -739,7 +735,8 @@ export default function TiposReuniao() {
                       Horário
                     </p>
                     <p className="text-sm font-bold text-gray-900 mt-1">
-                      {formatHora(selectedTipo?.horario_inicio)}
+                      {formatHora(selectedTipo?.horario_inicio)} •{" "}
+                      {formatHora(selectedTipo?.horario_fim)}
                     </p>
                   </div>
 
@@ -839,7 +836,10 @@ export default function TiposReuniao() {
                                     <Clock size={12} /> {dtStr}
                                   </p>
                                 </div>
-                                <ArrowRight size={18} className="text-gray-300 group-hover:text-blue-500" />
+                                <ArrowRight
+                                  size={18}
+                                  className="text-gray-300 group-hover:text-blue-500"
+                                />
                               </div>
 
                               {r.pauta && (
@@ -876,7 +876,9 @@ export default function TiposReuniao() {
                 <div className="flex items-center gap-2">
                   <Tags size={18} className="text-gray-700" />
                   <h3 className="font-bold text-gray-900">
-                    {formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}
+                    {formMode === "create"
+                      ? "Novo tipo de reunião"
+                      : "Editar tipo de reunião"}
                   </h3>
                 </div>
                 <button
@@ -902,9 +904,9 @@ export default function TiposReuniao() {
                         setForm((p) => ({
                           ...p,
                           nome: v,
-                          // auto sugere slug se campo estiver vazio ou em modo create
                           slug:
-                            formMode === "create" && (!p.slug || p.slug === slugify(p.nome))
+                            formMode === "create" &&
+                            (!p.slug || p.slug === slugify(p.nome))
                               ? slugify(v)
                               : p.slug,
                         }));
@@ -937,7 +939,9 @@ export default function TiposReuniao() {
                     </label>
                     <select
                       value={form.periodicidade}
-                      onChange={(e) => setForm((p) => ({ ...p, periodicidade: e.target.value }))}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, periodicidade: e.target.value }))
+                      }
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                     >
                       {PERIODICIDADES.map((p) => (
@@ -948,7 +952,21 @@ export default function TiposReuniao() {
                     </select>
                   </div>
 
-                  {/* Horário */}
+                  {/* Ordem */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Ordem (opcional)
+                    </label>
+                    <input
+                      type="number"
+                      value={form.ordem ?? ""}
+                      onChange={(e) => setForm((p) => ({ ...p, ordem: e.target.value }))}
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
+                      placeholder="Ex.: 1"
+                    />
+                  </div>
+
+                  {/* Horário início */}
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                       Horário (início)
@@ -956,7 +974,24 @@ export default function TiposReuniao() {
                     <input
                       type="time"
                       value={form.horario_inicio || ""}
-                      onChange={(e) => setForm((p) => ({ ...p, horario_inicio: e.target.value }))}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, horario_inicio: e.target.value }))
+                      }
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
+                    />
+                  </div>
+
+                  {/* ✅ Horário fim */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Horário (término)
+                    </label>
+                    <input
+                      type="time"
+                      value={form.horario_fim || ""}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, horario_fim: e.target.value }))
+                      }
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                     />
                   </div>
@@ -1005,30 +1040,20 @@ export default function TiposReuniao() {
                       <input
                         type="color"
                         value={form.cor || "#111827"}
-                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
+                        onChange={(e) =>
+                          setForm((p) => ({ ...p, cor: e.target.value }))
+                        }
                         className="h-10 w-14 border border-gray-300 rounded"
                       />
                       <input
                         value={form.cor || ""}
-                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
+                        onChange={(e) =>
+                          setForm((p) => ({ ...p, cor: e.target.value }))
+                        }
                         className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                         placeholder="#111827"
                       />
                     </div>
-                  </div>
-
-                  {/* Ordem */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Ordem (opcional)
-                    </label>
-                    <input
-                      type="number"
-                      value={form.ordem ?? ""}
-                      onChange={(e) => setForm((p) => ({ ...p, ordem: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                      placeholder="Ex.: 1"
-                    />
                   </div>
                 </div>
 
@@ -1039,7 +1064,9 @@ export default function TiposReuniao() {
                   </label>
                   <textarea
                     value={form.ata_principal}
-                    onChange={(e) => setForm((p) => ({ ...p, ata_principal: e.target.value }))}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, ata_principal: e.target.value }))
+                    }
                     rows={10}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none font-sans text-sm whitespace-pre-wrap"
                     placeholder="Cole aqui a ata principal..."
@@ -1086,12 +1113,8 @@ export default function TiposReuniao() {
               </div>
 
               <div className="p-6">
-                <p className="text-sm text-gray-700">
-                  Você está prestes a excluir:
-                </p>
-                <p className="text-lg font-bold text-gray-900 mt-1">
-                  {selectedTipo?.nome}
-                </p>
+                <p className="text-sm text-gray-700">Você está prestes a excluir:</p>
+                <p className="text-lg font-bold text-gray-900 mt-1">{selectedTipo?.nome}</p>
                 <p className="text-xs text-gray-500 mt-2">
                   Se existirem reuniões vinculadas, elas não serão apagadas automaticamente.
                 </p>
@@ -1116,7 +1139,6 @@ export default function TiposReuniao() {
             </div>
           </div>
         )}
-
       </div>
     </Layout>
   );
