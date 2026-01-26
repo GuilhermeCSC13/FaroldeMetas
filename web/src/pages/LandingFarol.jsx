@@ -4,7 +4,7 @@ const FAROL_HOME = "/inicio";
 
 // ✅ Coloque a URL real do INOVE aqui
 // (se preferir, use env: import.meta.env.VITE_INOVE_URL)
-const INOVE_URL = "https://SEU-INOVE.onrender.com";
+const INOVE_URL = "https://inovequatai.onrender.com";
 
 // ✅ Seu Farol
 const FAROL_URL = "https://faroldemetas.onrender.com";
