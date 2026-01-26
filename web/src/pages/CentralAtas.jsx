@@ -1,3 +1,4 @@
+// src/pages/CentralAtas.jsx
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
@@ -32,7 +33,7 @@ export default function CentralAtas() {
     responsavel: '',
     data_vencimento: '',
     observacao: '',
-    resultado: '', // novo campo: o que foi feito / evidências
+    resultado: '',
     fotos: [] 
   });
   const [newFiles, setNewFiles] = useState([]); 
@@ -346,6 +347,31 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     <span className="text-blue-600 font-bold text-xs uppercase tracking-wider mb-2 block flex items-center gap-1">
                       <CheckCircle size={14}/> Ata Oficial
                     </span>
+
+                    {/* >>> STATUS IA (novo) */}
+                    {selectedAta.ata_ia_status && (
+                      <div className="mb-2">
+                        <span
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
+                            selectedAta.ata_ia_status === "PRONTA"
+                              ? "bg-green-100 text-green-700"
+                              : selectedAta.ata_ia_status === "PROCESSANDO"
+                              ? "bg-blue-100 text-blue-700"
+                              : selectedAta.ata_ia_status === "ERRO"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          IA: {selectedAta.ata_ia_status}
+                        </span>
+                        {selectedAta.ata_ia_status === "ERRO" && selectedAta.ata_ia_erro && (
+                          <p className="text-xs text-red-600 mt-2">
+                            {selectedAta.ata_ia_erro}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
                       <span className="flex items-center gap-1">
@@ -383,6 +409,23 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* >>> VÍDEO COMPILADO (novo) */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
+                    <PlayCircle size={14}/> Gravação Compilada
+                  </div>
+                  {selectedAta.gravacao_compilada_url ? (
+                    <video controls className="w-full rounded-xl bg-black">
+                      <source src={selectedAta.gravacao_compilada_url} type="video/webm" />
+                      Seu navegador não conseguiu reproduzir este vídeo.
+                    </video>
+                  ) : (
+                    <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                      Vídeo ainda não compilado. O processamento roda em segundo plano após finalizar a reunião.
+                    </div>
+                  )}
                 </div>
 
                 <div className="mb-6 flex items-center gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
