@@ -1,3 +1,4 @@
+// src/pages/Copiloto.jsx
 import React, { useState, useEffect, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -217,6 +218,48 @@ export default function Copiloto() {
     if (e2) throw e2;
 
     // mantém apenas "updated_at" para rastreio (sem trocar gravacao_status)
+    await supabase
+      .from("reunioes")
+      .update({ updated_at: nowIso() })
+      .eq("id", selecionada.id);
+  };
+
+  /**
+   * >>> Compile Queue Job (FILA para compilar vídeo + gerar ATA IA; não muda gravacao_status)
+   */
+  const enqueueCompileJob = async () => {
+    if (!selecionada?.id) return;
+
+    const { data: r, error: e1 } = await supabase
+      .from("reunioes")
+      .select("id, gravacao_bucket, gravacao_prefix")
+      .eq("id", selecionada.id)
+      .single();
+
+    if (e1) throw e1;
+
+    const prefix = String(r?.gravacao_prefix || "").trim();
+
+    if (!prefix.startsWith(`reunioes/${selecionada.id}/sess_`)) {
+      throw new Error(
+        `Prefix inválido: "${prefix}". Esperado: reunioes/${selecionada.id}/sess_<uuid>/`
+      );
+    }
+
+    const { error: e2 } = await supabase.from("recording_compile_queue").insert([
+      {
+        reuniao_id: selecionada.id,
+        status: "PENDENTE",
+        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
+        storage_prefix: prefix,
+        tentativas: 0,
+        last_error: null,
+      },
+    ]);
+
+    if (e2) throw e2;
+
+    // rastreio sem mexer em gravacao_status
     await supabase
       .from("reunioes")
       .update({ updated_at: nowIso() })
@@ -571,6 +614,7 @@ export default function Copiloto() {
    * Finalização: aguarda fila e uploads, marca PRONTO_PROCESSAR/ERRO e limpa mídia
    * - Mantém PRONTO_PROCESSAR como status (não sobrescreve)
    * - Cria fila no drive_upload_queue após finalizar
+   * - Cria fila no recording_compile_queue para compilar vídeo + gerar ATA IA em segundo plano
    */
   const finalizeRecording = async () => {
     if (!selecionada?.id) return;
@@ -608,8 +652,11 @@ export default function Copiloto() {
           })
           .eq("id", selecionada.id);
 
-        // cria a fila para o Job juntar e enviar para o Drive (sem mudar gravacao_status)
+        // fila para Drive (se você usa)
         await enqueueDriveJob();
+
+        // >>> FILA para compilar vídeo + gerar ATA IA em segundo plano
+        await enqueueCompileJob();
       } else {
         await supabase
           .from("reunioes")
