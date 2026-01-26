@@ -1,5 +1,8 @@
 // src/App.jsx
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
+// ✅ NOVO: Landing/Guard
+import LandingFarol from "./pages/LandingFarol";
 
 // Páginas Principais
 import Inicio from "./pages/Inicio";
@@ -8,7 +11,7 @@ import Inicio from "./pages/Inicio";
 import Operacao from "./pages/Operacao";
 import Moov from "./pages/Moov";
 import Manutencao from "./pages/Manutencao";
-import Administrativo from "./pages/Administrativo"; // MAIN ADM
+import Administrativo from "./pages/Administrativo";
 
 // Reuniões & Ações
 import ReunioesCalendario from "./pages/ReunioesCalendario";
@@ -19,24 +22,27 @@ import GestaoAcoes from "./pages/GestaoAcoes";
 import CentralReunioes from "./pages/CentralReunioes";
 import CentralAtas from "./pages/CentralAtas";
 
-// ✅ Tipos de Reunião (NOVO)
+// Tipos de Reunião
 import TiposReuniao from "./pages/TiposReuniao";
 
-// Inteligência Artificial
+// IA
 import Copiloto from "./pages/Copiloto";
 
 // Configurações
 import Configuracoes from "./pages/Configuracoes";
 
-// Projetos (NOVO)
+// Projetos
 import Projetos from "./pages/Projetos";
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Home / Visão Geral */}
-        <Route path="/" element={<Inicio />} />
+        {/* ✅ Entrada: se entrar direto no link do Farol, passa no Guard */}
+        <Route path="/" element={<LandingFarol />} />
+
+        {/* ✅ Home real do Farol */}
+        <Route path="/inicio" element={<Inicio />} />
 
         {/* --- MÓDULOS DE ÁREAS --- */}
         <Route path="/planejamento/operacao" element={<Operacao />} />
@@ -44,19 +50,16 @@ export default function App() {
         <Route path="/moov" element={<Moov />} />
         <Route path="/manutencao" element={<Manutencao />} />
 
-        {/* --- MÓDULO REUNIÕES & ATAS --- */}
+        {/* --- REUNIÕES & ATAS --- */}
         <Route path="/central-reunioes" element={<CentralReunioes />} />
-
-        {/* ✅ NOVO: Tipos de Reunião */}
         <Route path="/tipos-reuniao" element={<TiposReuniao />} />
-
         <Route path="/central-atas" element={<CentralAtas />} />
         <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
-        {/* Projetos (NOVO) */}
+        {/* Projetos */}
         <Route path="/projetos" element={<Projetos />} />
 
-        {/* Rotas legado */}
+        {/* Legado */}
         <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
         <Route path="/reunioes/:id" element={<DetalheReuniao />} />
 
@@ -64,8 +67,11 @@ export default function App() {
         <Route path="/copiloto" element={<Copiloto />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
 
-        {/* Alias geral para Planejamento Tático apontando para a Home */}
-        <Route path="/planejamento-tatico" element={<Inicio />} />
+        {/* Alias (mantém compatibilidade) */}
+        <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/inicio" replace />} />
       </Routes>
     </BrowserRouter>
   );
