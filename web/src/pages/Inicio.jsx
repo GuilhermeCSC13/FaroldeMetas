@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-const INOVE_URL = "https://inovequatai.onrender.com/login"; // ✅ ajuste se necessário
+// ✅ REMOVIDO: Guard duplicado aqui. O guard fica SOMENTE no LandingFarol (rota "/").
+// const INOVE_URL = "https://inovequatai.onrender.com/login";
 
 const Inicio = () => {
   const navigate = useNavigate();
@@ -24,17 +25,14 @@ const Inicio = () => {
   const [iaStatus, setIaStatus] = useState("checking"); // checking | active | inactive
   const [lastUpdate, setLastUpdate] = useState(null);
 
-  const [stats, setStats] = useState({ acoesAbertas: 0, reunioesHoje: 0, metasCriticas: 0 });
+  const [stats, setStats] = useState({
+    acoesAbertas: 0,
+    reunioesHoje: 0,
+    metasCriticas: 0,
+  });
 
   useEffect(() => {
-    // ✅ REDIRECT GUARD: entrou direto no Farol sem vir do INOVE
-    const params = new URLSearchParams(window.location.search);
-    const from = params.get("from");
-    if (from !== "inove") {
-      window.location.replace(INOVE_URL);
-      return;
-    }
-
+    // ✅ Sem guard aqui. O guard fica só no LandingFarol.
     carregarDados();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,7 +95,11 @@ const Inicio = () => {
 
       const prompt = `
         Aja como um Diretor de Operações Sênior analisando o Farol Tático.
-        DADOS HOJE (${dataHoje}): Agenda: ${JSON.stringify(dados.agendaHoje)}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(dados.ultimasRealizadas)}.
+        DADOS HOJE (${dataHoje}): Agenda: ${JSON.stringify(
+        dados.agendaHoje
+      )}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(
+        dados.ultimasRealizadas
+      )}.
         
         MISSÃO: Escreva um resumo executivo curto (máx 4 linhas).
         DIRETRIZES: Destaque pontos de atenção ou oportunidades de foco. Não invente dados. Use markdown simples (negrito **texto**).
@@ -114,7 +116,9 @@ const Inicio = () => {
       localStorage.setItem("farol_ia_text", texto);
     } catch (error) {
       console.error("Erro IA:", error);
-      setResumoIA("⚠️ Satélite de IA temporariamente indisponível. Os dados manuais acima permanecem precisos.");
+      setResumoIA(
+        "⚠️ Satélite de IA temporariamente indisponível. Os dados manuais acima permanecem precisos."
+      );
       setIaStatus("inactive");
     } finally {
       setLoadingIA(false);
@@ -133,8 +137,12 @@ const Inicio = () => {
         {/* HEADER & STATUS BAR */}
         <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Painel de Comando</h1>
-            <p className="text-gray-500 text-sm mt-1">Visão Estratégica & Tática Unificada</p>
+            <h1 className="text-3xl font-bold text-gray-900">
+              Painel de Comando
+            </h1>
+            <p className="text-gray-500 text-sm mt-1">
+              Visão Estratégica & Tática Unificada
+            </p>
           </div>
 
           {/* STATUS DA IA */}
@@ -150,11 +158,21 @@ const Inicio = () => {
             ></div>
             <div className="flex flex-col">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                {iaStatus === "active" ? "Sistema Online" : iaStatus === "checking" ? "Analisando..." : "Offline"}
+                {iaStatus === "active"
+                  ? "Sistema Online"
+                  : iaStatus === "checking"
+                  ? "Analisando..."
+                  : "Offline"}
               </span>
-              {lastUpdate && <span className="text-[10px] text-gray-500">Atualizado às {lastUpdate}</span>}
+              {lastUpdate && (
+                <span className="text-[10px] text-gray-500">
+                  Atualizado às {lastUpdate}
+                </span>
+              )}
             </div>
-            {iaStatus === "active" && <BrainCircuit size={16} className="text-blue-600 ml-2 opacity-50" />}
+            {iaStatus === "active" && (
+              <BrainCircuit size={16} className="text-blue-600 ml-2 opacity-50" />
+            )}
           </div>
         </div>
 
@@ -167,10 +185,16 @@ const Inicio = () => {
             <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <Zap size={60} />
             </div>
-            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Pendências</p>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">
+              Pendências
+            </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">{stats.acoesAbertas}</span>
-              <span className="text-xs text-red-500 font-medium">ações abertas</span>
+              <span className="text-4xl font-bold text-gray-800">
+                {stats.acoesAbertas}
+              </span>
+              <span className="text-xs text-red-500 font-medium">
+                ações abertas
+              </span>
             </div>
           </div>
 
@@ -181,9 +205,13 @@ const Inicio = () => {
             <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <Calendar size={60} />
             </div>
-            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Agenda Hoje</p>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">
+              Agenda Hoje
+            </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">{stats.reunioesHoje}</span>
+              <span className="text-4xl font-bold text-gray-800">
+                {stats.reunioesHoje}
+              </span>
               <span className="text-xs text-blue-500 font-medium">eventos</span>
             </div>
           </div>
@@ -192,9 +220,13 @@ const Inicio = () => {
             <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <TrendingUp size={60} />
             </div>
-            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Metas Críticas</p>
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">
+              Metas Críticas
+            </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">{stats.metasCriticas}</span>
+              <span className="text-4xl font-bold text-gray-800">
+                {stats.metasCriticas}
+              </span>
               <span className="text-xs text-yellow-600 font-medium">atenção</span>
             </div>
           </div>
@@ -214,8 +246,12 @@ const Inicio = () => {
                       <BrainCircuit className="text-blue-400" size={24} />
                     </div>
                     <div>
-                      <h2 className="text-lg font-bold text-white tracking-wide">Análise Executiva</h2>
-                      <p className="text-xs text-slate-400">Gemini 1.5 Pro • Monitoramento Ativo</p>
+                      <h2 className="text-lg font-bold text-white tracking-wide">
+                        Análise Executiva
+                      </h2>
+                      <p className="text-xs text-slate-400">
+                        Gemini 1.5 Pro • Monitoramento Ativo
+                      </p>
                     </div>
                   </div>
                   <button
@@ -223,21 +259,29 @@ const Inicio = () => {
                     className="text-slate-400 hover:text-white transition-colors"
                     title="Forçar Reanálise"
                   >
-                    <RefreshCw size={18} className={loadingIA ? "animate-spin" : ""} />
+                    <RefreshCw
+                      size={18}
+                      className={loadingIA ? "animate-spin" : ""}
+                    />
                   </button>
                 </div>
 
                 {loadingIA ? (
                   <div className="flex flex-col items-center justify-center py-10 text-blue-200/50">
                     <Loader2 size={32} className="animate-spin mb-3" />
-                    <p className="text-sm animate-pulse">Processando dados operacionais...</p>
+                    <p className="text-sm animate-pulse">
+                      Processando dados operacionais...
+                    </p>
                   </div>
                 ) : (
                   <div className="text-slate-300 text-sm leading-relaxed space-y-3">
                     {resumoIA.split("\n").map((line, idx) => {
                       if (line.startsWith("#")) {
                         return (
-                          <h3 key={idx} className="text-white font-bold text-base mt-4 mb-2">
+                          <h3
+                            key={idx}
+                            className="text-white font-bold text-base mt-4 mb-2"
+                          >
                             {line.replace(/^#+\s/, "")}
                           </h3>
                         );
@@ -267,10 +311,12 @@ const Inicio = () => {
 
               <div className="relative z-10 mt-6 pt-6 border-t border-white/5 flex gap-4 text-xs text-slate-400 font-mono">
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div> CRM Conectado
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>{" "}
+                  CRM Conectado
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div> Agenda Sincronizada
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{" "}
+                  Agenda Sincronizada
                 </span>
               </div>
             </div>
@@ -278,7 +324,9 @@ const Inicio = () => {
 
           {/* MENUS RÁPIDOS */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">Acesso Rápido</h3>
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
+              Acesso Rápido
+            </h3>
 
             <button
               onClick={() => navigate("/central-reunioes")}
@@ -293,7 +341,10 @@ const Inicio = () => {
                   <p className="text-xs text-gray-500">Ver calendário</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-blue-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-blue-600 transition-colors"
+                size={18}
+              />
             </button>
 
             <button
@@ -309,7 +360,10 @@ const Inicio = () => {
                   <p className="text-xs text-gray-500">Histórico de decisões</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-purple-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-purple-600 transition-colors"
+                size={18}
+              />
             </button>
 
             <button
@@ -325,7 +379,10 @@ const Inicio = () => {
                   <p className="text-xs text-gray-500">IA Copiloto</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-red-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-red-600 transition-colors"
+                size={18}
+              />
             </button>
           </div>
         </div>
@@ -339,8 +396,12 @@ const Inicio = () => {
                   <Layers className="text-white" />
                 </div>
                 <div>
-                  <h2 className="font-bold text-lg">Sistema de Tratativas & Avarias</h2>
-                  <p className="text-blue-200 text-sm">Ambiente exclusivo para gestão de frota.</p>
+                  <h2 className="font-bold text-lg">
+                    Sistema de Tratativas & Avarias
+                  </h2>
+                  <p className="text-blue-200 text-sm">
+                    Ambiente exclusivo para gestão de frota.
+                  </p>
                 </div>
               </div>
               <a
