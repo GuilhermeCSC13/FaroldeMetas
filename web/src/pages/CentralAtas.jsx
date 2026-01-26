@@ -3,9 +3,9 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
 import { getGeminiFlash } from '../services/gemini';
-import { 
-  FileText, Calendar, User, Search, CheckCircle, 
-  Clock, Layers, Download, Save, Edit3, Trash2, Plus, X, 
+import {
+  FileText, Calendar, User, Search, CheckCircle,
+  Clock, Layers, Download, Save, Edit3, Trash2, Plus, X,
   Image as ImageIcon, Loader2, Cpu, PlayCircle, Headphones, Camera, ExternalLink, MessageSquare
 } from 'lucide-react';
 
@@ -13,12 +13,15 @@ export default function CentralAtas() {
   const [atas, setAtas] = useState([]);
   const [selectedAta, setSelectedAta] = useState(null);
   const [busca, setBusca] = useState('');
-  
+
+  // URLs geradas (signed)
+  const [mediaUrls, setMediaUrls] = useState({ video: null, audio: null });
+
   // Dados da Ata
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
   const [observacoes, setObservacoes] = useState('');
-  
+
   // Estados de Interface
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState('');
@@ -34,12 +37,13 @@ export default function CentralAtas() {
     data_vencimento: '',
     observacao: '',
     resultado: '',
-    fotos: [] 
+    fotos: []
   });
-  const [newFiles, setNewFiles] = useState([]); 
+  const [newFiles, setNewFiles] = useState([]);
 
   useEffect(() => {
     fetchAtas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -48,15 +52,66 @@ export default function CentralAtas() {
       setEditedPauta(selectedAta.pauta || '');
       setObservacoes(selectedAta.observacoes || '');
       setIsEditing(false);
+
+      // ✅ gera URLs (vídeo/áudio) via storage
+      hydrateMediaUrls(selectedAta);
+    } else {
+      setMediaUrls({ video: null, audio: null });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAta]);
 
+  // =========================
+  // ✅ helpers: signed urls
+  // =========================
+  const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 30) => {
+    if (!bucket || !filePath) return null;
+
+    // tenta signed url (melhor para bucket privado)
+    const { data: signed, error: e1 } = await supabase
+      .storage
+      .from(bucket)
+      .createSignedUrl(filePath, expiresInSec);
+
+    if (!e1 && signed?.signedUrl) return signed.signedUrl;
+
+    // fallback: public url (se bucket for público)
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return pub?.publicUrl || null;
+  };
+
+  const hydrateMediaUrls = async (ata) => {
+    try {
+      const videoUrl = await getSignedOrPublicUrl(
+        ata.gravacao_bucket,
+        ata.gravacao_path
+      );
+
+      const audioUrl = await getSignedOrPublicUrl(
+        ata.gravacao_audio_bucket || ata.gravacao_bucket,
+        ata.gravacao_audio_path
+      );
+
+      setMediaUrls({ video: videoUrl, audio: audioUrl });
+    } catch (e) {
+      console.error("Erro ao gerar URLs do storage:", e);
+      setMediaUrls({ video: null, audio: null });
+    }
+  };
+
   const fetchAtas = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('reunioes')
       .select('*')
       .eq('status', 'Realizada')
       .order('data_hora', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setAtas([]);
+      return;
+    }
+
     setAtas(data || []);
     if (data && data.length > 0 && !selectedAta) setSelectedAta(data[0]);
   };
@@ -79,9 +134,9 @@ export default function CentralAtas() {
         .eq('tipo_reuniao', ata.tipo_reuniao)
         .neq('id', ata.id)
         .lt('data_hora', ata.data_hora);
-      
+
       const listaIds = (idsDoTipo || []).map(r => r.id);
-      
+
       if (listaIds.length > 0) {
         const { data: anteriores } = await supabase
           .from('acoes')
@@ -100,14 +155,14 @@ export default function CentralAtas() {
   // --- FUNÇÕES DO MODAL ---
 
   const openNewActionModal = () => {
-    setActionForm({ 
-      id: null, 
-      descricao: '', 
-      responsavel: '', 
-      data_vencimento: '', 
-      observacao: '', 
+    setActionForm({
+      id: null,
+      descricao: '',
+      responsavel: '',
+      data_vencimento: '',
+      observacao: '',
       resultado: '',
-      fotos: [] 
+      fotos: []
     });
     setNewFiles([]);
     setIsModalOpen(true);
@@ -173,7 +228,7 @@ export default function CentralAtas() {
         if (error) throw error;
       }
 
-      await carregarDetalhes(selectedAta); // Atualiza a tela
+      await carregarDetalhes(selectedAta);
       setIsModalOpen(false);
 
     } catch (error) {
@@ -184,11 +239,10 @@ export default function CentralAtas() {
   };
 
   const toggleStatusAcao = async (acao, e) => {
-    e.stopPropagation(); 
+    e.stopPropagation();
     const novoStatus = acao.status === 'Aberta' ? 'Concluída' : 'Aberta';
-    
-    // Atualiza visualmente (rápido)
-    const updateList = (lista) => lista.map(a => a.id === acao.id ? {...a, status: novoStatus} : a);
+
+    const updateList = (lista) => lista.map(a => a.id === acao.id ? { ...a, status: novoStatus } : a);
     setAcoesCriadas(updateList(acoesCriadas));
     setAcoesAnteriores(updateList(acoesAnteriores));
 
@@ -197,11 +251,15 @@ export default function CentralAtas() {
 
   // --- OUTRAS FUNÇÕES ---
   const handleSaveAta = async () => {
-    const { error } = await supabase.from('reunioes').update({ pauta: editedPauta, observacoes }).eq('id', selectedAta.id);
+    const { error } = await supabase
+      .from('reunioes')
+      .update({ pauta: editedPauta, observacoes })
+      .eq('id', selectedAta.id);
+
     if (!error) {
       setIsEditing(false);
-      setSelectedAta(prev => ({...prev, pauta: editedPauta, observacoes}));
-      setAtas(prev => prev.map(a => a.id === selectedAta.id ? {...a, pauta: editedPauta, observacoes} : a));
+      setSelectedAta(prev => ({ ...prev, pauta: editedPauta, observacoes }));
+      setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, pauta: editedPauta, observacoes } : a));
       alert("Ata salva com sucesso!");
     } else {
       alert("Erro ao salvar ata: " + error.message);
@@ -209,11 +267,15 @@ export default function CentralAtas() {
   };
 
   const handleRegenerateIA = async () => {
-    if (!selectedAta?.audio_url || !window.confirm("Gerar novo resumo a partir do áudio?")) return;
+    // ✅ usa audioUrl gerada via storage (não campo inexistente)
+    const audioUrl = mediaUrls.audio;
+    if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio?")) return;
 
     setIsGenerating(true);
     try {
-      const response = await fetch(selectedAta.audio_url);
+      const response = await fetch(audioUrl);
+      if (!response.ok) throw new Error("Falha ao baixar o áudio.");
+
       const blob = await response.blob();
       const reader = new FileReader();
 
@@ -224,7 +286,7 @@ export default function CentralAtas() {
           const model = getGeminiFlash();
 
           const titulo = selectedAta.titulo || 'Ata da Reunião';
-          const dataBR = selectedAta.data_hora 
+          const dataBR = selectedAta.data_hora
             ? new Date(selectedAta.data_hora).toLocaleDateString('pt-BR')
             : '';
 
@@ -235,7 +297,7 @@ REGRAS IMPORTANTES:
 - NÃO invente nomes de pessoas, projetos, datas, decisões ou ações.
 - Se algum trecho não ficar claro no áudio, escreva "[inaudível]" em vez de completar.
 - Não crie exemplos genéricos nem textos de modelo prontos.
-- Use apenas informações que realmente aparecem na transcrição.
+- Use apenas informações que realmente aparecem no áudio.
 
 Contexto da reunião (metadados do sistema):
 Título: "${titulo}"
@@ -257,7 +319,7 @@ Gere a ata NO MÁXIMO com a seguinte estrutura:
 - Ação — Responsável — Prazo (se houver)
 
 Preencha cada seção somente com o que estiver claramente no áudio. Se não houver informação suficiente para alguma seção, escreva "Sem registros claros no áudio." nessa seção.
-`;
+          `.trim();
 
           const result = await model.generateContent([
             prompt,
@@ -266,7 +328,6 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
 
           const texto = result.response.text();
 
-          // Não grava direto no banco: usuário revisa antes
           setEditedPauta(texto);
           setIsEditing(true);
           alert("Resumo gerado pela IA. Revise e clique em SALVAR para gravar na ata.");
@@ -293,20 +354,23 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
     }
   };
 
-  const atasFiltradas = atas.filter(a => a.titulo.toLowerCase().includes(busca.toLowerCase()));
+  const atasFiltradas = atas.filter(a => (a.titulo || "").toLowerCase().includes(busca.toLowerCase()));
+
+  // ✅ status IA compatível (PRONTO/PRONTA)
+  const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
 
   return (
     <Layout>
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
-        
+
         {/* SIDEBAR */}
         <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-10 shadow-sm">
           <div className="p-5 border-b border-slate-100">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Layers className="text-blue-600" size={20}/> Banco de Atas
+              <Layers className="text-blue-600" size={20} /> Banco de Atas
             </h2>
             <div className="mt-4 relative">
-              <Search className="absolute left-3 top-2.5 text-slate-400" size={16}/>
+              <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
               <input
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2"
                 placeholder="Buscar..."
@@ -320,15 +384,14 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
               <button
                 key={ata.id}
                 onClick={() => setSelectedAta(ata)}
-                className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col gap-1 ${
-                  selectedAta?.id === ata.id ? 'bg-blue-50 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'
-                }`}
+                className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col gap-1 ${selectedAta?.id === ata.id ? 'bg-blue-50 border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'
+                  }`}
               >
                 <h3 className={`font-bold text-sm ${selectedAta?.id === ata.id ? 'text-blue-800' : 'text-slate-700'}`}>
                   {ata.titulo}
                 </h3>
                 <span className="text-xs text-slate-500 flex items-center gap-1">
-                  <Calendar size={12}/> {new Date(ata.data_hora).toLocaleDateString()}
+                  <Calendar size={12} /> {ata.data_hora ? new Date(ata.data_hora).toLocaleDateString() : "-"}
                 </span>
               </button>
             ))}
@@ -339,32 +402,31 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
         <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8 custom-scrollbar relative">
           {selectedAta ? (
             <div className="max-w-5xl mx-auto space-y-6">
-              
+
               {/* HEADER ATA */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <span className="text-blue-600 font-bold text-xs uppercase tracking-wider mb-2 block flex items-center gap-1">
-                      <CheckCircle size={14}/> Ata Oficial
+                      <CheckCircle size={14} /> Ata Oficial
                     </span>
 
-                    {/* >>> STATUS IA (novo) */}
+                    {/* >>> STATUS IA */}
                     {selectedAta.ata_ia_status && (
                       <div className="mb-2">
                         <span
-                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
-                            selectedAta.ata_ia_status === "PRONTA"
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
                               ? "bg-green-100 text-green-700"
-                              : selectedAta.ata_ia_status === "PROCESSANDO"
-                              ? "bg-blue-100 text-blue-700"
-                              : selectedAta.ata_ia_status === "ERRO"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-700"
-                          }`}
+                              : iaStatusNorm === "PROCESSANDO"
+                                ? "bg-blue-100 text-blue-700"
+                                : iaStatusNorm === "ERRO"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-slate-100 text-slate-700"
+                            }`}
                         >
                           IA: {selectedAta.ata_ia_status}
                         </span>
-                        {selectedAta.ata_ia_status === "ERRO" && selectedAta.ata_ia_erro && (
+                        {iaStatusNorm === "ERRO" && selectedAta.ata_ia_erro && (
                           <p className="text-xs text-red-600 mt-2">
                             {selectedAta.ata_ia_erro}
                           </p>
@@ -375,10 +437,10 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
                       <span className="flex items-center gap-1">
-                        <Calendar size={16}/> {new Date(selectedAta.data_hora).toLocaleDateString()}
+                        <Calendar size={16} /> {selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString() : "-"}
                       </span>
                       <span className="flex items-center gap-1">
-                        <User size={16}/> {selectedAta.responsavel || 'IA'}
+                        <User size={16} /> {selectedAta.responsavel || 'IA'}
                       </span>
                     </div>
                   </div>
@@ -388,7 +450,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                         onClick={handleSaveAta}
                         className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg"
                       >
-                        <Save size={18}/> Salvar
+                        <Save size={18} /> Salvar
                       </button>
                     ) : (
                       <div className="flex gap-2">
@@ -397,58 +459,74 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                           className="p-2 text-slate-400 hover:text-blue-600 rounded-lg bg-slate-50"
                           title="Editar"
                         >
-                          <Edit3 size={20}/>
+                          <Edit3 size={20} />
                         </button>
                         <button
                           onClick={handleDeleteAta}
                           className="p-2 text-slate-400 hover:text-red-600 rounded-lg bg-slate-50"
                           title="Excluir"
                         >
-                          <Trash2 size={20}/>
+                          <Trash2 size={20} />
                         </button>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* >>> VÍDEO COMPILADO (novo) */}
+                {/* >>> VÍDEO COMPILADO */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
-                    <PlayCircle size={14}/> Gravação Compilada
+                    <PlayCircle size={14} /> Gravação Compilada
                   </div>
-                  {selectedAta.gravacao_compilada_url ? (
-                    <video controls className="w-full rounded-xl bg-black">
-                      <source src={selectedAta.gravacao_compilada_url} type="video/webm" />
-                      Seu navegador não conseguiu reproduzir este vídeo.
-                    </video>
+
+                  {mediaUrls.video ? (
+                    <div className="space-y-2">
+                      <video controls className="w-full rounded-xl bg-black">
+                        <source src={mediaUrls.video} type="video/webm" />
+                        Seu navegador não conseguiu reproduzir este vídeo.
+                      </video>
+
+                      {/* link direto para abrir em nova aba */}
+                      <a
+                        href={mediaUrls.video}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 text-xs font-bold text-blue-700"
+                      >
+                        <ExternalLink size={14} />
+                        Abrir vídeo em nova aba
+                      </a>
+                    </div>
                   ) : (
                     <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                      Vídeo ainda não compilado. O processamento roda em segundo plano após finalizar a reunião.
+                      Vídeo não disponível ainda (sem gravacao_path). Rode o backfill/worker para compilar.
                     </div>
                   )}
                 </div>
 
+                {/* >>> ÁUDIO */}
                 <div className="mb-6 flex items-center gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <div className="p-2 bg-white rounded-full text-blue-500 shadow-sm">
-                    <Headphones size={20}/>
+                    <Headphones size={20} />
                   </div>
                   <div className="flex-1">
-                    {selectedAta.audio_url ? (
+                    {mediaUrls.audio ? (
                       <audio controls className="w-full h-8">
-                        <source src={selectedAta.audio_url} type="audio/webm" />
+                        <source src={mediaUrls.audio} type="audio/webm" />
                         Seu navegador não conseguiu reproduzir este áudio.
                       </audio>
                     ) : (
                       <span className="text-xs text-slate-400">Sem áudio.</span>
                     )}
                   </div>
-                  {selectedAta.audio_url && !isEditing && (
+
+                  {mediaUrls.audio && !isEditing && (
                     <button
                       onClick={handleRegenerateIA}
                       disabled={isGenerating}
                       className="text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex gap-1"
                     >
-                      {isGenerating ? <Loader2 size={14} className="animate-spin"/> : <Cpu size={14}/>}
+                      {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
                       Gerar Resumo IA
                     </button>
                   )}
@@ -471,7 +549,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
 
               {/* GRID AÇÕES */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
+
                 {/* COLUNA 1: AÇÕES DA REUNIÃO */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
@@ -482,20 +560,19 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       onClick={openNewActionModal}
                       className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-md transition-all active:scale-95"
                     >
-                      <Plus size={14}/> Nova Ação
+                      <Plus size={14} /> Nova Ação
                     </button>
                   </div>
-                  
+
                   <div className="flex-1 space-y-2">
                     {acoesCriadas.map(acao => (
                       <div
                         key={acao.id}
                         onClick={() => openEditActionModal(acao)}
-                        className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all group ${
-                          acao.status === 'Concluída'
+                        className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all group ${acao.status === 'Concluída'
                             ? 'bg-slate-50 opacity-60'
                             : 'bg-white border-slate-200 hover:border-blue-300'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-start gap-3">
                           <input
@@ -506,31 +583,30 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                           />
                           <div className="flex-1">
                             <p
-                              className={`text-sm font-medium ${
-                                acao.status === 'Concluída'
+                              className={`text-sm font-medium ${acao.status === 'Concluída'
                                   ? 'line-through text-slate-400'
                                   : 'text-slate-800'
-                              }`}
+                                }`}
                             >
                               {acao.descricao}
                             </p>
                             <div className="flex flex-wrap items-center gap-3 mt-1.5">
                               <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                <User size={10}/> {acao.responsavel}
+                                <User size={10} /> {acao.responsavel}
                               </span>
                               {acao.data_vencimento && (
                                 <span className="text-[10px] text-red-500 flex items-center gap-1">
-                                  <Clock size={10}/> {new Date(acao.data_vencimento).toLocaleDateString()}
+                                  <Clock size={10} /> {new Date(acao.data_vencimento).toLocaleDateString()}
                                 </span>
                               )}
                               {acao.fotos && acao.fotos.length > 0 && (
                                 <span className="text-[10px] text-blue-500 flex items-center gap-1">
-                                  <ImageIcon size={10}/> {acao.fotos.length}
+                                  <ImageIcon size={10} /> {acao.fotos.length}
                                 </span>
                               )}
                               {acao.observacao && (
                                 <span className="text-[10px] text-amber-500 flex items-center gap-1">
-                                  <MessageSquare size={10}/> Obs
+                                  <MessageSquare size={10} /> Obs
                                 </span>
                               )}
                             </div>
@@ -568,7 +644,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                           <div>
                             <p className="text-sm font-medium text-slate-800">{acao.descricao}</p>
                             <p className="text-[10px] text-amber-600 mt-1">
-                              Origem: {new Date(acao.data_criacao).toLocaleDateString()}
+                              Origem: {acao.data_criacao ? new Date(acao.data_criacao).toLocaleDateString() : "-"}
                             </p>
                           </div>
                         </div>
@@ -586,7 +662,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
               {/* OBSERVAÇÕES DA ATA */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                 <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
-                  <Edit3 size={18}/> Observações Gerais
+                  <Edit3 size={18} /> Observações Gerais
                 </h3>
                 <textarea
                   className="w-full h-24 bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm outline-none"
@@ -599,7 +675,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-slate-400">
-              <Layers size={64} className="opacity-20 mb-4"/>
+              <Layers size={64} className="opacity-20 mb-4" />
               <p>Selecione uma Ata</p>
             </div>
           )}
@@ -617,19 +693,19 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   onClick={() => setIsModalOpen(false)}
                   className="p-1 hover:bg-slate-200 rounded-full"
                 >
-                  <X size={20} className="text-slate-500"/>
+                  <X size={20} className="text-slate-500" />
                 </button>
               </div>
-              
+
               <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                     O que precisa ser feito?
                   </label>
-                  <textarea 
+                  <textarea
                     className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
                     value={actionForm.descricao}
-                    onChange={e => setActionForm({...actionForm, descricao: e.target.value})}
+                    onChange={e => setActionForm({ ...actionForm, descricao: e.target.value })}
                     placeholder="Descreva a tarefa..."
                   />
                 </div>
@@ -640,9 +716,9 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       Responsável
                     </label>
                     <input
-                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500" 
+                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500"
                       value={actionForm.responsavel}
-                      onChange={e => setActionForm({...actionForm, responsavel: e.target.value})}
+                      onChange={e => setActionForm({ ...actionForm, responsavel: e.target.value })}
                       placeholder="Nome"
                     />
                   </div>
@@ -652,9 +728,9 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     </label>
                     <input
                       type="date"
-                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500" 
+                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500"
                       value={actionForm.data_vencimento}
-                      onChange={e => setActionForm({...actionForm, data_vencimento: e.target.value})}
+                      onChange={e => setActionForm({ ...actionForm, data_vencimento: e.target.value })}
                     />
                   </div>
                 </div>
@@ -663,15 +739,14 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                     Observações / Comentários
                   </label>
-                  <textarea 
+                  <textarea
                     className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-20 resize-none bg-slate-50"
                     value={actionForm.observacao}
-                    onChange={e => setActionForm({...actionForm, observacao: e.target.value})}
+                    onChange={e => setActionForm({ ...actionForm, observacao: e.target.value })}
                     placeholder="Detalhes extras..."
                   />
                 </div>
 
-                {/* NOVO CAMPO: O que foi feito / evidências */}
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                     O que foi feito e evidências do que foi realizado
@@ -688,8 +763,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
                     Evidências (Fotos)
                   </label>
-                  
-                  {/* Lista de Fotos Existentes */}
+
                   {actionForm.fotos.length > 0 && (
                     <div className="grid grid-cols-3 gap-2 mb-3">
                       {actionForm.fotos.map((url, i) => (
@@ -700,7 +774,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                           rel="noreferrer"
                           className="block relative aspect-square rounded-lg overflow-hidden border border-slate-200 group"
                         >
-                          <img src={url} className="w-full h-full object-cover" alt="evidencia"/>
+                          <img src={url} className="w-full h-full object-cover" alt="evidencia" />
                           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                             <ExternalLink
                               className="text-white opacity-0 group-hover:opacity-100 drop-shadow-md"
@@ -712,9 +786,8 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     </div>
                   )}
 
-                  {/* Upload */}
                   <label className="border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors text-slate-400 hover:text-blue-500">
-                    <Camera size={24} className="mb-1"/>
+                    <Camera size={24} className="mb-1" />
                     <span className="text-xs font-bold">Adicionar Foto</span>
                     <input
                       type="file"
@@ -744,7 +817,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   disabled={modalLoading}
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-sm flex items-center gap-2 shadow-lg disabled:opacity-50"
                 >
-                  {modalLoading ? <Loader2 size={16} className="animate-spin"/> : <CheckCircle size={16}/>}
+                  {modalLoading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
                   {actionForm.id ? 'Salvar Alterações' : 'Criar Ação'}
                 </button>
               </div>
