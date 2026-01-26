@@ -1,8 +1,7 @@
 // src/App.jsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
-// ✅ NOVO: Landing/Guard
-import LandingFarol from "./pages/LandingFarol";
+import RequireFarolAuth from "./routes/RequireFarolAuth";
 
 // Páginas Principais
 import Inicio from "./pages/Inicio";
@@ -38,40 +37,50 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* ✅ Entrada: se entrar direto no link do Farol, passa no Guard */}
-        <Route path="/" element={<LandingFarol />} />
+        {/* ✅ Tudo protegido */}
+        <Route
+          element={
+            <RequireFarolAuth>
+              {/* children renderiza as rotas abaixo normalmente */}
+              <div />
+            </RequireFarolAuth>
+          }
+        >
+          {/* ✅ Home */}
+          <Route path="/inicio" element={<Inicio />} />
 
-        {/* ✅ Home real do Farol */}
-        <Route path="/inicio" element={<Inicio />} />
+          {/* --- MÓDULOS DE ÁREAS --- */}
+          <Route path="/planejamento/operacao" element={<Operacao />} />
+          <Route path="/planejamento/administrativo" element={<Administrativo />} />
+          <Route path="/moov" element={<Moov />} />
+          <Route path="/manutencao" element={<Manutencao />} />
 
-        {/* --- MÓDULOS DE ÁREAS --- */}
-        <Route path="/planejamento/operacao" element={<Operacao />} />
-        <Route path="/planejamento/administrativo" element={<Administrativo />} />
-        <Route path="/moov" element={<Moov />} />
-        <Route path="/manutencao" element={<Manutencao />} />
+          {/* --- REUNIÕES & ATAS --- */}
+          <Route path="/central-reunioes" element={<CentralReunioes />} />
+          <Route path="/tipos-reuniao" element={<TiposReuniao />} />
+          <Route path="/central-atas" element={<CentralAtas />} />
+          <Route path="/gestao-acoes" element={<GestaoAcoes />} />
 
-        {/* --- REUNIÕES & ATAS --- */}
-        <Route path="/central-reunioes" element={<CentralReunioes />} />
-        <Route path="/tipos-reuniao" element={<TiposReuniao />} />
-        <Route path="/central-atas" element={<CentralAtas />} />
-        <Route path="/gestao-acoes" element={<GestaoAcoes />} />
+          {/* Projetos */}
+          <Route path="/projetos" element={<Projetos />} />
 
-        {/* Projetos */}
-        <Route path="/projetos" element={<Projetos />} />
+          {/* Legado */}
+          <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
+          <Route path="/reunioes/:id" element={<DetalheReuniao />} />
 
-        {/* Legado */}
-        <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
-        <Route path="/reunioes/:id" element={<DetalheReuniao />} />
+          {/* IA / Configurações */}
+          <Route path="/copiloto" element={<Copiloto />} />
+          <Route path="/configuracoes" element={<Configuracoes />} />
 
-        {/* IA / Configurações */}
-        <Route path="/copiloto" element={<Copiloto />} />
-        <Route path="/configuracoes" element={<Configuracoes />} />
+          {/* Alias */}
+          <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
 
-        {/* Alias (mantém compatibilidade) */}
-        <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
+          {/* ✅ Se cair na raiz "/", joga pra /inicio (e o guard decide se precisa logar) */}
+          <Route path="/" element={<Navigate to="/inicio" replace />} />
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/inicio" replace />} />
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/inicio" replace />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );
