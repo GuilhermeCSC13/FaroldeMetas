@@ -1,46 +1,22 @@
 import { useEffect } from "react";
 
-const FAROL_HOME = "/inicio";
-
-// ✅ Coloque a URL real do INOVE aqui
-// (se preferir, use env: import.meta.env.VITE_INOVE_URL)
-const INOVE_URL = "https://inovequatai.onrender.com";
-
-// ✅ Seu Farol
-const FAROL_URL = "https://faroldemetas.onrender.com";
-
-function getQueryParam(name) {
-  try {
-    const url = new URL(window.location.href);
-    return url.searchParams.get(name);
-  } catch {
-    return null;
-  }
-}
+const INOVE_LOGIN_URL = "https://inovequatai.onrender.com/login";
+const FAROL_ORIGIN = "https://faroldemetas.onrender.com";
 
 export default function LandingFarol() {
   useEffect(() => {
-    // 1) Se veio um "sso" na URL, salva como token local (MVP)
-    const sso = getQueryParam("sso");
-    if (sso) {
-      localStorage.setItem("FAROL_ACCESS_TOKEN", sso);
+    const url = new URL(window.location.href);
+    const from = url.searchParams.get("from");
 
-      // limpa a URL para não ficar com token exposto no histórico
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete("sso");
-      window.history.replaceState({}, "", cleanUrl.toString());
-    }
-
-    // 2) Se já tem token/local liberado, entra
-    const token = localStorage.getItem("FAROL_ACCESS_TOKEN");
-    if (token) {
-      window.location.replace(FAROL_HOME);
+    // ✅ Se veio do INOVE, entra
+    if (from === "inove") {
+      window.location.replace("/inicio" + url.search); // preserva query se houver
       return;
     }
 
-    // 3) Se não tem liberação, manda pro INOVE (login/portal) com returnTo
-    const returnTo = encodeURIComponent(FAROL_URL);
-    window.location.replace(`${INOVE_URL}/portal?returnTo=${returnTo}`);
+    // ✅ Se entrou direto: manda para INOVE login com redirect de volta
+    const redirectBack = encodeURIComponent(`${FAROL_ORIGIN}/?from=inove`);
+    window.location.replace(`${INOVE_LOGIN_URL}?redirect=${redirectBack}`);
   }, []);
 
   return (
