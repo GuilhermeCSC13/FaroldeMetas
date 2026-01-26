@@ -1,22 +1,24 @@
 import { useEffect } from "react";
 
-const INOVE_LOGIN_URL = "https://inovequatai.onrender.com/login";
-const FAROL_ORIGIN = "https://faroldemetas.onrender.com";
+const FAROL_HOME = "/inicio";
+const FAROL_URL = "https://faroldemetas.onrender.com/";
+const INOVE_LOGIN = "https://inovequatai.onrender.com/login";
 
 export default function LandingFarol() {
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const from = url.searchParams.get("from");
+    const params = new URLSearchParams(window.location.search);
+    const from = params.get("from");
 
-    // ✅ Se veio do INOVE, entra
-    if (from === "inove") {
-      window.location.replace("/inicio" + url.search); // preserva query se houver
+    // ✅ Se não veio do INOVE, manda pro login do INOVE com redirect
+    if (from !== "inove") {
+      const redirect = encodeURIComponent(FAROL_URL);
+      window.location.replace(`${INOVE_LOGIN}?redirect=${redirect}`);
       return;
     }
 
-    // ✅ Se entrou direto: manda para INOVE login com redirect de volta
-    const redirectBack = encodeURIComponent(`${FAROL_ORIGIN}/?from=inove`);
-    window.location.replace(`${INOVE_LOGIN_URL}?redirect=${redirectBack}`);
+    // ✅ Se veio do INOVE, entra no Farol e limpa a URL (opcional)
+    window.history.replaceState({}, "", "/");
+    window.location.replace(FAROL_HOME);
   }, []);
 
   return (
