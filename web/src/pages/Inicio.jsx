@@ -404,14 +404,15 @@ const Inicio = () => {
                   </p>
                 </div>
               </div>
-              <a
-                href="https://inovequatai.onrender.com/"
-                target="_blank"
-                rel="noopener noreferrer"
+
+              {/* ✅ AJUSTE: voltar para o INOVE SEM nova aba e sem empilhar histórico */}
+              <button
+                type="button"
+                onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
                 className="bg-white text-blue-900 px-6 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg text-sm"
               >
-                Acessar Inove Quatai <ExternalLink size={16} />
-              </a>
+                Voltar para o INOVE <ExternalLink size={16} />
+              </button>
             </div>
           </div>
         </div>
