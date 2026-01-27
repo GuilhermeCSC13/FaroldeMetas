@@ -1,5 +1,5 @@
 // src/pages/CentralAtas.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
@@ -25,7 +25,6 @@ import {
   MessageSquare,
   RefreshCw,
   AlertTriangle,
-  Wand2,
 } from "lucide-react";
 
 export default function CentralAtas() {
@@ -35,19 +34,6 @@ export default function CentralAtas() {
 
   // URLs geradas (signed/public)
   const [mediaUrls, setMediaUrls] = useState({ video: null, audio: null });
-
-  // Diagnóstico do processamento
-  const [procInfo, setProcInfo] = useState({
-    loading: false,
-    gravacao_status: null,
-    ata_ia_status: null,
-    ata_ia_erro: null,
-    gravacao_bucket: null,
-    gravacao_path: null,
-    gravacao_audio_bucket: null,
-    gravacao_audio_path: null,
-    last_job: null, // {status,last_error,result,updated_at}
-  });
 
   // Dados da Ata
   const [acoesCriadas, setAcoesCriadas] = useState([]);
@@ -59,7 +45,7 @@ export default function CentralAtas() {
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Modal ação
+  // --- MODAL DE AÇÃO ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
   const [actionForm, setActionForm] = useState({
@@ -73,6 +59,10 @@ export default function CentralAtas() {
   });
   const [newFiles, setNewFiles] = useState([]);
 
+  // --- PROCESSAMENTO/JOBS (fila) ---
+  const [jobLoading, setJobLoading] = useState(false);
+  const [lastJob, setLastJob] = useState(null);
+
   useEffect(() => {
     fetchAtas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,37 +75,39 @@ export default function CentralAtas() {
       setObservacoes(selectedAta.observacoes || "");
       setIsEditing(false);
 
-      // ✅ recarrega status + urls
-      refreshSelectedAta(true);
+      hydrateMediaUrls(selectedAta);
+      fetchLastJob(selectedAta.id);
     } else {
       setMediaUrls({ video: null, audio: null });
-      setProcInfo((p) => ({ ...p, last_job: null }));
+      setLastJob(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAta]);
 
   // =========================
-  // helpers: signed urls
+  // ✅ helpers: signed urls
   // =========================
   const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 30) => {
     if (!bucket || !filePath) return null;
 
-    // tenta signed url (bucket privado)
+    // tenta signed url
     const { data: signed, error: e1 } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
     if (!e1 && signed?.signedUrl) return signed.signedUrl;
 
-    // fallback: public url (bucket público)
+    // fallback: public url
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
     return pub?.publicUrl || null;
   };
 
-  const hydrateMediaUrls = async (ataRow) => {
+  const hydrateMediaUrls = async (ata) => {
     try {
-      const videoUrl = await getSignedOrPublicUrl(ataRow.gravacao_bucket, ataRow.gravacao_path);
+      const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
+
       const audioUrl = await getSignedOrPublicUrl(
-        ataRow.gravacao_audio_bucket || ataRow.gravacao_bucket,
-        ataRow.gravacao_audio_path
+        ata.gravacao_audio_bucket || ata.gravacao_bucket,
+        ata.gravacao_audio_path
       );
+
       setMediaUrls({ video: videoUrl, audio: audioUrl });
     } catch (e) {
       console.error("Erro ao gerar URLs do storage:", e);
@@ -124,121 +116,7 @@ export default function CentralAtas() {
   };
 
   // =========================
-  // ✅ refresh: saber o que processou
-  // =========================
-  const loadLastJobForReuniao = async (reuniaoId) => {
-    // Pega o job mais recente do tipo BACKFILL_COMPILE_ATA para esta reunião
-    const { data, error } = await supabase
-      .from("reuniao_processing_queue")
-      .select("id, status, last_error, result, updated_at, created_at, job_type")
-      .eq("reuniao_id", reuniaoId)
-      .eq("job_type", "BACKFILL_COMPILE_ATA")
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (error) {
-      console.error("Erro ao buscar último job:", error);
-      return null;
-    }
-    return data?.[0] || null;
-  };
-
-  const refreshSelectedAta = async (alsoHydrateUrls = false) => {
-    if (!selectedAta?.id) return;
-
-    setProcInfo((p) => ({ ...p, loading: true }));
-    try {
-      // 1) recarrega reunião (fonte da verdade)
-      const { data: row, error } = await supabase
-        .from("reunioes")
-        .select(
-          "id,titulo,data_hora,responsavel,observacoes,pauta,status,tipo_reuniao,gravacao_status,ata_ia_status,ata_ia_erro,gravacao_bucket,gravacao_path,gravacao_audio_bucket,gravacao_audio_path"
-        )
-        .eq("id", selectedAta.id)
-        .single();
-
-      if (error) throw error;
-
-      // atualiza selectedAta + lista (mantém sincronizado)
-      setSelectedAta((prev) => ({ ...prev, ...row }));
-      setAtas((prev) => prev.map((a) => (a.id === row.id ? { ...a, ...row } : a)));
-
-      // 2) último job
-      const lastJob = await loadLastJobForReuniao(row.id);
-
-      setProcInfo({
-        loading: false,
-        gravacao_status: row.gravacao_status || null,
-        ata_ia_status: row.ata_ia_status || null,
-        ata_ia_erro: row.ata_ia_erro || null,
-        gravacao_bucket: row.gravacao_bucket || null,
-        gravacao_path: row.gravacao_path || null,
-        gravacao_audio_bucket: row.gravacao_audio_bucket || null,
-        gravacao_audio_path: row.gravacao_audio_path || null,
-        last_job: lastJob,
-      });
-
-      if (alsoHydrateUrls) await hydrateMediaUrls(row);
-    } catch (e) {
-      console.error("refreshSelectedAta error:", e);
-      setProcInfo((p) => ({
-        ...p,
-        loading: false,
-        last_job: { status: "ERRO", last_error: String(e?.message || e) },
-      }));
-    }
-  };
-
-  const enqueueBackfillJob = async () => {
-    if (!selectedAta?.id) return;
-
-    // evita constraint uq_rpq_active_job: se já existe PENDENTE/PROCESSANDO, não insere outro
-    const { data: active, error: e1 } = await supabase
-      .from("reuniao_processing_queue")
-      .select("id,status")
-      .eq("reuniao_id", selectedAta.id)
-      .eq("job_type", "BACKFILL_COMPILE_ATA")
-      .in("status", ["PENDENTE", "PROCESSANDO"])
-      .limit(1);
-
-    if (e1) {
-      console.error(e1);
-      alert("Erro ao verificar job ativo.");
-      return;
-    }
-
-    if (active?.length) {
-      alert("Já existe um job ativo (PENDENTE/PROCESSANDO) para esta reunião.");
-      await refreshSelectedAta(true);
-      return;
-    }
-
-    const payload = {
-      reuniao_id: selectedAta.id,
-      job_type: "BACKFILL_COMPILE_ATA",
-      status: "PENDENTE",
-      priority: 10,
-      next_run_at: new Date().toISOString(),
-      locked_at: null,
-      locked_by: null,
-      last_error: null,
-      result: null,
-    };
-
-    const { error } = await supabase.from("reuniao_processing_queue").insert([payload]);
-    if (error) {
-      console.error(error);
-      alert("Erro ao enfileirar processamento: " + error.message);
-      return;
-    }
-
-    alert("Processamento enfileirado. Aguarde alguns segundos e clique em Atualizar status.");
-    await refreshSelectedAta(true);
-  };
-
-  // =========================
-  // fetch/list
+  // ✅ Dados principais
   // =========================
   const fetchAtas = async () => {
     const { data, error } = await supabase
@@ -257,38 +135,167 @@ export default function CentralAtas() {
     if (data && data.length > 0 && !selectedAta) setSelectedAta(data[0]);
   };
 
+  // ✅ (IMPORTANTE) Removido qualquer uso de tipo_reuniao (coluna não existe)
   const carregarDetalhes = async (ata) => {
-    const { data: criadas } = await supabase
+    // 1) Ações desta reunião
+    const { data: criadas, error: e1 } = await supabase
       .from("acoes")
       .select("*")
       .eq("reuniao_id", ata.id)
       .order("data_criacao", { ascending: false });
 
+    if (e1) console.error(e1);
     setAcoesCriadas(criadas || []);
 
-    if (ata.tipo_reuniao) {
-      const { data: idsDoTipo } = await supabase
+    // 2) Pendências Anteriores (mesmo TITULO)
+    try {
+      const tituloBase = (ata.titulo || "").trim();
+      if (!tituloBase) {
+        setAcoesAnteriores([]);
+        return;
+      }
+
+      const { data: reunioesAnt, error: e2 } = await supabase
         .from("reunioes")
         .select("id")
-        .eq("tipo_reuniao", ata.tipo_reuniao)
+        .eq("titulo", tituloBase)
         .neq("id", ata.id)
-        .lt("data_hora", ata.data_hora);
+        .lt("data_hora", ata.data_hora)
+        .order("data_hora", { ascending: false })
+        .limit(20);
 
-      const listaIds = (idsDoTipo || []).map((r) => r.id);
-
-      if (listaIds.length > 0) {
-        const { data: anteriores } = await supabase.from("acoes").select("*").in("reuniao_id", listaIds).eq("status", "Aberta");
-        setAcoesAnteriores(anteriores || []);
-      } else {
+      if (e2) {
+        console.error(e2);
         setAcoesAnteriores([]);
+        return;
       }
-    } else {
+
+      const listaIds = (reunioesAnt || []).map((r) => r.id);
+
+      if (!listaIds.length) {
+        setAcoesAnteriores([]);
+        return;
+      }
+
+      const { data: anteriores, error: e3 } = await supabase
+        .from("acoes")
+        .select("*")
+        .in("reuniao_id", listaIds)
+        .eq("status", "Aberta");
+
+      if (e3) console.error(e3);
+      setAcoesAnteriores(anteriores || []);
+    } catch (err) {
+      console.error("Erro ao carregar pendências anteriores:", err);
       setAcoesAnteriores([]);
     }
   };
 
   // =========================
-  // modal actions
+  // ✅ Processamento / Jobs
+  // =========================
+  const fetchLastJob = async (reuniaoId) => {
+    if (!reuniaoId) return;
+    setJobLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("reuniao_processing_queue")
+        .select("id, reuniao_id, job_type, status, last_error, result, updated_at, created_at")
+        .eq("reuniao_id", reuniaoId)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+      setLastJob(data?.[0] || null);
+    } catch (e) {
+      console.error("Erro ao buscar último job:", e);
+      setLastJob(null);
+    } finally {
+      setJobLoading(false);
+    }
+  };
+
+  const refreshSelectedAta = async () => {
+    if (!selectedAta?.id) return;
+    setJobLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("reunioes")
+        .select(
+          // ❌ sem tipo_reuniao aqui
+          "id,titulo,data_hora,responsavel,observacoes,pauta,status,gravacao_status,ata_ia_status,ata_ia_erro,gravacao_bucket,gravacao_path,gravacao_audio_bucket,gravacao_audio_path"
+        )
+        .eq("id", selectedAta.id)
+        .single();
+
+      if (error) throw error;
+
+      setSelectedAta(data);
+      setAtas((prev) => prev.map((r) => (r.id === data.id ? { ...r, ...data } : r)));
+
+      await hydrateMediaUrls(data);
+      await fetchLastJob(data.id);
+      await carregarDetalhes(data);
+    } catch (e) {
+      console.error("Erro ao atualizar status:", e);
+      alert("Erro ao atualizar status: " + (e?.message || e));
+    } finally {
+      setJobLoading(false);
+    }
+  };
+
+  const forceReprocess = async () => {
+    if (!selectedAta?.id) return;
+    if (!window.confirm("Forçar reprocessamento? (vai criar/reativar job na fila)")) return;
+
+    setJobLoading(true);
+    try {
+      // tenta inserir job; se já existir (unique), transforma em PENDENTE
+      const jobType = "BACKFILL_COMPILE_ATA";
+
+      const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
+        {
+          reuniao_id: selectedAta.id,
+          job_type: jobType,
+          status: "PENDENTE",
+          next_run_at: new Date().toISOString(),
+        },
+      ]);
+
+      if (insertErr) {
+        // duplicate key uq_rpq_active_job -> reativar
+        if (String(insertErr.message || "").toLowerCase().includes("duplicate key") || insertErr.code === "23505") {
+          const { error: upErr } = await supabase
+            .from("reuniao_processing_queue")
+            .update({
+              status: "PENDENTE",
+              last_error: null,
+              locked_at: null,
+              locked_by: null,
+              next_run_at: new Date().toISOString(),
+              result: null,
+            })
+            .eq("reuniao_id", selectedAta.id)
+            .eq("job_type", jobType);
+
+          if (upErr) throw upErr;
+        } else {
+          throw insertErr;
+        }
+      }
+
+      await fetchLastJob(selectedAta.id);
+      alert("Reprocessamento agendado (job PENDENTE).");
+    } catch (e) {
+      console.error("Erro ao forçar reprocessamento:", e);
+      alert("Erro ao forçar reprocessamento: " + (e?.message || e));
+    } finally {
+      setJobLoading(false);
+    }
+  };
+
+  // =========================
+  // --- FUNÇÕES DO MODAL ---
   // =========================
   const openNewActionModal = () => {
     setActionForm({
@@ -327,6 +334,7 @@ export default function CentralAtas() {
     setModalLoading(true);
 
     try {
+      // Upload de fotos
       let uploadedUrls = [];
       if (newFiles.length > 0) {
         for (const file of newFiles) {
@@ -339,7 +347,7 @@ export default function CentralAtas() {
         }
       }
 
-      const finalFotos = [...actionForm.fotos, ...uploadedUrls];
+      const finalFotos = [...(actionForm.fotos || []), ...uploadedUrls];
 
       const payload = {
         descricao: actionForm.descricao,
@@ -382,11 +390,10 @@ export default function CentralAtas() {
   };
 
   // =========================
-  // ata save / IA
+  // --- OUTRAS FUNÇÕES ---
   // =========================
   const handleSaveAta = async () => {
     const { error } = await supabase.from("reunioes").update({ pauta: editedPauta, observacoes }).eq("id", selectedAta.id);
-
     if (!error) {
       setIsEditing(false);
       setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, observacoes }));
@@ -450,8 +457,8 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
           `.trim();
 
           const result = await model.generateContent([prompt, { inlineData: { data: base64data, mimeType: "audio/webm" } }]);
-
           const texto = result.response.text();
+
           setEditedPauta(texto);
           setIsEditing(true);
           alert("Resumo gerado pela IA. Revise e clique em SALVAR para gravar na ata.");
@@ -477,23 +484,28 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
     }
   };
 
-  const atasFiltradas = atas.filter((a) => (a.titulo || "").toLowerCase().includes(busca.toLowerCase()));
+  const atasFiltradas = useMemo(
+    () => atas.filter((a) => (a.titulo || "").toLowerCase().includes(busca.toLowerCase())),
+    [atas, busca]
+  );
+
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
 
-  // badges simples
-  const Pill = ({ tone = "slate", children }) => {
-    const cls =
-      tone === "green"
-        ? "bg-green-100 text-green-700 border-green-200"
-        : tone === "red"
-        ? "bg-red-100 text-red-700 border-red-200"
-        : tone === "blue"
-        ? "bg-blue-100 text-blue-700 border-blue-200"
-        : tone === "amber"
-        ? "bg-amber-100 text-amber-700 border-amber-200"
-        : "bg-slate-100 text-slate-700 border-slate-200";
-    return <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border ${cls}`}>{children}</span>;
-  };
+  const gravacaoStatusNorm = String(selectedAta?.gravacao_status || "").toUpperCase();
+  const jobStatusNorm = String(lastJob?.status || "").toUpperCase();
+
+  const badgeClass = (tone) =>
+    ({
+      green: "bg-green-100 text-green-700 border-green-200",
+      blue: "bg-blue-100 text-blue-700 border-blue-200",
+      red: "bg-red-100 text-red-700 border-red-200",
+      amber: "bg-amber-100 text-amber-800 border-amber-200",
+      gray: "bg-slate-100 text-slate-700 border-slate-200",
+    }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
+
+  const pill = (label, tone = "gray") => (
+    <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border ${badgeClass(tone)}`}>{label}</span>
+  );
 
   return (
     <Layout>
@@ -546,7 +558,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
 
                     {/* STATUS IA */}
                     {selectedAta.ata_ia_status && (
-                      <div className="mb-2 space-y-2">
+                      <div className="mb-2">
                         <span
                           className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
                             iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
@@ -560,9 +572,8 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                         >
                           IA: {selectedAta.ata_ia_status}
                         </span>
-
                         {iaStatusNorm === "ERRO" && selectedAta.ata_ia_erro && (
-                          <p className="text-xs text-red-600">{selectedAta.ata_ia_erro}</p>
+                          <p className="text-xs text-red-600 mt-2">{selectedAta.ata_ia_erro}</p>
                         )}
                       </div>
                     )}
@@ -570,7 +581,8 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
                       <span className="flex items-center gap-1">
-                        <Calendar size={16} /> {selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString() : "-"}
+                        <Calendar size={16} />{" "}
+                        {selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString() : "-"}
                       </span>
                       <span className="flex items-center gap-1">
                         <User size={16} /> {selectedAta.responsavel || "IA"}
@@ -607,108 +619,84 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   </div>
                 </div>
 
-                {/* ✅ PAINEL: O QUE PROCESSOU */}
-                <div className="mb-6 border border-slate-200 rounded-xl bg-slate-50 p-4">
+                {/* PAINEL PROCESSAMENTO */}
+                <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-4">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <Wand2 size={16} className="text-slate-500" />
-                      <span className="text-xs font-black uppercase text-slate-600">Processamento</span>
+                    <div className="flex items-center gap-2 text-xs font-black text-slate-600 uppercase">
+                      <RefreshCw size={14} /> Processamento
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
-                      {procInfo.gravacao_status ? (
-                        <Pill
-                          tone={
-                            String(procInfo.gravacao_status).toUpperCase() === "CONCLUIDO" ? "green" : String(procInfo.gravacao_status).toUpperCase() === "ERRO" ? "red" : "blue"
-                          }
-                        >
-                          GRAVAÇÃO: {procInfo.gravacao_status}
-                        </Pill>
-                      ) : (
-                        <Pill>GRAVAÇÃO: (sem status)</Pill>
-                      )}
-
-                      {procInfo.last_job?.status ? (
-                        <Pill
-                          tone={
-                            String(procInfo.last_job.status).toUpperCase() === "CONCLUIDO"
-                              ? "green"
-                              : String(procInfo.last_job.status).toUpperCase() === "ERRO"
-                              ? "red"
-                              : "blue"
-                          }
-                        >
-                          JOB: {procInfo.last_job.status}
-                        </Pill>
-                      ) : (
-                        <Pill>JOB: (sem job)</Pill>
-                      )}
+                      {pill(`Gravação: ${selectedAta.gravacao_status || "SEM STATUS"}`, gravacaoStatusNorm === "PRONTO_PROCESSAR" ? "blue" : gravacaoStatusNorm === "CONCLUIDO" ? "green" : gravacaoStatusNorm === "ERRO" ? "red" : "gray")}
+                      {pill(`Job: ${lastJob?.status || "SEM JOB"}`, jobStatusNorm === "CONCLUIDO" ? "green" : jobStatusNorm === "PROCESSANDO" ? "blue" : jobStatusNorm === "ERRO" ? "red" : "gray")}
 
                       <button
-                        onClick={() => refreshSelectedAta(true)}
-                        className="inline-flex items-center gap-2 text-xs font-black px-3 py-2 rounded-lg bg-white border border-slate-200 hover:border-blue-300"
-                        disabled={procInfo.loading}
+                        onClick={refreshSelectedAta}
+                        disabled={jobLoading}
+                        className="text-xs bg-white border border-slate-200 hover:bg-slate-100 px-3 py-2 rounded-xl font-black flex items-center gap-2 disabled:opacity-50"
                       >
-                        {procInfo.loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                        {jobLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                         Atualizar status
                       </button>
 
                       <button
-                        onClick={enqueueBackfillJob}
-                        className="inline-flex items-center gap-2 text-xs font-black px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                        onClick={forceReprocess}
+                        disabled={jobLoading}
+                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl font-black flex items-center gap-2 disabled:opacity-50"
                       >
-                        <PlayCircle size={14} />
+                        {jobLoading ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
                         Forçar reprocessar
                       </button>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                    <div className="bg-white border border-slate-200 rounded-lg p-3">
-                      <div className="font-black text-slate-600 uppercase mb-1">Storage (reunioes)</div>
-                      <div className="text-slate-700">
-                        <div className="truncate">
-                          <b>Bucket:</b> {procInfo.gravacao_bucket || "-"}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="text-xs font-black text-slate-500 uppercase mb-2">Storage (reuniões)</div>
+                      <div className="text-xs text-slate-700 space-y-1">
+                        <div>
+                          <span className="font-bold">Bucket:</span> {selectedAta.gravacao_bucket || "-"}
                         </div>
-                        <div className="truncate">
-                          <b>Vídeo path:</b> {procInfo.gravacao_path || "-"}
+                        <div>
+                          <span className="font-bold">Vídeo path:</span> {selectedAta.gravacao_path || "-"}
                         </div>
-                        <div className="truncate">
-                          <b>Áudio bucket:</b> {procInfo.gravacao_audio_bucket || procInfo.gravacao_bucket || "-"}
+                        <div>
+                          <span className="font-bold">Áudio bucket:</span> {selectedAta.gravacao_audio_bucket || "-"}
                         </div>
-                        <div className="truncate">
-                          <b>Áudio path:</b> {procInfo.gravacao_audio_path || "-"}
+                        <div>
+                          <span className="font-bold">Áudio path:</span> {selectedAta.gravacao_audio_path || "-"}
                         </div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-lg p-3">
-                      <div className="font-black text-slate-600 uppercase mb-1">Último job</div>
-                      {procInfo.last_job ? (
-                        <div className="text-slate-700 space-y-1">
-                          <div className="truncate">
-                            <b>Status:</b> {procInfo.last_job.status}
-                          </div>
-                          <div className="truncate">
-                            <b>Atualizado:</b>{" "}
-                            {procInfo.last_job.updated_at
-                              ? new Date(procInfo.last_job.updated_at).toLocaleString("pt-BR")
-                              : procInfo.last_job.created_at
-                              ? new Date(procInfo.last_job.created_at).toLocaleString("pt-BR")
-                              : "-"}
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                      <div className="text-xs font-black text-slate-500 uppercase mb-2 flex items-center gap-2">
+                        Último Job {jobLoading && <Loader2 size={14} className="animate-spin" />}
+                      </div>
+
+                      {lastJob ? (
+                        <>
+                          <div className="text-xs text-slate-700 space-y-1">
+                            <div>
+                              <span className="font-bold">Status:</span> {lastJob.status}
+                            </div>
+                            <div>
+                              <span className="font-bold">Atualizado:</span>{" "}
+                              {lastJob.updated_at ? new Date(lastJob.updated_at).toLocaleString("pt-BR") : "-"}
+                            </div>
                           </div>
 
-                          {procInfo.last_job.last_error && (
-                            <div className="mt-2 p-2 rounded bg-red-50 border border-red-200 text-red-700">
-                              <div className="flex items-center gap-2 font-black">
+                          {lastJob.status === "ERRO" && (
+                            <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+                              <div className="font-black flex items-center gap-2 mb-1">
                                 <AlertTriangle size={14} /> Erro
                               </div>
-                              <div className="mt-1 whitespace-pre-wrap break-words">{procInfo.last_job.last_error}</div>
+                              <div className="whitespace-pre-wrap break-words">{lastJob.last_error || "Sem detalhe."}</div>
                             </div>
                           )}
-                        </div>
+                        </>
                       ) : (
-                        <div className="text-slate-500">Ainda não há job BACKFILL_COMPILE_ATA para esta reunião.</div>
+                        <div className="text-xs text-slate-500">Sem job encontrado para esta reunião.</div>
                       )}
                     </div>
                   </div>
@@ -764,7 +752,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     <button
                       onClick={handleRegenerateIA}
                       disabled={isGenerating}
-                      className="text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex gap-1"
+                      className="text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex gap-1 disabled:opacity-50"
                     >
                       {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
                       Gerar Resumo IA
@@ -789,7 +777,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
 
               {/* GRID AÇÕES */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* AÇÕES DA REUNIÃO */}
+                {/* COLUNA 1 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -809,7 +797,9 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                         key={acao.id}
                         onClick={() => openEditActionModal(acao)}
                         className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all group ${
-                          acao.status === "Concluída" ? "bg-slate-50 opacity-60" : "bg-white border-slate-200 hover:border-blue-300"
+                          acao.status === "Concluída"
+                            ? "bg-slate-50 opacity-60"
+                            : "bg-white border-slate-200 hover:border-blue-300"
                         }`}
                       >
                         <div className="flex items-start gap-3">
@@ -857,7 +847,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   </div>
                 </div>
 
-                {/* PENDÊNCIAS ANTERIORES */}
+                {/* COLUNA 2 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                     <div className="w-2 h-2 bg-amber-500 rounded-full"></div> Pendências Anteriores
@@ -914,7 +904,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
           )}
         </div>
 
-        {/* MODAL DE AÇÃO */}
+        {/* MODAL AÇÃO */}
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
@@ -1013,7 +1003,10 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
               </div>
 
               <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
-                <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg text-sm">
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg text-sm"
+                >
                   Cancelar
                 </button>
                 <button
