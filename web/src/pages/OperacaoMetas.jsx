@@ -598,7 +598,7 @@ const OperacaoMetas = () => {
                     {MESES.map((mes) => {
                       const dados = meta.meses[mes.id];
 
-                      // ✅ MÉDIA 25 (mes=14): só realizado manual, sem meta azul
+                      // ✅ MÉDIA 25 (mes=14): input numérico normal (uncontrolled) + parse só no blur
                       if (mes.id === 14) {
                         const valorRealizado =
                           dados?.realizado === null ||
@@ -618,45 +618,13 @@ const OperacaoMetas = () => {
                                 inputMode="decimal"
                                 className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                                 placeholder="-"
-                                value={
+                                defaultValue={
                                   valorRealizado === ""
                                     ? ""
                                     : String(valorRealizado)
                                 }
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-
-                                  // mantém digitando livre; parse só pra refletir state
-                                  const parsed =
-                                    raw === "" ? "" : parseNumberPtBr(raw);
-
-                                  setMetas((prev) =>
-                                    prev.map((m) => {
-                                      if (m.id !== meta.id) return m;
-                                      const novoMeses = { ...m.meses };
-                                      novoMeses[14] = {
-                                        ...novoMeses[14],
-                                        realizado:
-                                          raw === ""
-                                            ? ""
-                                            : parsed === null
-                                            ? ""
-                                            : parsed,
-                                        score: 0,
-                                        multiplicador: 0,
-                                        color: "bg-white",
-                                      };
-                                      return { ...m, meses: novoMeses };
-                                    })
-                                  );
-                                }}
                                 onBlur={(e) =>
-                                  handleSave(
-                                    meta.id,
-                                    mes.id,
-                                    e.target.value,
-                                    meta
-                                  )
+                                  handleSave(meta.id, 14, e.target.value, meta)
                                 }
                               />
                             </div>
