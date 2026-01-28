@@ -16,7 +16,7 @@ const MESES = [
   { id: 10, label: "Out" },
   { id: 11, label: "Nov" },
   { id: 12, label: "Dez" },
-  { id: 13, label: "Acum" }, // ✅ novo
+  { id: 13, label: "Acum" }, // ✅ meta do acumulado
 ];
 
 // ✅ UNID dropdown (fonte de verdade pro binário)
@@ -126,10 +126,9 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           indicador: nome,
           nome_meta: nome,
           peso: 0,
-          unidade: "", // ✅ agora será escolhido no dropdown
+          unidade: "", // ✅ escolhido no dropdown
           tipo_comparacao: ">=",
           responsavel: "",
-          usa_media_25: false, // ✅ novo (precisa existir no banco)
         });
         if (error) throw error;
       } else {
@@ -193,7 +192,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     }
   };
 
-  // ✅ normalização (peso numérico) + (usa_media_25 boolean)
+  // ✅ normalização (peso numérico) + unidade padronizada
   const updateRowProp = async (id, field, value) => {
     const table = tipo === "metas" ? "metas_farol" : "rotinas_indicadores";
 
@@ -206,10 +205,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         const parsed = Number(String(value).replace(",", "."));
         normalizedValue = isNaN(parsed) ? 0 : parsed;
       }
-    }
-
-    if (field === "usa_media_25") {
-      normalizedValue = !!value;
     }
 
     // ✅ unidade padronizada
@@ -384,13 +379,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                     {tipo === "metas" ? (
                       <>
                         <th className="p-3 w-16 text-center border-r">Peso</th>
-
-                        {/* ✅ NOVO: Média 25 */}
-                        <th className="p-3 w-20 text-center border-r">Média 25</th>
-
-                        {/* ✅ UNID dropdown */}
                         <th className="p-3 w-28 text-center border-r">Unid.</th>
-
                         <th className="p-3 w-24 text-center border-r">Resp.</th>
                         <th className="p-3 w-16 text-center border-r">Tipo</th>
                       </>
@@ -403,7 +392,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                       </>
                     )}
 
-                    {/* ✅ META EM AZUL (coluna amarela continua, só muda cor do texto) */}
+                    {/* ✅ metas mensais (inclui Acum=13). Média 25 NÃO entra aqui. */}
                     {MESES.map((m) => (
                       <th
                         key={m.id}
@@ -439,17 +428,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                               value={item.peso ?? 0}
                               onChange={(e) => updateRowProp(item.id, "peso", e.target.value)}
                               className="w-full text-center bg-transparent"
-                            />
-                          </td>
-
-                          {/* ✅ NOVO: Média 25 */}
-                          <td className="p-1 border-r text-center">
-                            <input
-                              type="checkbox"
-                              checked={!!item.usa_media_25}
-                              onChange={(e) => updateRowProp(item.id, "usa_media_25", e.target.checked)}
-                              className="scale-110 accent-blue-600"
-                              title="Usar Média 25"
                             />
                           </td>
 
@@ -574,7 +552,8 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
           <p className="text-xs text-gray-400">
             <span className="font-bold text-gray-600">Nota:</span> Use a coluna amarela para definir a{" "}
-            <span className="font-bold text-blue-700">META</span> de cada mês.
+            <span className="font-bold text-blue-700">META</span> de cada mês (inclui{" "}
+            <span className="font-bold">Acum</span>).
           </p>
         </div>
       </div>
