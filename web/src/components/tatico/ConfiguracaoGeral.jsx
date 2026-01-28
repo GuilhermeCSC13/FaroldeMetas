@@ -21,8 +21,7 @@ const MESES = [
 
 // ✅ UNID dropdown (fonte de verdade pro binário) — agora vale p/ metas E rotinas
 const UNIDADES = [
-  { value: "kml", label: "km/l" },
-  { value: "un", label: "UN" },
+  { value: "currency", label: "R$" },
   { value: "pct", label: "%" },
   { value: "numero", label: "Número (123)" },
   { value: "binario", label: "Binário (Sim/Não)" },
