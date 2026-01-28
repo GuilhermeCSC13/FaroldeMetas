@@ -5,9 +5,26 @@ import ConfiguracaoGeral from "../components/tatico/ConfiguracaoGeral";
 import { Settings, Download, ChevronDown } from "lucide-react";
 import html2canvas from "html2canvas";
 
+// IDs fixos das áreas (PCO e Gestão de Motoristas)
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
 
+// ✅ UNID (somente leitura na tela Rotinas, igual Metas)
+const UNIDADES = [
+  { value: "kml", label: "km/l" },
+  { value: "un", label: "UN" },
+  { value: "pct", label: "%" },
+  { value: "numero", label: "Número (123)" },
+  { value: "binario", label: "Binário (Sim/Não)" },
+];
+
+function getUnidadeLabel(v) {
+  const key = String(v ?? "").trim().toLowerCase();
+  const opt = UNIDADES.find((u) => u.value === key);
+  return opt?.label || (v ? String(v) : "");
+}
+
+// ✅ adiciona ACUMULADO (mes=13) + MÉDIA 25 (mes=14, manual, sem meta azul)
 const MESES = [
   { id: 1, label: "jan/26" },
   { id: 2, label: "fev/26" },
@@ -21,7 +38,30 @@ const MESES = [
   { id: 10, label: "out/26" },
   { id: 11, label: "nov/26" },
   { id: 12, label: "dez/26" },
+  { id: 13, label: "acum/26" }, // ✅ tem alvo/meta azul + realizado
+  { id: 14, label: "média 25" }, // ✅ só realizado (manual), sem meta azul, sem score
 ];
+
+function normBoolLabel(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "1" || s === "sim" || s === "true" || s === "ok") return "Sim";
+  if (s === "0" || s === "nao" || s === "não" || s === "false") return "Não";
+  return "";
+}
+
+function boolToNum(v) {
+  const label = normBoolLabel(v);
+  if (label === "Sim") return 1;
+  if (label === "Não") return 0;
+  return null;
+}
+
+function numToBoolLabel(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(v);
+  if (Number.isNaN(n)) return "";
+  return n === 1 ? "Sim" : "Não";
+}
 
 /** ✅ Parser único: aceita vírgula ou ponto (PT-BR) */
 function parseNumberPtBr(raw) {
@@ -58,11 +98,7 @@ const OperacaoRotinas = () => {
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
 
-  // mantém a funcionalidade existente (filtro responsável),
-  // só padroniza o visual para ficar no mesmo "modo" do Farol de Metas.
-  const [responsavelFiltro, setResponsavelFiltro] = useState("");
-
-  // ✅ Export (igual Metas)
+  // ✅ Export igual Metas
   const [openExport, setOpenExport] = useState(false);
   const tableWrapRef = useRef(null);
 
@@ -77,51 +113,94 @@ const OperacaoRotinas = () => {
   }, [areaSelecionada]);
 
   const fetchAreas = async () => {
-    const { data } = await supabase
-      .from("areas")
-      .select("*")
-      .eq("ativa", true)
-      .order("id");
+    try {
+      const { data, error } = await supabase
+        .from("areas")
+        .select("*")
+        .eq("ativa", true)
+        .order("id");
 
-    if (data && data.length > 0) {
-      const filtered = data.filter((a) => a.id == ID_PCO || a.id == ID_MOTORISTAS);
-      const lista = filtered.length > 0 ? filtered : data;
-      setAreas(lista);
-      setAreaSelecionada(lista[0].id);
-    } else {
-      setLoading(false);
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const filtered = data.filter((a) => a.id == ID_PCO || a.id == ID_MOTORISTAS);
+        const lista = filtered.length > 0 ? filtered : data;
+        setAreas(lista);
+        setAreaSelecionada(lista[0].id);
+      }
+    } catch (e) {
+      console.error("Erro ao buscar áreas:", e);
+    } finally {
+      if (!areaSelecionada) setLoading(false);
     }
   };
 
-  // ✅ Mesma régua de score do Farol de Metas (com cor) + regra META=0
-  const calculateScore = (meta, realizado, tipo, pesoTotal) => {
-    const peso = Number(pesoTotal);
-    if (
-      meta === null ||
-      meta === undefined ||
-      realizado === "" ||
-      realizado === null ||
-      realizado === undefined ||
-      Number.isNaN(Number(realizado)) ||
-      Number.isNaN(peso)
-    ) {
-      return { score: 0, multiplicador: 0, color: "bg-white" };
-    }
+  // ✅ Fonte da verdade do binário: rotinas_indicadores.unidade (igual Metas)
+  const isBinaryRotina = (row) => {
+    const unidade = String(row?.unidade ?? "").trim().toLowerCase();
+    if (unidade === "binario" || unidade === "binário" || unidade === "boolean") return true;
+    return false;
+  };
 
-    const r = Number(realizado);
-    const m = Number(meta);
+  // ✅ Cálculo (numérico + binário) — idêntico ao Metas
+  const calculateScore = (meta, realizado, tipo, pesoTotal, isBinary) => {
+    if (isBinary) {
+      const m = meta === null || meta === undefined ? 1 : Number(meta);
+      const r =
+        realizado === "" || realizado === null || realizado === undefined
+          ? null
+          : Number(realizado);
 
-    // Regra META = 0 (mesma filosofia do metas com proteção)
-    if (m === 0) {
-      // Se tipo for "<=" / menor: só pontua se r === 0 (mantém seu comportamento original)
-      const ok =
-        tipo === "<=" || tipo === "menor"
-          ? r === 0
-          : r >= 0; // para ">=" com meta 0, qualquer >=0 fica ok
+      if (r === null || Number.isNaN(r)) {
+        return { score: 0, multiplicador: 0, color: "bg-white" };
+      }
+
+      const ok = r === m;
       return {
-        score: ok ? peso : 0,
+        score: ok ? pesoTotal : 0,
         multiplicador: ok ? 1 : 0,
         color: ok ? "bg-green-300" : "bg-red-200",
+      };
+    }
+
+    if (
+      meta === null ||
+      realizado === "" ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
+      return { score: 0, faixa: 0, color: "bg-white" };
+    }
+
+    const r = parseFloat(realizado);
+    const m = parseFloat(meta);
+
+    if (m === 0) {
+      let multiplicador = 0;
+      let cor = "bg-red-200";
+
+      if (tipo === "<=" || tipo === "menor") {
+        if (r === 0) {
+          multiplicador = 1.0;
+          cor = "bg-green-300";
+        } else {
+          multiplicador = 0.0;
+          cor = "bg-red-200";
+        }
+      } else {
+        if (r >= 0) {
+          multiplicador = 1.0;
+          cor = "bg-green-300";
+        } else {
+          multiplicador = 0.0;
+          cor = "bg-red-200";
+        }
+      }
+
+      return {
+        score: pesoTotal * multiplicador,
+        multiplicador,
+        color: cor,
       };
     }
 
@@ -154,7 +233,7 @@ const OperacaoRotinas = () => {
     }
 
     return {
-      score: peso * multiplicador,
+      score: pesoTotal * multiplicador,
       multiplicador,
       color: cor,
     };
@@ -163,45 +242,71 @@ const OperacaoRotinas = () => {
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
-      const { data: defs } = await supabase
+      // 1) Definições das Rotinas (Linhas)
+      const { data: defs, error: err1 } = await supabase
         .from("rotinas_indicadores")
         .select("*")
         .eq("area_id", areaSelecionada)
         .order("ordem", { ascending: true });
 
-      const { data: valores } = await supabase
+      if (err1) throw err1;
+
+      // 2) Valores mensais (inclui mes=13 e mes=14)
+      const { data: valores, error: err2 } = await supabase
         .from("rotinas_mensais")
         .select("*")
         .eq("ano", 2026);
 
+      if (err2) throw err2;
+
+      // 3) Cruzamento (igual Metas)
       const combined = (defs || []).map((r) => {
-        const row = { ...r, meses: {} };
+        const row = { ...r, meses: {}, _isBinary: isBinaryRotina(r) };
 
         MESES.forEach((mes) => {
-          const valObj = valores?.find((v) => v.rotina_id === r.id && v.mes === mes.id);
+          const valObj = valores?.find(
+            (v) => v.rotina_id === r.id && v.mes === mes.id
+          );
 
-          // ✅ Normaliza (carrega como número quando existir)
-          const realizadoRaw = valObj?.valor_realizado ?? "";
-          const metaRaw = valObj?.valor_meta ?? null;
+          // ✅ Realizado: numérico OU binário (1/0)
+          let real = "";
+          if (valObj && valObj.valor_realizado !== null && valObj.valor_realizado !== "") {
+            const parsed = parseNumberPtBr(valObj.valor_realizado);
+            real = parsed === null ? "" : parsed;
+          }
 
-          const realizadoNum =
-            realizadoRaw === "" || realizadoRaw === null || realizadoRaw === undefined
-              ? ""
-              : parseNumberPtBr(realizadoRaw) ?? "";
+          // ✅ MÉDIA 25 (mes=14): só realizado, SEM meta azul e SEM score
+          if (mes.id === 14) {
+            row.meses[mes.id] = {
+              alvo: null,
+              realizado: real,
+              score: 0,
+              multiplicador: 0,
+              color: "bg-white",
+            };
+            return;
+          }
 
-          const metaNum =
-            metaRaw === null || metaRaw === undefined || metaRaw === ""
-              ? null
-              : parseNumberPtBr(metaRaw);
+          // ✅ Meta (alvo) — vem de rotinas_mensais.valor_meta
+          let alvo = null;
+          if (valObj && valObj.valor_meta !== null && valObj.valor_meta !== "") {
+            const parsed = parseNumberPtBr(valObj.valor_meta);
+            alvo = parsed === null ? null : parsed;
+          }
 
-          const calc = calculateScore(metaNum, realizadoNum, r.tipo_comparacao, r.peso);
+          // ✅ Para binário, se alvo vier null, assume meta "Sim" (1)
+          const alvoEfetivo = row._isBinary ? (alvo === null ? 1 : alvo) : alvo;
 
           row.meses[mes.id] = {
-            realizado: realizadoNum,
-            meta: metaNum,
-            score: calc.score,
-            multiplicador: calc.multiplicador,
-            color: calc.color,
+            alvo: alvoEfetivo,
+            realizado: real,
+            ...calculateScore(
+              alvoEfetivo,
+              real,
+              r.tipo_comparacao,
+              parseNumberPtBr(r.peso) ?? 0,
+              row._isBinary
+            ),
           };
         });
 
@@ -210,77 +315,79 @@ const OperacaoRotinas = () => {
 
       setRotinas(combined);
     } catch (error) {
-      console.error(error);
+      console.error("Erro ao carregar rotinas:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = async (rotinaId, mesId, valor) => {
-    const valorNum = parseNumberPtBr(valor); // ✅ aceita vírgula/ponto
+  const handleSave = async (rotinaId, mesId, valor, rotinaRow) => {
+    const isBinary = !!rotinaRow?._isBinary;
 
+    let valorNum = null;
+
+    if (isBinary) {
+      valorNum = boolToNum(valor);
+    } else {
+      valorNum = parseNumberPtBr(valor);
+    }
+
+    // Atualiza UI (igual Metas)
     setRotinas((prev) =>
       prev.map((r) => {
         if (r.id !== rotinaId) return r;
 
-        const novosMeses = { ...r.meses };
-        const metaAtual = novosMeses[mesId]?.meta ?? null;
+        const novoMeses = { ...r.meses };
+        const alvoAtual = novoMeses[mesId]?.alvo ?? null;
 
-        const calc = calculateScore(metaAtual, valorNum === null ? "" : valorNum, r.tipo_comparacao, r.peso);
+        // ✅ mes=14 (média 25): não recalcula score, não usa alvo
+        if (mesId === 14) {
+          novoMeses[mesId] = {
+            ...novoMeses[mesId],
+            realizado: valorNum === null ? "" : valorNum,
+            score: 0,
+            multiplicador: 0,
+            color: "bg-white",
+          };
+          return { ...r, meses: novoMeses };
+        }
 
-        novosMeses[mesId] = {
-          ...novosMeses[mesId],
+        novoMeses[mesId] = {
+          ...novoMeses[mesId],
           realizado: valorNum === null ? "" : valorNum,
-          score: calc.score,
-          multiplicador: calc.multiplicador,
-          color: calc.color,
+          ...calculateScore(
+            alvoAtual,
+            valorNum,
+            r.tipo_comparacao,
+            Number(r.peso),
+            r._isBinary
+          ),
         };
 
-        return { ...r, meses: novosMeses };
+        return { ...r, meses: novoMeses };
       })
     );
 
+    // Salva no banco (null apaga valor)
     const { error } = await supabase.rpc("atualizar_realizado_rotina", {
       p_rotina_id: rotinaId,
-      p_mes: mesId,
-      p_valor: valorNum, // null apaga
+      p_mes: mesId, // ✅ inclui 13 e 14
+      p_valor: valorNum,
     });
 
     if (error) console.error("Erro ao salvar:", error);
   };
 
-  // responsáveis únicos para o filtro (mantém)
-  const responsaveisUnicos = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (rotinas || [])
-            .map((r) => r.responsavel)
-            .filter((r) => r && String(r).trim() !== "")
-        )
-      ),
-    [rotinas]
-  );
-
-  const rotinasFiltradas = useMemo(
-    () =>
-      responsavelFiltro
-        ? rotinas.filter((r) => r.responsavel === responsavelFiltro)
-        : rotinas,
-    [rotinas, responsavelFiltro]
-  );
-
   const totalPeso = useMemo(() => {
-    // mantém o total consistente com a tabela exibida (com filtro, como já era sua lógica)
-    return rotinasFiltradas.reduce((acc, r) => acc + (Number(r.peso) || 0), 0);
-  }, [rotinasFiltradas]);
+    return rotinas.reduce((acc, r) => acc + (Number(r.peso) || 0), 0);
+  }, [rotinas]);
 
   const getTotalScore = (mesId) => {
-    const total = rotinasFiltradas.reduce((acc, r) => acc + (r.meses[mesId]?.score || 0), 0);
+    if (mesId === 14) return "-"; // ✅ Média 25 não entra no score
+    const total = rotinas.reduce((acc, r) => acc + (r.meses[mesId]?.score || 0), 0);
     return total.toFixed(1);
   };
 
-  // ✅ Export igual Metas
   const exportFarol = async (format = "png") => {
     try {
       setOpenExport(false);
@@ -310,12 +417,14 @@ const OperacaoRotinas = () => {
 
   return (
     <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
-      {/* Cabeçalho (MESMO MODO do Metas) */}
+      {/* Cabeçalho (idêntico ao Metas) */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-gray-800">Farol de Rotinas — Operação</h2>
+          <h2 className="text-xl font-bold text-gray-800">
+            Farol de Rotinas — Operação
+          </h2>
 
-          {/* Baixar Farol (igual Metas) */}
+          {/* Baixar Farol */}
           <div className="relative">
             <button
               onClick={() => setOpenExport((s) => !s)}
@@ -344,23 +453,6 @@ const OperacaoRotinas = () => {
               </div>
             )}
           </div>
-
-          {/* Filtro Responsável (mantém funcionalidade, só encaixa no header) */}
-          <div className="flex items-center gap-2 ml-2">
-            <span className="text-xs text-gray-500 font-semibold">Responsável:</span>
-            <select
-              value={responsavelFiltro}
-              onChange={(e) => setResponsavelFiltro(e.target.value)}
-              className="text-xs bg-white border border-gray-300 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Todos</option>
-              {responsaveisUnicos.map((resp) => (
-                <option key={resp} value={resp}>
-                  {resp}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
 
         <div className="flex items-center gap-4">
@@ -375,7 +467,7 @@ const OperacaoRotinas = () => {
             </button>
           </div>
 
-          {/* Seletor de Áreas (MESMO MODO do Metas) */}
+          {/* Seletor de Áreas (idêntico ao Metas) */}
           <div className="flex space-x-2">
             {areas.map((area) => (
               <button
@@ -397,7 +489,9 @@ const OperacaoRotinas = () => {
       {/* Tabela */}
       <div className="flex-1 overflow-auto p-4">
         {loading ? (
-          <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
+          <div className="text-center py-10 text-gray-500 animate-pulse">
+            Carregando dados...
+          </div>
         ) : (
           <div
             ref={tableWrapRef}
@@ -409,11 +503,21 @@ const OperacaoRotinas = () => {
                   <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
                     Indicador
                   </th>
-                  <th className="p-2 border border-gray-300 w-40 text-left">Responsável</th>
+
+                  {/* ✅ UNID somente leitura */}
+                  <th className="p-2 border border-gray-300 w-20">UNID.</th>
+
+                  <th className="p-2 border border-gray-300 w-40 text-left">
+                    Responsável
+                  </th>
                   <th className="p-2 border border-gray-300 w-12">Peso</th>
                   <th className="p-2 border border-gray-300 w-12">Tipo</th>
+
                   {MESES.map((mes) => (
-                    <th key={mes.id} className="p-2 border border-gray-300 min-w-[90px]">
+                    <th
+                      key={mes.id}
+                      className="p-2 border border-gray-300 min-w-[90px]"
+                    >
                       {mes.label}
                     </th>
                   ))}
@@ -421,11 +525,21 @@ const OperacaoRotinas = () => {
               </thead>
 
               <tbody>
-                {rotinasFiltradas.map((row, idx) => (
-                  <tr key={row.id || idx} className="hover:bg-gray-50 transition-colors">
+                {rotinas.map((row, idx) => (
+                  <tr key={row.id || idx} className="hover:bg-gray-50 text-center">
                     {/* Indicador (sticky) */}
                     <td className="p-2 border border-gray-300 sticky left-0 bg-white z-10 text-left font-semibold text-gray-800 text-sm">
                       {row.indicador}
+                    </td>
+
+                    {/* ✅ UNID somente leitura (igual Metas) */}
+                    <td className="p-2 border border-gray-300">
+                      <div className="text-[11px] font-semibold text-gray-700">
+                        {getUnidadeLabel(row.unidade) || "-"}
+                      </div>
+                      <div className="text-[9px] text-gray-400 font-normal text-left mt-0.5">
+                        {String(row.unidade || "").trim().toLowerCase()}
+                      </div>
                     </td>
 
                     {/* Responsável */}
@@ -434,66 +548,113 @@ const OperacaoRotinas = () => {
                     </td>
 
                     {/* Peso */}
-                    <td className="p-2 border border-gray-300 bg-gray-50 text-center">
-                      {row.peso != null ? parseInt(row.peso) : "-"}
+                    <td className="p-2 border border-gray-300 bg-gray-50">
+                      {parseInt(row.peso)}
                     </td>
 
                     {/* Tipo */}
-                    <td className="p-2 border border-gray-300 font-mono text-gray-500 text-center">
+                    <td className="p-2 border border-gray-300 font-mono text-gray-500">
                       {row.tipo_comparacao}
                     </td>
 
-                    {/* Meses */}
                     {MESES.map((mes) => {
                       const dados = row.meses[mes.id];
 
-                      const temMeta = dados?.meta !== null && dados?.meta !== undefined;
+                      // ✅ MÉDIA 25 (mes=14): input numérico normal, sem meta/score
+                      if (mes.id === 14) {
+                        const valorRealizado =
+                          dados?.realizado === null ||
+                          dados?.realizado === "" ||
+                          Number.isNaN(dados?.realizado)
+                            ? ""
+                            : dados.realizado;
+
+                        return (
+                          <td
+                            key={mes.id}
+                            className="border border-gray-300 p-0 relative h-12 align-middle bg-white"
+                          >
+                            <div className="flex flex-col h-full justify-center">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                placeholder="-"
+                                defaultValue={
+                                  valorRealizado === "" ? "" : String(valorRealizado)
+                                }
+                                onBlur={(e) =>
+                                  handleSave(row.id, 14, e.target.value, row)
+                                }
+                              />
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      // ✅ Binário: select Sim/Não gravando 1/0
+                      if (row._isBinary) {
+                        const alvoLabel = numToBoolLabel(dados.alvo ?? 1);
+                        const realLabel = numToBoolLabel(dados.realizado);
+
+                        return (
+                          <td
+                            key={mes.id}
+                            className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
+                          >
+                            <div className="flex flex-col h-full justify-between">
+                              <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
+                                {alvoLabel || "Sim"}
+                              </div>
+
+                              <select
+                                className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                value={realLabel || ""}
+                                onChange={(e) =>
+                                  handleSave(row.id, mes.id, e.target.value, row)
+                                }
+                              >
+                                <option value="">-</option>
+                                <option value="Sim">Sim</option>
+                                <option value="Não">Não</option>
+                              </select>
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      // ✅ Numérico (aceita vírgula/ponto)
                       const valorRealizado =
-                        !dados ||
-                        dados.realizado === null ||
-                        dados.realizado === "" ||
-                        Number.isNaN(dados.realizado)
+                        dados?.realizado === null ||
+                        dados?.realizado === "" ||
+                        Number.isNaN(dados?.realizado)
                           ? ""
                           : dados.realizado;
-
-                      // ✅ cor vem do mesmo cálculo do metas
-                      const cellColor = dados?.color || "bg-white";
 
                       return (
                         <td
                           key={mes.id}
-                          className={`border border-gray-300 p-0 relative h-12 align-middle ${cellColor}`}
+                          className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
                         >
                           <div className="flex flex-col h-full justify-between">
-                            {/* META (alvo) */}
+                            {/* Meta azul */}
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {temMeta
-                                ? Number(dados.meta).toFixed(row.formato === "percent" ? 0 : 2)
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
                                 : ""}
-                              {temMeta && row.formato === "percent" && "%"}
                             </div>
 
                             {/* Realizado */}
-                            <div className="flex-1 flex items-center justify-center pb-1">
-                              <div className="flex items-baseline gap-0.5">
-                                {row.formato === "currency" && (
-                                  <span className="text-gray-500/70 text-[10px]">R$</span>
-                                )}
-
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  className="w-20 text-center bg-transparent focus:outline-none font-bold text-[13px] text-gray-900 placeholder-gray-400/70 focus:bg-white/60 rounded-sm"
-                                  placeholder="-"
-                                  defaultValue={valorRealizado === "" ? "" : String(valorRealizado)}
-                                  onBlur={(e) => handleSave(row.id, mes.id, e.target.value)}
-                                />
-
-                                {row.formato === "percent" && (
-                                  <span className="text-gray-500/70 text-[10px]">%</span>
-                                )}
-                              </div>
-                            </div>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                              placeholder="-"
+                              defaultValue={valorRealizado === "" ? "" : String(valorRealizado)}
+                              onBlur={(e) =>
+                                handleSave(row.id, mes.id, e.target.value, row)
+                              }
+                            />
                           </div>
                         </td>
                       );
@@ -501,16 +662,26 @@ const OperacaoRotinas = () => {
                   </tr>
                 ))}
 
-                {/* TOTAL SCORE (mesmo rodapé do Metas) */}
+                {/* TOTAL SCORE */}
                 <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
                   <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                     TOTAL SCORE
                   </td>
+
+                  {/* UNID vazio */}
                   <td className="p-2 border-r border-red-500"></td>
+
+                  {/* Responsável vazio */}
+                  <td className="p-2 border-r border-red-500"></td>
+
+                  {/* soma real dos pesos */}
                   <td className="p-2 border-r border-red-500 text-center">
                     {Number(totalPeso || 0).toFixed(0)}
                   </td>
+
+                  {/* Tipo vazio */}
                   <td className="p-2 border-r border-red-500"></td>
+
                   {MESES.map((mes) => (
                     <td
                       key={mes.id}
