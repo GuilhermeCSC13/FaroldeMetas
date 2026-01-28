@@ -147,9 +147,7 @@ const OperacaoRotinas = () => {
     if (isBinary) {
       const m = meta === null || meta === undefined ? 1 : Number(meta);
       const r =
-        realizado === "" || realizado === null || realizado === undefined
-          ? null
-          : Number(realizado);
+        realizado === "" || realizado === null || realizado === undefined ? null : Number(realizado);
 
       if (r === null || Number.isNaN(r)) {
         return { score: 0, multiplicador: 0, color: "bg-white" };
@@ -163,12 +161,7 @@ const OperacaoRotinas = () => {
       };
     }
 
-    if (
-      meta === null ||
-      realizado === "" ||
-      realizado === null ||
-      isNaN(parseFloat(realizado))
-    ) {
+    if (meta === null || realizado === "" || realizado === null || isNaN(parseFloat(realizado))) {
       return { score: 0, faixa: 0, color: "bg-white" };
     }
 
@@ -197,20 +190,12 @@ const OperacaoRotinas = () => {
         }
       }
 
-      return {
-        score: pesoTotal * multiplicador,
-        multiplicador,
-        color: cor,
-      };
+      return { score: pesoTotal * multiplicador, multiplicador, color: cor };
     }
 
     let atingimento = 0;
-
-    if (tipo === ">=" || tipo === "maior") {
-      atingimento = r / m;
-    } else {
-      atingimento = 1 + (m - r) / m;
-    }
+    if (tipo === ">=" || tipo === "maior") atingimento = r / m;
+    else atingimento = 1 + (m - r) / m;
 
     let multiplicador = 0;
     let cor = "bg-red-200";
@@ -232,11 +217,7 @@ const OperacaoRotinas = () => {
       cor = "bg-red-200";
     }
 
-    return {
-      score: pesoTotal * multiplicador,
-      multiplicador,
-      color: cor,
-    };
+    return { score: pesoTotal * multiplicador, multiplicador, color: cor };
   };
 
   const fetchRotinasData = async () => {
@@ -266,14 +247,14 @@ const OperacaoRotinas = () => {
         MESES.forEach((mes) => {
           const valObj = valores?.find((v) => v.rotina_id === r.id && v.mes === mes.id);
 
-          // ✅ Realizado: numérico OU binário (1/0)
+          // ✅ Realizado
           let real = "";
           if (valObj && valObj.valor_realizado !== null && valObj.valor_realizado !== "") {
             const parsed = parseNumberPtBr(valObj.valor_realizado);
             real = parsed === null ? "" : parsed;
           }
 
-          // ✅ MÉDIA 25 (mes=14): só realizado, SEM meta azul e SEM score
+          // ✅ MÉDIA 25 (mes=14)
           if (mes.id === 14) {
             row.meses[mes.id] = {
               alvo: null,
@@ -285,14 +266,13 @@ const OperacaoRotinas = () => {
             return;
           }
 
-          // ✅ Meta (alvo) — vem de rotinas_mensais.valor_meta
+          // ✅ Meta (alvo)
           let alvo = null;
           if (valObj && valObj.valor_meta !== null && valObj.valor_meta !== "") {
             const parsed = parseNumberPtBr(valObj.valor_meta);
             alvo = parsed === null ? null : parsed;
           }
 
-          // ✅ Para binário, se alvo vier null, assume meta "Sim" (1)
           const alvoEfetivo = row._isBinary ? (alvo === null ? 1 : alvo) : alvo;
 
           row.meses[mes.id] = {
@@ -323,12 +303,8 @@ const OperacaoRotinas = () => {
     const isBinary = !!rotinaRow?._isBinary;
 
     let valorNum = null;
-
-    if (isBinary) {
-      valorNum = boolToNum(valor);
-    } else {
-      valorNum = parseNumberPtBr(valor);
-    }
+    if (isBinary) valorNum = boolToNum(valor);
+    else valorNum = parseNumberPtBr(valor);
 
     // Atualiza UI (igual Metas)
     setRotinas((prev) =>
@@ -338,7 +314,7 @@ const OperacaoRotinas = () => {
         const novoMeses = { ...r.meses };
         const alvoAtual = novoMeses[mesId]?.alvo ?? null;
 
-        // ✅ mes=14 (média 25): não recalcula score, não usa alvo
+        // ✅ mes=14 (média 25): sem score
         if (mesId === 14) {
           novoMeses[mesId] = {
             ...novoMeses[mesId],
@@ -363,7 +339,7 @@ const OperacaoRotinas = () => {
     // Salva no banco (null apaga valor)
     const { error } = await supabase.rpc("atualizar_realizado_rotina", {
       p_rotina_id: rotinaId,
-      p_mes: mesId, // ✅ inclui 13 e 14
+      p_mes: mesId,
       p_valor: valorNum,
     });
 
@@ -375,7 +351,7 @@ const OperacaoRotinas = () => {
   }, [rotinas]);
 
   const getTotalScore = (mesId) => {
-    if (mesId === 14) return "-"; // ✅ Média 25 não entra no score
+    if (mesId === 14) return "-";
     const total = rotinas.reduce((acc, r) => acc + (r.meses[mesId]?.score || 0), 0);
     return total.toFixed(1);
   };
@@ -383,6 +359,7 @@ const OperacaoRotinas = () => {
   const exportFarol = async (format = "png") => {
     try {
       setOpenExport(false);
+
       const el = tableWrapRef.current;
       if (!el) return;
 
@@ -481,25 +458,29 @@ const OperacaoRotinas = () => {
         {loading ? (
           <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
         ) : (
-          // ✅ AJUSTE ÚNICO: scroll no wrapper externo e o ref no conteúdo interno (sem recorte)
+          // ✅ AJUSTE APENAS DE LARGURA (igual Metas): colunas mais justas + padding menor
           <div className="border border-gray-300 rounded-xl shadow-sm overflow-x-auto overflow-y-hidden">
             <div ref={tableWrapRef} className="min-w-max">
-              <table className="w-full text-xs border-collapse">
+              <table className="table-fixed text-[11px] border-collapse">
                 <thead>
                   <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
-                    <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
+                    <th className="px-2 py-1 border border-gray-300 w-[260px] sticky left-0 bg-[#d0e0e3] z-20 text-left">
                       Indicador
                     </th>
 
-                    {/* ✅ UNID somente leitura */}
-                    <th className="p-2 border border-gray-300 w-20">UNID.</th>
+                    <th className="px-2 py-1 border border-gray-300 w-[64px]">UNID.</th>
 
-                    <th className="p-2 border border-gray-300 w-40 text-left">Responsável</th>
-                    <th className="p-2 border border-gray-300 w-12">Peso</th>
-                    <th className="p-2 border border-gray-300 w-12">Tipo</th>
+                    <th className="px-2 py-1 border border-gray-300 w-[120px] text-left">
+                      Responsável
+                    </th>
+                    <th className="px-2 py-1 border border-gray-300 w-[48px]">Peso</th>
+                    <th className="px-2 py-1 border border-gray-300 w-[48px]">Tipo</th>
 
                     {MESES.map((mes) => (
-                      <th key={mes.id} className="p-2 border border-gray-300 min-w-[90px]">
+                      <th
+                        key={mes.id}
+                        className="px-2 py-1 border border-gray-300 w-[78px] whitespace-nowrap"
+                      >
                         {mes.label}
                       </th>
                     ))}
@@ -509,38 +490,35 @@ const OperacaoRotinas = () => {
                 <tbody>
                   {rotinas.map((row, idx) => (
                     <tr key={row.id || idx} className="hover:bg-gray-50 text-center">
-                      {/* Indicador (sticky) */}
-                      <td className="p-2 border border-gray-300 sticky left-0 bg-white z-10 text-left font-semibold text-gray-800 text-sm">
+                      <td className="px-2 py-1 border border-gray-300 w-[260px] sticky left-0 bg-white z-10 text-left font-semibold text-gray-800">
                         {row.indicador}
                       </td>
 
-                      {/* ✅ UNID somente leitura (igual Metas) */}
-                      <td className="p-2 border border-gray-300">
-                        <div className="text-[11px] font-semibold text-gray-700">
+                      <td className="px-2 py-1 border border-gray-300 w-[64px]">
+                        <div className="text-[10px] font-semibold text-gray-700 leading-3">
                           {getUnidadeLabel(row.unidade) || "-"}
                         </div>
-                        <div className="text-[9px] text-gray-400 font-normal text-left mt-0.5">
+                        <div className="text-[9px] text-gray-400 font-normal text-left mt-0.5 leading-3">
                           {String(row.unidade || "").trim().toLowerCase()}
                         </div>
                       </td>
 
-                      {/* Responsável */}
-                      <td className="p-2 border border-gray-300 text-[11px] text-gray-700 text-left">
+                      <td className="px-2 py-1 border border-gray-300 w-[120px] text-[10px] text-gray-700 text-left">
                         {row.responsavel || "-"}
                       </td>
 
-                      {/* Peso */}
-                      <td className="p-2 border border-gray-300 bg-gray-50">{parseInt(row.peso)}</td>
+                      <td className="px-2 py-1 border border-gray-300 w-[48px] bg-gray-50">
+                        {parseInt(row.peso)}
+                      </td>
 
-                      {/* Tipo */}
-                      <td className="p-2 border border-gray-300 font-mono text-gray-500">
+                      <td className="px-2 py-1 border border-gray-300 w-[48px] font-mono text-gray-500">
                         {row.tipo_comparacao}
                       </td>
 
                       {MESES.map((mes) => {
                         const dados = row.meses[mes.id];
 
-                        // ✅ MÉDIA 25 (mes=14): input numérico normal, sem meta/score
+                        // ✅ MÉDIA 25 (mes=14)
                         if (mes.id === 14) {
                           const valorRealizado =
                             dados?.realizado === null ||
@@ -552,13 +530,13 @@ const OperacaoRotinas = () => {
                           return (
                             <td
                               key={mes.id}
-                              className="border border-gray-300 p-0 relative h-12 align-middle bg-white"
+                              className="border border-gray-300 p-0 relative h-10 align-middle bg-white w-[78px]"
                             >
                               <div className="flex flex-col h-full justify-center">
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                  className="w-full text-center bg-transparent font-bold text-gray-800 text-[11px] focus:outline-none h-full focus:bg-white/50 transition-colors"
                                   placeholder="-"
                                   defaultValue={valorRealizado === "" ? "" : String(valorRealizado)}
                                   onBlur={(e) => handleSave(row.id, 14, e.target.value, row)}
@@ -568,7 +546,7 @@ const OperacaoRotinas = () => {
                           );
                         }
 
-                        // ✅ Binário: select Sim/Não gravando 1/0
+                        // ✅ Binário
                         if (row._isBinary) {
                           const alvoLabel = numToBoolLabel(dados.alvo ?? 1);
                           const realLabel = numToBoolLabel(dados.realizado);
@@ -576,15 +554,15 @@ const OperacaoRotinas = () => {
                           return (
                             <td
                               key={mes.id}
-                              className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
+                              className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
                             >
                               <div className="flex flex-col h-full justify-between">
-                                <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
+                                <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
                                   {alvoLabel || "Sim"}
                                 </div>
 
                                 <select
-                                  className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                  className="w-full text-center bg-transparent font-bold text-gray-800 text-[11px] focus:outline-none h-full focus:bg-white/50 transition-colors"
                                   value={realLabel || ""}
                                   onChange={(e) => handleSave(row.id, mes.id, e.target.value, row)}
                                 >
@@ -597,7 +575,7 @@ const OperacaoRotinas = () => {
                           );
                         }
 
-                        // ✅ Numérico (aceita vírgula/ponto)
+                        // ✅ Numérico
                         const valorRealizado =
                           dados?.realizado === null ||
                           dados?.realizado === "" ||
@@ -608,21 +586,19 @@ const OperacaoRotinas = () => {
                         return (
                           <td
                             key={mes.id}
-                            className={`border border-gray-300 p-0 relative h-12 align-middle ${dados.color}`}
+                            className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
                           >
                             <div className="flex flex-col h-full justify-between">
-                              {/* Meta azul */}
-                              <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
+                              <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
                                 {dados.alvo !== null && dados.alvo !== undefined
                                   ? Number(dados.alvo).toFixed(2)
                                   : ""}
                               </div>
 
-                              {/* Realizado */}
                               <input
                                 type="text"
                                 inputMode="decimal"
-                                className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                className="w-full text-center bg-transparent font-bold text-gray-800 text-[11px] focus:outline-none h-full focus:bg-white/50 transition-colors"
                                 placeholder="-"
                                 defaultValue={valorRealizado === "" ? "" : String(valorRealizado)}
                                 onBlur={(e) => handleSave(row.id, mes.id, e.target.value, row)}
@@ -636,29 +612,21 @@ const OperacaoRotinas = () => {
 
                   {/* TOTAL SCORE */}
                   <tr className="bg-red-600 text-white font-bold border-t-2 border-black">
-                    <td className="p-2 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
+                    <td className="px-2 py-1 sticky left-0 bg-red-600 z-10 border-r border-red-500 text-right pr-4">
                       TOTAL SCORE
                     </td>
 
-                    {/* UNID vazio */}
-                    <td className="p-2 border-r border-red-500"></td>
+                    <td className="px-2 py-1 border-r border-red-500"></td>
+                    <td className="px-2 py-1 border-r border-red-500"></td>
 
-                    {/* Responsável vazio */}
-                    <td className="p-2 border-r border-red-500"></td>
-
-                    {/* soma real dos pesos */}
-                    <td className="p-2 border-r border-red-500 text-center">
+                    <td className="px-2 py-1 border-r border-red-500 text-center">
                       {Number(totalPeso || 0).toFixed(0)}
                     </td>
 
-                    {/* Tipo vazio */}
-                    <td className="p-2 border-r border-red-500"></td>
+                    <td className="px-2 py-1 border-r border-red-500"></td>
 
                     {MESES.map((mes) => (
-                      <td
-                        key={mes.id}
-                        className="p-2 text-center border-r border-red-500 text-sm"
-                      >
+                      <td key={mes.id} className="px-2 py-1 text-center border-r border-red-500">
                         {getTotalScore(mes.id)}
                       </td>
                     ))}
