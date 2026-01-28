@@ -23,7 +23,7 @@ function getUnidadeLabel(v) {
   return opt?.label || (v ? String(v) : "");
 }
 
-// ✅ adiciona ACUMULADO (mes=13) manual
+// ✅ adiciona ACUMULADO (mes=13) + MÉDIA 25 (mes=14, manual, sem meta azul)
 const MESES = [
   { id: 1, label: "jan/26" },
   { id: 2, label: "fev/26" },
@@ -37,7 +37,8 @@ const MESES = [
   { id: 10, label: "out/26" },
   { id: 11, label: "nov/26" },
   { id: 12, label: "dez/26" },
-  { id: 13, label: "acum/26" }, // ✅ novo
+  { id: 13, label: "acum/26" },   // ✅ tem alvo/meta azul + realizado
+  { id: 14, label: "média 25" },  // ✅ só realizado (manual), sem meta azul, sem score
 ];
 
 function normBoolLabel(v) {
@@ -132,7 +133,7 @@ const OperacaoMetas = () => {
 
       if (err1) throw err1;
 
-      // 2) Metas Mensais (Alvos)
+      // 2) Metas Mensais (Alvos) — não existe alvo para mes=14 (média 25)
       const { data: metasMensais, error: err2 } = await supabase
         .from("metas_farol_mensal")
         .select("*")
@@ -140,7 +141,7 @@ const OperacaoMetas = () => {
 
       if (err2) throw err2;
 
-      // 3) Resultados Realizados (inclui mes=13)
+      // 3) Resultados Realizados (inclui mes=13 e mes=14)
       const { data: resultados, error: err3 } = await supabase
         .from("resultados_farol")
         .select("*")
@@ -153,10 +154,34 @@ const OperacaoMetas = () => {
         const row = { ...m, meses: {}, _isBinary: isBinaryMeta(m) };
 
         MESES.forEach((mes) => {
-          const alvoObj = metasMensais?.find(
+          const realObj = resultados?.find(
             (x) => x.meta_id === m.id && x.mes === mes.id
           );
-          const realObj = resultados?.find(
+
+          // ✅ Realizado: numérico OU binário (1/0)
+          let real = "";
+          if (
+            realObj &&
+            realObj.valor_realizado !== null &&
+            realObj.valor_realizado !== ""
+          ) {
+            const parsed = parseFloat(realObj.valor_realizado);
+            real = Number.isNaN(parsed) ? "" : parsed;
+          }
+
+          // ✅ MÉDIA 25 (mes=14): só realizado, SEM alvo/meta azul e SEM score
+          if (mes.id === 14) {
+            row.meses[mes.id] = {
+              alvo: null,
+              realizado: real,
+              score: 0,
+              multiplicador: 0,
+              color: "bg-white",
+            };
+            return;
+          }
+
+          const alvoObj = metasMensais?.find(
             (x) => x.meta_id === m.id && x.mes === mes.id
           );
 
@@ -169,17 +194,6 @@ const OperacaoMetas = () => {
           ) {
             const parsed = parseFloat(alvoObj.valor_meta);
             alvo = Number.isNaN(parsed) ? null : parsed;
-          }
-
-          // ✅ Realizado: numérico OU binário (1/0)
-          let real = "";
-          if (
-            realObj &&
-            realObj.valor_realizado !== null &&
-            realObj.valor_realizado !== ""
-          ) {
-            const parsed = parseFloat(realObj.valor_realizado);
-            real = Number.isNaN(parsed) ? "" : parsed;
           }
 
           // ✅ Para binário, se alvo vier null, assume meta "Sim" (1)
@@ -325,6 +339,18 @@ const OperacaoMetas = () => {
         const novoMeses = { ...m.meses };
         const alvoAtual = novoMeses[mesId]?.alvo ?? null;
 
+        // ✅ mes=14 (média 25): não recalcula score, não usa alvo
+        if (mesId === 14) {
+          novoMeses[mesId] = {
+            ...novoMeses[mesId],
+            realizado: valorNum,
+            score: 0,
+            multiplicador: 0,
+            color: "bg-white",
+          };
+          return { ...m, meses: novoMeses };
+        }
+
         novoMeses[mesId] = {
           ...novoMeses[mesId],
           realizado: valorNum,
@@ -347,7 +373,7 @@ const OperacaoMetas = () => {
         {
           meta_id: metaId,
           ano: 2026,
-          mes: mesId,
+          mes: mesId, // ✅ inclui 14 (média 25)
           valor_realizado: valorNum,
         },
         { onConflict: "meta_id, ano, mes" }
@@ -361,6 +387,7 @@ const OperacaoMetas = () => {
   }, [metas]);
 
   const getTotalScore = (mesId) => {
+    if (mesId === 14) return "-"; // ✅ Média 25 não entra no score
     const total = metas.reduce(
       (acc, m) => acc + (m.meses[mesId]?.score || 0),
       0
@@ -542,6 +569,43 @@ const OperacaoMetas = () => {
 
                     {MESES.map((mes) => {
                       const dados = meta.meses[mes.id];
+
+                      // ✅ MÉDIA 25 (mes=14): só realizado manual, sem meta azul
+                      if (mes.id === 14) {
+                        const valorRealizado =
+                          dados?.realizado === null ||
+                          dados?.realizado === "" ||
+                          Number.isNaN(dados?.realizado)
+                            ? ""
+                            : dados.realizado;
+
+                        return (
+                          <td
+                            key={mes.id}
+                            className="border border-gray-300 p-0 relative h-12 align-middle bg-white"
+                          >
+                            <div className="flex flex-col h-full justify-center">
+                              <input
+                                className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
+                                placeholder="-"
+                                defaultValue={
+                                  valorRealizado === ""
+                                    ? ""
+                                    : String(valorRealizado)
+                                }
+                                onBlur={(e) =>
+                                  handleSave(
+                                    meta.id,
+                                    mes.id,
+                                    e.target.value,
+                                    meta
+                                  )
+                                }
+                              />
+                            </div>
+                          </td>
+                        );
+                      }
 
                       // ✅ Binário: select Sim/Não gravando 1/0
                       if (meta._isBinary) {
