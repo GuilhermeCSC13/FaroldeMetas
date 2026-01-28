@@ -37,8 +37,8 @@ const MESES = [
   { id: 10, label: "out/26" },
   { id: 11, label: "nov/26" },
   { id: 12, label: "dez/26" },
-  { id: 13, label: "acum/26" },   // ✅ tem alvo/meta azul + realizado
-  { id: 14, label: "média 25" },  // ✅ só realizado (manual), sem meta azul, sem score
+  { id: 13, label: "acum/26" }, // ✅ tem alvo/meta azul + realizado
+  { id: 14, label: "média 25" }, // ✅ só realizado (manual), sem meta azul, sem score
 ];
 
 function normBoolLabel(v) {
@@ -572,6 +572,7 @@ const OperacaoMetas = () => {
 
                       // ✅ MÉDIA 25 (mes=14): só realizado manual, sem meta azul
                       if (mes.id === 14) {
+                        // ✅ FIX MÉDIA 25: input CONTROLADO para refletir state
                         const valorRealizado =
                           dados?.realizado === null ||
                           dados?.realizado === "" ||
@@ -588,18 +589,34 @@ const OperacaoMetas = () => {
                               <input
                                 className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                                 placeholder="-"
-                                defaultValue={
-                                  valorRealizado === ""
-                                    ? ""
-                                    : String(valorRealizado)
-                                }
+                                value={valorRealizado === "" ? "" : String(valorRealizado)} // ✅ FIX MÉDIA 25
+                                onChange={(e) => {
+                                  // ✅ FIX MÉDIA 25: atualiza state enquanto digita
+                                  const raw = e.target.value;
+
+                                  let parsed = null;
+                                  if (raw !== "") {
+                                    const n = parseFloat(String(raw).replace(",", "."));
+                                    parsed = Number.isNaN(n) ? null : n;
+                                  }
+
+                                  setMetas((prev) =>
+                                    prev.map((m) => {
+                                      if (m.id !== meta.id) return m;
+                                      const novoMeses = { ...m.meses };
+                                      novoMeses[14] = {
+                                        ...novoMeses[14],
+                                        realizado: raw === "" ? "" : parsed,
+                                        score: 0,
+                                        multiplicador: 0,
+                                        color: "bg-white",
+                                      };
+                                      return { ...m, meses: novoMeses };
+                                    })
+                                  );
+                                }}
                                 onBlur={(e) =>
-                                  handleSave(
-                                    meta.id,
-                                    mes.id,
-                                    e.target.value,
-                                    meta
-                                  )
+                                  handleSave(meta.id, mes.id, e.target.value, meta)
                                 }
                               />
                             </div>
@@ -626,12 +643,7 @@ const OperacaoMetas = () => {
                                 className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                                 value={realLabel || ""}
                                 onChange={(e) =>
-                                  handleSave(
-                                    meta.id,
-                                    mes.id,
-                                    e.target.value,
-                                    meta
-                                  )
+                                  handleSave(meta.id, mes.id, e.target.value, meta)
                                 }
                               >
                                 <option value="">-</option>
@@ -667,17 +679,10 @@ const OperacaoMetas = () => {
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                               placeholder="-"
                               defaultValue={
-                                valorRealizado === ""
-                                  ? ""
-                                  : String(valorRealizado)
+                                valorRealizado === "" ? "" : String(valorRealizado)
                               }
                               onBlur={(e) =>
-                                handleSave(
-                                  meta.id,
-                                  mes.id,
-                                  e.target.value,
-                                  meta
-                                )
+                                handleSave(meta.id, mes.id, e.target.value, meta)
                               }
                             />
                           </div>
