@@ -495,9 +495,10 @@ const OperacaoRotinas = () => {
         ) : (
           <div
             ref={tableWrapRef}
-            className="border border-gray-300 rounded-xl overflow-hidden shadow-sm"
+            className="border border-gray-300 rounded-xl shadow-sm overflow-x-auto overflow-y-hidden"
           >
-            <table className="w-full text-xs border-collapse">
+            <table className="min-w-max w-max text-xs border-collapse">
+
               <thead>
                 <tr className="bg-[#d0e0e3] text-gray-800 text-center font-bold">
                   <th className="p-2 border border-gray-300 w-72 sticky left-0 bg-[#d0e0e3] z-20 text-left">
