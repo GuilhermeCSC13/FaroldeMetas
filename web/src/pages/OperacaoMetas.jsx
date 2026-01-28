@@ -8,6 +8,22 @@ import html2canvas from "html2canvas";
 const ID_PCO = 4;
 const ID_MOTORISTAS = 5;
 
+// ✅ UNID dropdown
+const UNIDADES = [
+  { value: "kml", label: "km/l" },
+  { value: "un", label: "UN" },
+  { value: "pct", label: "%" },
+  { value: "numero", label: "Número (123)" },
+  { value: "binario", label: "Binário (Sim/Não)" },
+];
+
+function getUnidadeLabel(v) {
+  const key = String(v ?? "").trim().toLowerCase();
+  const opt = UNIDADES.find((u) => u.value === key);
+  return opt?.label || (v ? String(v) : "");
+}
+
+// ✅ adiciona ACUMULADO (mes=13) manual
 const MESES = [
   { id: 1, label: "jan/26" },
   { id: 2, label: "fev/26" },
@@ -21,12 +37,11 @@ const MESES = [
   { id: 10, label: "out/26" },
   { id: 11, label: "nov/26" },
   { id: 12, label: "dez/26" },
+  { id: 13, label: "acum/26" }, // ✅ novo
 ];
 
 function normBoolLabel(v) {
-  const s = String(v ?? "")
-    .trim()
-    .toLowerCase();
+  const s = String(v ?? "").trim().toLowerCase();
   if (s === "1" || s === "sim" || s === "true" || s === "ok") return "Sim";
   if (s === "0" || s === "nao" || s === "não" || s === "false") return "Não";
   return "";
@@ -101,10 +116,10 @@ const OperacaoMetas = () => {
     const unidade = String(metaRow?.unidade ?? "").trim().toLowerCase();
     const tipo = String(metaRow?.tipo_comparacao ?? "").trim().toLowerCase();
 
-    // ✅ Heurística simples (você pode padronizar isso no banco depois)
-    if (unidade === "binario" || unidade === "binário" || unidade === "boolean")
-      return true;
+    // ✅ prioridade: unidade = binario
+    if (unidade === "binario" || unidade === "binário" || unidade === "boolean") return true;
 
+    // fallback antigo (mantido)
     if (
       tipo === "binario" ||
       tipo === "binário" ||
@@ -129,7 +144,7 @@ const OperacaoMetas = () => {
 
       if (err1) throw err1;
 
-      // 2) Metas Mensais (Alvos)
+      // 2) Metas Mensais (Alvos) - se quiser alvo do acumulado, cadastre mes=13
       const { data: metasMensais, error: err2 } = await supabase
         .from("metas_farol_mensal")
         .select("*")
@@ -137,7 +152,7 @@ const OperacaoMetas = () => {
 
       if (err2) throw err2;
 
-      // 3) Resultados Realizados
+      // 3) Resultados Realizados (inclui mes=13)
       const { data: resultados, error: err3 } = await supabase
         .from("resultados_farol")
         .select("*")
@@ -177,7 +192,13 @@ const OperacaoMetas = () => {
           row.meses[mes.id] = {
             alvo: alvoEfetivo,
             realizado: real,
-            ...calculateScore(alvoEfetivo, real, m.tipo_comparacao, parseFloat(m.peso), row._isBinary),
+            ...calculateScore(
+              alvoEfetivo,
+              real,
+              m.tipo_comparacao,
+              parseFloat(m.peso),
+              row._isBinary
+            ),
           };
         });
 
@@ -215,7 +236,12 @@ const OperacaoMetas = () => {
     }
 
     // NUMÉRICO
-    if (meta === null || realizado === "" || realizado === null || isNaN(parseFloat(realizado))) {
+    if (
+      meta === null ||
+      realizado === "" ||
+      realizado === null ||
+      isNaN(parseFloat(realizado))
+    ) {
       return { score: 0, faixa: 0, color: "bg-white" };
     }
 
@@ -310,7 +336,13 @@ const OperacaoMetas = () => {
         novoMeses[mesId] = {
           ...novoMeses[mesId],
           realizado: valorNum,
-          ...calculateScore(alvoAtual, valorNum, m.tipo_comparacao, Number(m.peso), m._isBinary),
+          ...calculateScore(
+            alvoAtual,
+            valorNum,
+            m.tipo_comparacao,
+            Number(m.peso),
+            m._isBinary
+          ),
         };
 
         return { ...m, meses: novoMeses };
@@ -323,13 +355,58 @@ const OperacaoMetas = () => {
         {
           meta_id: metaId,
           ano: 2026,
-          mes: mesId,
+          mes: mesId, // ✅ inclui 13 (acum/26)
           valor_realizado: valorNum,
         },
         { onConflict: "meta_id, ano, mes" }
       );
 
     if (error) console.error("Erro ao salvar:", error);
+  };
+
+  // ✅ salvar unidade no metas_farol.unidade (dropdown)
+  const handleSaveUnidade = async (metaId, unidade) => {
+    const unidadeNorm = String(unidade ?? "").trim().toLowerCase();
+    const viraBinario = unidadeNorm === "binario";
+
+    // atualiza estado e recalcula cores/score (pq binário muda a regra)
+    setMetas((prev) =>
+      prev.map((m) => {
+        if (m.id !== metaId) return m;
+
+        const novo = { ...m, unidade: unidadeNorm, _isBinary: viraBinario };
+        const novoMeses = { ...novo.meses };
+
+        MESES.forEach((mes) => {
+          const old = novoMeses[mes.id] || {};
+          const alvoOld = old.alvo ?? null;
+          const realOld = old.realizado ?? "";
+
+          const alvoEfetivo = novo._isBinary ? (alvoOld === null ? 1 : alvoOld) : alvoOld;
+
+          novoMeses[mes.id] = {
+            ...old,
+            alvo: alvoEfetivo,
+            ...calculateScore(
+              alvoEfetivo,
+              realOld,
+              novo.tipo_comparacao,
+              Number(novo.peso),
+              novo._isBinary
+            ),
+          };
+        });
+
+        return { ...novo, meses: novoMeses };
+      })
+    );
+
+    const { error } = await supabase
+      .from("metas_farol")
+      .update({ unidade: unidadeNorm })
+      .eq("id", metaId);
+
+    if (error) console.error("Erro ao salvar unidade:", error);
   };
 
   const totalPeso = useMemo(() => {
@@ -359,8 +436,7 @@ const OperacaoMetas = () => {
       const dataUrl = canvas.toDataURL(mime, format === "jpg" ? 0.92 : undefined);
       const a = document.createElement("a");
 
-      const areaName =
-        areas.find((a) => a.id === areaSelecionada)?.nome || "Operacao";
+      const areaName = areas.find((a) => a.id === areaSelecionada)?.nome || "Operacao";
 
       a.href = dataUrl;
       a.download = `Farol_${areaName}_2026.${ext}`;
@@ -377,7 +453,7 @@ const OperacaoMetas = () => {
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-gray-800">Farol de Metas — Operação</h2>
 
-          {/* ✅ Baixar Farol */}
+          {/* Baixar Farol */}
           <div className="relative">
             <button
               onClick={() => setOpenExport((s) => !s)}
@@ -451,9 +527,14 @@ const OperacaoMetas = () => {
                   <th className="p-2 border border-gray-300 w-48 sticky left-0 bg-[#d0e0e3] z-10">
                     Indicador
                   </th>
+
+                  {/* ✅ UNID coluna */}
+                  <th className="p-2 border border-gray-300 w-16">UNID.</th>
+
                   <th className="p-2 border border-gray-300 w-32">Responsável</th>
                   <th className="p-2 border border-gray-300 w-12">Peso</th>
                   <th className="p-2 border border-gray-300 w-12">Tipo</th>
+
                   {MESES.map((mes) => (
                     <th key={mes.id} className="p-2 border border-gray-300 min-w-[70px]">
                       {mes.label}
@@ -468,8 +549,26 @@ const OperacaoMetas = () => {
                     {/* Indicador */}
                     <td className="p-2 border border-gray-300 text-left font-semibold text-gray-800 text-sm sticky left-0 bg-white z-10">
                       {meta.nome_meta || meta.indicador}
-                      <span className="block text-[9px] text-gray-400 font-normal">
-                        {meta.unidade}
+                    </td>
+
+                    {/* ✅ UNID dropdown */}
+                    <td className="p-2 border border-gray-300">
+                      <select
+                        className="w-full bg-transparent text-[11px] font-semibold focus:outline-none"
+                        value={String(meta.unidade || "").trim().toLowerCase()}
+                        onChange={(e) => handleSaveUnidade(meta.id, e.target.value)}
+                      >
+                        <option value="">-</option>
+                        {UNIDADES.map((u) => (
+                          <option key={u.value} value={u.value}>
+                            {u.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* mantém a “linhazinha” visual como antes, só que agora exibindo o label */}
+                      <span className="block text-[9px] text-gray-400 font-normal text-left mt-0.5">
+                        {getUnidadeLabel(meta.unidade)}
                       </span>
                     </td>
 
@@ -478,7 +577,10 @@ const OperacaoMetas = () => {
                       {meta.responsavel || "-"}
                     </td>
 
-                    <td className="p-2 border border-gray-300 bg-gray-50">{parseInt(meta.peso)}</td>
+                    <td className="p-2 border border-gray-300 bg-gray-50">
+                      {parseInt(meta.peso)}
+                    </td>
+
                     <td className="p-2 border border-gray-300 font-mono text-gray-500">
                       {meta.tipo_comparacao}
                     </td>
@@ -517,7 +619,9 @@ const OperacaoMetas = () => {
 
                       // ✅ Numérico: input normal
                       const valorRealizado =
-                        dados.realizado === null || dados.realizado === "" || Number.isNaN(dados.realizado)
+                        dados.realizado === null ||
+                        dados.realizado === "" ||
+                        Number.isNaN(dados.realizado)
                           ? ""
                           : dados.realizado;
 
@@ -528,7 +632,9 @@ const OperacaoMetas = () => {
                         >
                           <div className="flex flex-col h-full justify-between">
                             <div className="text-[11px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40">
-                              {dados.alvo !== null && dados.alvo !== undefined ? Number(dados.alvo).toFixed(2) : ""}
+                              {dados.alvo !== null && dados.alvo !== undefined
+                                ? Number(dados.alvo).toFixed(2)
+                                : ""}
                             </div>
 
                             <input
@@ -550,13 +656,18 @@ const OperacaoMetas = () => {
                     TOTAL SCORE
                   </td>
 
+                  {/* ✅ UNID vazio */}
                   <td className="p-2 border-r border-red-500"></td>
 
-                  {/* ✅ AGORA É SOMA REAL DOS PESOS */}
+                  {/* Responsável vazio */}
+                  <td className="p-2 border-r border-red-500"></td>
+
+                  {/* ✅ soma real dos pesos */}
                   <td className="p-2 border-r border-red-500 text-center">
                     {Number(totalPeso || 0).toFixed(0)}
                   </td>
 
+                  {/* Tipo vazio */}
                   <td className="p-2 border-r border-red-500"></td>
 
                   {MESES.map((mes) => (
@@ -572,7 +683,12 @@ const OperacaoMetas = () => {
       </div>
 
       {showConfig && (
-        <ConfiguracaoGeral onClose={() => { setShowConfig(false); fetchMetasData(); }} />
+        <ConfiguracaoGeral
+          onClose={() => {
+            setShowConfig(false);
+            fetchMetasData();
+          }}
+        />
       )}
     </div>
   );
