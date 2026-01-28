@@ -62,6 +62,34 @@ function numToBoolLabel(v) {
   return n === 1 ? "Sim" : "Não";
 }
 
+/** ✅ Parser único: aceita vírgula ou ponto (PT-BR) */
+function parseNumberPtBr(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  let t = s.replace(/\s+/g, "");
+
+  // "." e "," juntos -> BR: "." milhar, "," decimal
+  if (t.includes(".") && t.includes(",")) {
+    t = t.replace(/\./g, "").replace(",", ".");
+  } else {
+    // só "," -> decimal
+    t = t.replace(",", ".");
+  }
+
+  // remove lixo
+  t = t.replace(/[^0-9.\-]/g, "");
+
+  // remove pontos extras
+  const idx = t.indexOf(".");
+  if (idx !== -1) {
+    t = t.slice(0, idx + 1) + t.slice(idx + 1).replace(/\./g, "");
+  }
+
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
 const OperacaoMetas = () => {
   const [areas, setAreas] = useState([]);
   const [areaSelecionada, setAreaSelecionada] = useState(null);
@@ -165,8 +193,8 @@ const OperacaoMetas = () => {
             realObj.valor_realizado !== null &&
             realObj.valor_realizado !== ""
           ) {
-            const parsed = parseFloat(realObj.valor_realizado);
-            real = Number.isNaN(parsed) ? "" : parsed;
+            const parsed = parseNumberPtBr(realObj.valor_realizado); // ✅ aqui
+            real = parsed === null ? "" : parsed;
           }
 
           // ✅ MÉDIA 25 (mes=14): só realizado, SEM alvo/meta azul e SEM score
@@ -192,8 +220,8 @@ const OperacaoMetas = () => {
             alvoObj.valor_meta !== null &&
             alvoObj.valor_meta !== ""
           ) {
-            const parsed = parseFloat(alvoObj.valor_meta);
-            alvo = Number.isNaN(parsed) ? null : parsed;
+            const parsed = parseNumberPtBr(alvoObj.valor_meta); // ✅ aqui
+            alvo = parsed === null ? null : parsed;
           }
 
           // ✅ Para binário, se alvo vier null, assume meta "Sim" (1)
@@ -206,7 +234,7 @@ const OperacaoMetas = () => {
               alvoEfetivo,
               real,
               m.tipo_comparacao,
-              parseFloat(m.peso),
+              parseNumberPtBr(m.peso) ?? 0, // ✅ mais seguro
               row._isBinary
             ),
           };
@@ -328,11 +356,10 @@ const OperacaoMetas = () => {
     if (isBinary) {
       valorNum = boolToNum(valor);
     } else {
-      valorNum =
-        valor === "" ? null : parseFloat(String(valor).replace(",", "."));
-      if (Number.isNaN(valorNum)) valorNum = null;
+      valorNum = parseNumberPtBr(valor); // ✅ aceita vírgula/ponto em TODOS (inclui mês 14)
     }
 
+    // Atualiza UI
     setMetas((prev) =>
       prev.map((m) => {
         if (m.id !== metaId) return m;
@@ -343,7 +370,7 @@ const OperacaoMetas = () => {
         if (mesId === 14) {
           novoMeses[mesId] = {
             ...novoMeses[mesId],
-            realizado: valorNum,
+            realizado: valorNum === null ? "" : valorNum,
             score: 0,
             multiplicador: 0,
             color: "bg-white",
@@ -353,7 +380,7 @@ const OperacaoMetas = () => {
 
         novoMeses[mesId] = {
           ...novoMeses[mesId],
-          realizado: valorNum,
+          realizado: valorNum === null ? "" : valorNum,
           ...calculateScore(
             alvoAtual,
             valorNum,
@@ -367,6 +394,7 @@ const OperacaoMetas = () => {
       })
     );
 
+    // Salva no banco (null apaga valor)
     const { error } = await supabase
       .from("resultados_farol")
       .upsert(
@@ -572,7 +600,6 @@ const OperacaoMetas = () => {
 
                       // ✅ MÉDIA 25 (mes=14): só realizado manual, sem meta azul
                       if (mes.id === 14) {
-                        // ✅ FIX MÉDIA 25: input CONTROLADO para refletir state
                         const valorRealizado =
                           dados?.realizado === null ||
                           dados?.realizado === "" ||
@@ -587,18 +614,21 @@ const OperacaoMetas = () => {
                           >
                             <div className="flex flex-col h-full justify-center">
                               <input
+                                type="text"
+                                inputMode="decimal"
                                 className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                                 placeholder="-"
-                                value={valorRealizado === "" ? "" : String(valorRealizado)} // ✅ FIX MÉDIA 25
+                                value={
+                                  valorRealizado === ""
+                                    ? ""
+                                    : String(valorRealizado)
+                                }
                                 onChange={(e) => {
-                                  // ✅ FIX MÉDIA 25: atualiza state enquanto digita
                                   const raw = e.target.value;
 
-                                  let parsed = null;
-                                  if (raw !== "") {
-                                    const n = parseFloat(String(raw).replace(",", "."));
-                                    parsed = Number.isNaN(n) ? null : n;
-                                  }
+                                  // mantém digitando livre; parse só pra refletir state
+                                  const parsed =
+                                    raw === "" ? "" : parseNumberPtBr(raw);
 
                                   setMetas((prev) =>
                                     prev.map((m) => {
@@ -606,7 +636,12 @@ const OperacaoMetas = () => {
                                       const novoMeses = { ...m.meses };
                                       novoMeses[14] = {
                                         ...novoMeses[14],
-                                        realizado: raw === "" ? "" : parsed,
+                                        realizado:
+                                          raw === ""
+                                            ? ""
+                                            : parsed === null
+                                            ? ""
+                                            : parsed,
                                         score: 0,
                                         multiplicador: 0,
                                         color: "bg-white",
@@ -616,7 +651,12 @@ const OperacaoMetas = () => {
                                   );
                                 }}
                                 onBlur={(e) =>
-                                  handleSave(meta.id, mes.id, e.target.value, meta)
+                                  handleSave(
+                                    meta.id,
+                                    mes.id,
+                                    e.target.value,
+                                    meta
+                                  )
                                 }
                               />
                             </div>
@@ -643,7 +683,12 @@ const OperacaoMetas = () => {
                                 className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                                 value={realLabel || ""}
                                 onChange={(e) =>
-                                  handleSave(meta.id, mes.id, e.target.value, meta)
+                                  handleSave(
+                                    meta.id,
+                                    mes.id,
+                                    e.target.value,
+                                    meta
+                                  )
                                 }
                               >
                                 <option value="">-</option>
@@ -655,11 +700,11 @@ const OperacaoMetas = () => {
                         );
                       }
 
-                      // ✅ Numérico: input normal
+                      // ✅ Numérico: input normal (agora aceita vírgula/ponto)
                       const valorRealizado =
-                        dados.realizado === null ||
-                        dados.realizado === "" ||
-                        Number.isNaN(dados.realizado)
+                        dados?.realizado === null ||
+                        dados?.realizado === "" ||
+                        Number.isNaN(dados?.realizado)
                           ? ""
                           : dados.realizado;
 
@@ -676,13 +721,22 @@ const OperacaoMetas = () => {
                             </div>
 
                             <input
+                              type="text"
+                              inputMode="decimal"
                               className="w-full text-center bg-transparent font-bold text-gray-800 text-xs focus:outline-none h-full pb-1 focus:bg-white/50 transition-colors"
                               placeholder="-"
                               defaultValue={
-                                valorRealizado === "" ? "" : String(valorRealizado)
+                                valorRealizado === ""
+                                  ? ""
+                                  : String(valorRealizado)
                               }
                               onBlur={(e) =>
-                                handleSave(meta.id, mes.id, e.target.value, meta)
+                                handleSave(
+                                  meta.id,
+                                  mes.id,
+                                  e.target.value,
+                                  meta
+                                )
                               }
                             />
                           </div>
