@@ -19,13 +19,15 @@ const MESES = [
   { id: 13, label: "Acum" }, // ✅ meta do acumulado
 ];
 
-// ✅ UNID dropdown (fonte de verdade pro binário)
+// ✅ UNID dropdown (fonte de verdade pro binário) — agora vale p/ metas E rotinas
 const UNIDADES = [
   { value: "kml", label: "km/l" },
   { value: "un", label: "UN" },
   { value: "pct", label: "%" },
   { value: "numero", label: "Número (123)" },
   { value: "binario", label: "Binário (Sim/Não)" },
+  // se você quiser manter o R$ nas rotinas, descomenta:
+  // { value: "currency", label: "R$" },
 ];
 
 // Fallback: Se não receber nada, assume que é a Operação
@@ -132,17 +134,21 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         });
         if (error) throw error;
       } else {
+        // ✅ agora Rotinas também usa "unidade" igual Metas
         const { error } = await supabase.from("rotinas_indicadores").insert({
           area_id: areaId,
           indicador: nome,
-          formato: "num",
           ordem: items.length + 1,
           tipo_comparacao: ">=",
           peso: 0,
+          unidade: "", // ✅ NOVO: igual metas
           responsavel: "",
+          // se sua tabela exigir "formato", pode manter como legado:
+          // formato: "num",
         });
         if (error) throw error;
       }
+
       fetchData();
     } catch (err) {
       console.error("Erro ao criar indicador:", err);
@@ -179,10 +185,16 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         if (errRes) throw errRes;
       }
 
-      const { error: errMensal } = await supabase.from(tableMensal).delete().eq(fkCol, id);
+      const { error: errMensal } = await supabase
+        .from(tableMensal)
+        .delete()
+        .eq(fkCol, id);
       if (errMensal) throw errMensal;
 
-      const { error: errMain } = await supabase.from(tableMain).delete().eq("id", id);
+      const { error: errMain } = await supabase
+        .from(tableMain)
+        .delete()
+        .eq("id", id);
       if (errMain) throw errMain;
 
       fetchData();
@@ -207,7 +219,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
       }
     }
 
-    // ✅ unidade padronizada
+    // ✅ unidade padronizada (vale pros dois)
     if (field === "unidade") {
       normalizedValue = String(value ?? "").trim().toLowerCase();
     }
@@ -217,7 +229,10 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     );
 
     try {
-      const { error } = await supabase.from(table).update({ [field]: normalizedValue }).eq("id", id);
+      const { error } = await supabase
+        .from(table)
+        .update({ [field]: normalizedValue })
+        .eq("id", id);
       if (error) throw error;
     } catch (err) {
       console.error("Erro ao atualizar indicador:", err);
@@ -255,7 +270,9 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
   const saveMonthlyTarget = async (itemId, mesId, valor) => {
     const valorNum =
-      valor === "" || valor === null ? null : parseFloat(String(valor).replace(",", "."));
+      valor === "" || valor === null
+        ? null
+        : parseFloat(String(valor).replace(",", "."));
 
     const table = tipo === "metas" ? "metas_farol_mensal" : "rotinas_mensais";
     const fkColumn = tipo === "metas" ? "meta_id" : "rotina_id";
@@ -359,7 +376,10 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
               ))}
             </select>
 
-            <button onClick={onClose} className="p-2 text-gray-500 hover:bg-gray-200 rounded-full transition-colors">
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-500 hover:bg-gray-200 rounded-full transition-colors"
+            >
               <X size={24} />
             </button>
           </div>
@@ -376,21 +396,11 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                   <tr>
                     <th className="p-3 w-64 border-r">Indicador</th>
 
-                    {tipo === "metas" ? (
-                      <>
-                        <th className="p-3 w-16 text-center border-r">Peso</th>
-                        <th className="p-3 w-28 text-center border-r">Unid.</th>
-                        <th className="p-3 w-24 text-center border-r">Resp.</th>
-                        <th className="p-3 w-16 text-center border-r">Tipo</th>
-                      </>
-                    ) : (
-                      <>
-                        <th className="p-3 w-16 text-center border-r">Peso</th>
-                        <th className="p-3 w-20 text-center border-r">Formato</th>
-                        <th className="p-3 w-24 text-center border-r">Resp.</th>
-                        <th className="p-3 w-16 text-center border-r">Tipo</th>
-                      </>
-                    )}
+                    {/* ✅ Metas e Rotinas agora usam a MESMA estrutura: Peso + UNID + Resp + Tipo */}
+                    <th className="p-3 w-16 text-center border-r">Peso</th>
+                    <th className="p-3 w-28 text-center border-r">Unid.</th>
+                    <th className="p-3 w-24 text-center border-r">Resp.</th>
+                    <th className="p-3 w-16 text-center border-r">Tipo</th>
 
                     {/* ✅ metas mensais (inclui Acum=13). Média 25 NÃO entra aqui. */}
                     {MESES.map((m) => (
@@ -414,81 +424,52 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         <input
                           value={item.nome_meta || item.indicador}
                           onChange={(e) =>
-                            updateRowProp(item.id, tipo === "metas" ? "nome_meta" : "indicador", e.target.value)
+                            updateRowProp(
+                              item.id,
+                              tipo === "metas" ? "nome_meta" : "indicador",
+                              e.target.value
+                            )
                           }
                           className="w-full font-semibold bg-transparent focus:outline-none focus:text-blue-600"
                         />
                       </td>
 
-                      {tipo === "metas" && (
-                        <>
-                          <td className="p-1 border-r">
-                            <input
-                              type="number"
-                              value={item.peso ?? 0}
-                              onChange={(e) => updateRowProp(item.id, "peso", e.target.value)}
-                              className="w-full text-center bg-transparent"
-                            />
-                          </td>
+                      {/* Peso */}
+                      <td className="p-1 border-r">
+                        <input
+                          type="number"
+                          value={item.peso ?? 0}
+                          onChange={(e) => updateRowProp(item.id, "peso", e.target.value)}
+                          className="w-full text-center bg-transparent"
+                        />
+                      </td>
 
-                          {/* ✅ UNID dropdown (fonte do binário) */}
-                          <td className="p-1 border-r">
-                            <select
-                              value={String(item.unidade || "").trim().toLowerCase()}
-                              onChange={(e) => updateRowProp(item.id, "unidade", e.target.value)}
-                              className="w-full text-center bg-transparent text-[11px] font-semibold"
-                            >
-                              <option value="">-</option>
-                              {UNIDADES.map((u) => (
-                                <option key={u.value} value={u.value}>
-                                  {u.label}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
+                      {/* ✅ UNID dropdown (agora também para rotinas) */}
+                      <td className="p-1 border-r">
+                        <select
+                          value={String(item.unidade || "").trim().toLowerCase()}
+                          onChange={(e) => updateRowProp(item.id, "unidade", e.target.value)}
+                          className="w-full text-center bg-transparent text-[11px] font-semibold"
+                        >
+                          <option value="">-</option>
+                          {UNIDADES.map((u) => (
+                            <option key={u.value} value={u.value}>
+                              {u.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
 
-                          <td className="p-1 border-r">
-                            <input
-                              value={item.responsavel || ""}
-                              onChange={(e) => updateRowProp(item.id, "responsavel", e.target.value)}
-                              className="w-full text-center bg-transparent"
-                            />
-                          </td>
-                        </>
-                      )}
+                      {/* Responsável */}
+                      <td className="p-1 border-r">
+                        <input
+                          value={item.responsavel || ""}
+                          onChange={(e) => updateRowProp(item.id, "responsavel", e.target.value)}
+                          className="w-full text-center bg-transparent"
+                        />
+                      </td>
 
-                      {tipo === "rotinas" && (
-                        <>
-                          <td className="p-1 border-r">
-                            <input
-                              type="number"
-                              value={item.peso ?? 0}
-                              onChange={(e) => updateRowProp(item.id, "peso", e.target.value)}
-                              className="w-full text-center bg-transparent"
-                            />
-                          </td>
-                          <td className="p-1 border-r">
-                            <select
-                              value={item.formato || "num"}
-                              onChange={(e) => updateRowProp(item.id, "formato", e.target.value)}
-                              className="w-full bg-transparent"
-                            >
-                              <option value="num">123</option>
-                              <option value="percent">%</option>
-                              <option value="currency">R$</option>
-                            </select>
-                          </td>
-                          <td className="p-1 border-r">
-                            <input
-                              value={item.responsavel || ""}
-                              onChange={(e) => updateRowProp(item.id, "responsavel", e.target.value)}
-                              className="w-full text-center bg-transparent"
-                            />
-                          </td>
-                        </>
-                      )}
-
-                      {/* Tipo de comparação (metas e rotinas) */}
+                      {/* Tipo de comparação */}
                       <td className="p-1 border-r">
                         <select
                           value={item.tipo_comparacao}
