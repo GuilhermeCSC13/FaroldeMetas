@@ -3,22 +3,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import {
-  Cpu,
-  Monitor,
+  Bot,
   Search,
   Calendar,
   Lock,
-  Loader2,
-  CheckCircle,
-  Plus,
-  PlayCircle,
-  Headphones,
-  ClipboardList,
   FileText,
-  Pencil,
+  ClipboardList,
+  Plus,
   Save,
   X,
-  AlertTriangle,
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 
@@ -32,14 +25,6 @@ function nowIso() {
 function toBR(dt) {
   try {
     return dt ? new Date(dt).toLocaleString("pt-BR") : "-";
-  } catch {
-    return "-";
-  }
-}
-
-function toBRDate(dt) {
-  try {
-    return dt ? new Date(dt).toLocaleDateString("pt-BR") : "-";
   } catch {
     return "-";
   }
@@ -60,46 +45,51 @@ function secondsToMMSS(s) {
 }
 
 /**
- * ✅ Corrige o bug “tudo Realizada”
- * Só considera que “tem ATA” se houver conteúdo relevante (não vazio/curto),
- * ou status IA pronto.
+ * ✅ Só “travado” quando já tem ATA principal (pauta/ata) com conteúdo real
+ * ou status real “Realizada”, ou pipeline concluído.
  */
-function hasAtaReal(r) {
-  if (!r) return false;
-
-  // campos possíveis (no seu schema existe pauta/ata/ata_ia_status)
-  const iaStatus = norm(r.ata_ia_status);
+function hasAtaPrincipalReal(r) {
+  const iaStatus = norm(r?.ata_ia_status);
   const okByStatus = ["PRONTO", "PRONTA", "OK", "GERADA", "FINALIZADA", "CONCLUIDA"].includes(iaStatus);
 
-  const pauta = String(r.pauta || "").trim();
-  const ata = String(r.ata || "").trim();
+  const pauta = String(r?.pauta || "").trim(); // aqui é sua “ATA principal” no banco
+  const ata = String(r?.ata || "").trim();
 
-  // evita falso positivo (ex: default "", " ", "ok", etc.)
   const hasText = (txt) => txt && txt.replace(/\s+/g, " ").trim().length >= 40;
 
   return okByStatus || hasText(pauta) || hasText(ata);
 }
 
 function getTipoReuniao(r) {
-  // seu CSV tem tipo_reuniao e tipo_reuniao_legacy
-  const t =
-    r?.tipo_reuniao ||
-    r?.tipo_reuniao_legacy ||
-    r?.tipo ||
-    r?.categoria ||
-    "Geral";
+  const t = r?.tipo_reuniao || r?.tipo_reuniao_legacy || r?.tipo || r?.categoria || "Geral";
   return String(t || "Geral").trim() || "Geral";
 }
 
-function getSignedOrPublicUrl(bucket, path, expiresSec = 60 * 30) {
-  if (!bucket || !path) return Promise.resolve(null);
-  return (async () => {
-    const { data: signed, error: e1 } = await supabase.storage.from(bucket).createSignedUrl(path, expiresSec);
-    if (!e1 && signed?.signedUrl) return signed.signedUrl;
+/* =========================
+   Card Ação (leve)
+========================= */
+function AcaoCard({ acao, onToggle }) {
+  const done =
+    String(acao?.status || "").toLowerCase() === "concluída" ||
+    String(acao?.status || "").toLowerCase() === "concluida";
 
-    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
-    return pub?.publicUrl || null;
-  })();
+  return (
+    <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start gap-3">
+        <input type="checkbox" checked={done} onChange={onToggle} className="mt-1 w-4 h-4" />
+        <div className="flex-1">
+          <div className={`text-sm font-semibold ${done ? "line-through text-slate-400" : "text-slate-900"}`}>
+            {acao?.descricao || "-"}
+          </div>
+          <div className="text-[12px] text-slate-600 mt-1">
+            <span className="font-semibold">Responsável:</span> {acao?.responsavel || "Geral"}
+            {acao?.tipo_reuniao ? <span className="text-slate-500"> • Tipo: {acao.tipo_reuniao}</span> : null}
+          </div>
+          {acao?.observacao ? <div className="text-[12px] text-slate-600 mt-2">Obs: {acao.observacao}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* =========================
@@ -113,32 +103,20 @@ export default function Copiloto() {
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
 
-  // Tabs da direita
-  const [tab, setTab] = useState("execucoes"); // execucoes | ata_ia | ata_manual | acoes
+  // Tabs direita: ✅ sem “Execuções” e sem “Ata IA”
+  const [tab, setTab] = useState("ata"); // ata | acoes
 
-  // Execuções (histórico)
-  const [execucoes, setExecucoes] = useState([]);
-  const [loadingExec, setLoadingExec] = useState(false);
-  const [mediaUrls, setMediaUrls] = useState({ video: null, audio: null });
+  // ATA principal (vinda do banco de atas / campo pauta/ata)
+  const [isEditingAta, setIsEditingAta] = useState(false);
+  const [ataValue, setAtaValue] = useState("");
 
-  // ATA IA / ATA Manual (editáveis)
-  const [isEditingIA, setIsEditingIA] = useState(false);
-  const [isEditingManual, setIsEditingManual] = useState(false);
-  const [ataIAValue, setAtaIAValue] = useState("");
-  const [ataManualValue, setAtaManualValue] = useState("");
-
-  // Ações (mesma lógica da CentralAtas: da reunião + backlog por tipo)
+  // Ações (estrutura “Central de Ações” — listas separadas)
+  const [loadingAcoes, setLoadingAcoes] = useState(false);
   const [acoesDaReuniao, setAcoesDaReuniao] = useState([]);
   const [acoesPendentesTipo, setAcoesPendentesTipo] = useState([]);
-  const [loadingAcoes, setLoadingAcoes] = useState(false);
-  const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | tipo
+  const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog
 
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
-
-  // Modal admin unlock
-  const [showUnlock, setShowUnlock] = useState(false);
-  const [senhaAdmin, setSenhaAdmin] = useState("");
-  const [unlocking, setUnlocking] = useState(false);
 
   const isMountedRef = useRef(false);
   const safeSet = (fn) => {
@@ -162,18 +140,16 @@ export default function Copiloto() {
   useEffect(() => {
     if (!selecionada?.id) return;
 
-    // hydrate campos da direita
-    setAtaIAValue(String(selecionada.pauta || selecionada.ata || "").trim());
-    setAtaManualValue(String(selecionada.observacoes || "").trim());
-    setIsEditingIA(false);
-    setIsEditingManual(false);
+    // ✅ ATA principal: usa pauta/ata (não mostra ata IA separada)
+    const principal = String(selecionada.pauta || selecionada.ata || "").trim();
+    setAtaValue(principal);
+    setIsEditingAta(false);
 
-    hydrateMediaUrls(selecionada);
-    fetchExecucoes(selecionada.id);
+    // ✅ carrega ações
     fetchAcoes(selecionada);
 
-    // se selecionou, já cai na aba Execuções (pra “começar por aqui”)
-    setTab("execucoes");
+    // começa na ATA
+    setTab("ata");
     setAcaoTab("reuniao");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada?.id]);
@@ -196,7 +172,6 @@ export default function Copiloto() {
 
     safeSet(() => setReunioes(data || []));
 
-    // mantém selecionada se existir
     if (selecionada?.id) {
       const found = (data || []).find((r) => r.id === selecionada.id);
       if (found) safeSet(() => setSelecionada(found));
@@ -210,75 +185,124 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Media URLs (vídeo/áudio compilados)
+     Lock / Badge
+     ✅ “Realizada” só por status real OU ATA principal real.
   ========================= */
-  const hydrateMediaUrls = async (r) => {
-    try {
-      const videoUrl = await getSignedOrPublicUrl(r.gravacao_bucket, r.gravacao_path);
-      const audioUrl = await getSignedOrPublicUrl(r.gravacao_audio_bucket || r.gravacao_bucket, r.gravacao_audio_path);
-      safeSet(() => setMediaUrls({ video: videoUrl, audio: audioUrl }));
-    } catch (e) {
-      console.error("hydrateMediaUrls:", e);
-      safeSet(() => setMediaUrls({ video: null, audio: null }));
-    }
+  const isLocked = useMemo(() => {
+    return (r) => {
+      if (!r) return false;
+      if (hasAtaPrincipalReal(r)) return true;
+
+      const st = norm(r.status);
+      const gs = norm(r.gravacao_status);
+
+      if (st === "REALIZADA") return true;
+
+      const doneOrPipeline = new Set([
+        "PRONTO_PROCESSAR",
+        "PROCESSANDO",
+        "PROCESSANDO_DRIVE",
+        "ENVIADO_DRIVE",
+        "PRONTO",
+        "CONCLUIDO",
+      ]);
+      if (doneOrPipeline.has(gs)) return true;
+
+      return false;
+    };
+  }, []);
+
+  const badgeLabel = (r) => {
+    if (!r) return "PENDENTE";
+    const st = norm(r.status);
+
+    if (st === "REALIZADA") return "REALIZADA";
+    if (st === "AGENDADA") return "AGENDADA";
+    if (st === "PENDENTE") return "PENDENTE";
+    if (st === "EM ANDAMENTO") return "EM ANDAMENTO";
+
+    if (hasAtaPrincipalReal(r)) return "REALIZADA";
+
+    const gs = norm(r.gravacao_status);
+    if (gs) return gs;
+
+    return "PENDENTE";
+  };
+
+  const badgeClass = (lbl) => {
+    const v = norm(lbl);
+    if (v === "REALIZADA") return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
+    if (v === "EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border border-blue-200";
+    if (v === "AGENDADA") return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v === "PENDENTE") return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v.includes("PROCESS") || v.includes("PRONTO")) return "bg-blue-600/15 text-blue-700 border border-blue-200";
+    if (v === "ERRO") return "bg-red-600/15 text-red-700 border border-red-200";
+    return "bg-slate-600/10 text-slate-700 border border-slate-200";
   };
 
   /* =========================
-     Execuções (histórico por session_id)
-     - Cada gravação cria uma execução (session)
+     Recording
   ========================= */
-  const fetchExecucoes = async (reuniaoId) => {
-    if (!reuniaoId) return;
-    safeSet(() => setLoadingExec(true));
+  const onStart = async () => {
+    if (!selecionada?.id) return alert("Selecione uma reunião.");
+    if (isRecording) return;
+
+    if (isLocked(selecionada)) {
+      return alert("Reunião bloqueada (já possui ata/pipeline).");
+    }
+
     try {
-      const { data, error } = await supabase
-        .from("reuniao_gravacao_partes")
-        .select("session_id, part_number, bytes, status, created_at, storage_bucket, storage_path")
-        .eq("reuniao_id", reuniaoId)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // agrupa por session_id
-      const map = new Map();
-      (data || []).forEach((p) => {
-        const sid = p.session_id || "sem_session";
-        if (!map.has(sid)) {
-          map.set(sid, {
-            session_id: sid,
-            created_at: p.created_at,
-            parts: 0,
-            bytes: 0,
-            status: p.status || null,
-          });
-        }
-        const row = map.get(sid);
-        row.parts += 1;
-        row.bytes += Number(p.bytes || 0);
-        // mantém data mais recente
-        if (p.created_at && row.created_at && new Date(p.created_at) > new Date(row.created_at)) row.created_at = p.created_at;
+      await startRecording({
+        reuniaoId: selecionada.id,
+        reuniaoTitulo: selecionada.titulo,
       });
-
-      const list = Array.from(map.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-      safeSet(() => setExecucoes(list));
+      await fetchReunioes();
+      setTab("ata");
     } catch (e) {
-      console.error("fetchExecucoes:", e);
-      safeSet(() => setExecucoes([]));
-    } finally {
-      safeSet(() => setLoadingExec(false));
+      console.error("startRecording:", e);
+      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
+    }
+  };
+
+  const onStop = async () => {
+    try {
+      await stopRecording();
+      await fetchReunioes();
+      if (selecionada?.id) await fetchAcoes(selecionada);
+    } catch (e) {
+      console.error("stopRecording:", e);
+      alert("Erro ao encerrar a gravação.");
     }
   };
 
   /* =========================
-     Ações (igual CentralAtas: da reunião + backlog por tipo)
-     - a tabela acoes tem: reuniao_id, tipo_reuniao, status, observacao, resultado, fotos...
+     ATA principal (salva em pauta)
+  ========================= */
+  const salvarAtaPrincipal = async () => {
+    if (!selecionada?.id) return;
+
+    const { error } = await supabase
+      .from("reunioes")
+      .update({ pauta: ataValue, updated_at: nowIso() })
+      .eq("id", selecionada.id);
+
+    if (error) {
+      alert("Erro ao salvar Ata: " + (error.message || error));
+      return;
+    }
+    setIsEditingAta(false);
+    await fetchReunioes();
+  };
+
+  /* =========================
+     Ações (estrutura “Central”)
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
 
     safeSet(() => setLoadingAcoes(true));
     try {
-      // 1) Ações desta reunião
+      // 1) Ações da reunião
       const { data: daReuniao, error: e1 } = await supabase
         .from("acoes")
         .select("*")
@@ -288,11 +312,9 @@ export default function Copiloto() {
       if (e1) throw e1;
       safeSet(() => setAcoesDaReuniao(daReuniao || []));
 
-      // 2) Backlog pendente do tipo
+      // 2) Backlog do tipo (pendentes)
       const tipo = getTipoReuniao(r);
 
-      // pendentes do tipo: status Aberta, tipo_reuniao igual,
-      // e NÃO pertencem à reunião atual (reuniao_id null ou diferente)
       const { data: pendTipo, error: e2 } = await supabase
         .from("acoes")
         .select("*")
@@ -343,6 +365,10 @@ export default function Copiloto() {
       setNovaAcao({ descricao: "", responsavel: "" });
       setAcoesDaReuniao((prev) => [data?.[0], ...(prev || [])].filter(Boolean));
     });
+
+    // ✅ após criar: vai pra “Da reunião” (como você pediu)
+    setTab("acoes");
+    setAcaoTab("reuniao");
   };
 
   const toggleStatusAcao = async (acao) => {
@@ -357,227 +383,7 @@ export default function Copiloto() {
     const { error } = await supabase.from("acoes").update({ status: novoStatus }).eq("id", acao.id);
     if (error) {
       alert("Erro ao atualizar status: " + (error.message || error));
-      // fallback: recarrega
       fetchAcoes(selecionada);
-    }
-  };
-
-  /* =========================
-     ATA IA / ATA Manual (salvar)
-     - IA: salva em pauta (igual CentralAtas)
-     - Manual: salva em observacoes (campo existe no seu CSV)
-  ========================= */
-  const salvarAtaIA = async () => {
-    if (!selecionada?.id) return;
-    const { error } = await supabase
-      .from("reunioes")
-      .update({ pauta: ataIAValue, updated_at: nowIso() })
-      .eq("id", selecionada.id);
-
-    if (error) {
-      alert("Erro ao salvar Ata IA: " + (error.message || error));
-      return;
-    }
-    setIsEditingIA(false);
-    await fetchReunioes();
-  };
-
-  const salvarAtaManual = async () => {
-    if (!selecionada?.id) return;
-    const { error } = await supabase
-      .from("reunioes")
-      .update({ observacoes: ataManualValue, updated_at: nowIso() })
-      .eq("id", selecionada.id);
-
-    if (error) {
-      alert("Erro ao salvar Ata Manual: " + (error.message || error));
-      return;
-    }
-    setIsEditingManual(false);
-    await fetchReunioes();
-  };
-
-  /* =========================
-     Lock / Badge
-     ✅ Reunião só é “Realizada” se:
-        - status == Realizada OU gravacao_status pipeline/feito OU ata real existe
-  ========================= */
-  const isLocked = useMemo(() => {
-    return (r) => {
-      if (!r) return false;
-
-      // se já tem ata real, trava
-      if (hasAtaReal(r)) return true;
-
-      const st = norm(r.status);
-      const gs = norm(r.gravacao_status);
-
-      if (st === "REALIZADA") return true;
-
-      // pipeline / concluído (sem inventar “Realizada” em reunião agendada)
-      const doneOrPipeline = new Set([
-        "PRONTO_PROCESSAR",
-        "PROCESSANDO",
-        "PROCESSANDO_DRIVE",
-        "ENVIADO_DRIVE",
-        "PRONTO",
-        "CONCLUIDO",
-      ]);
-      if (doneOrPipeline.has(gs)) return true;
-
-      return false;
-    };
-  }, []);
-
-  const badgeLabel = (r) => {
-    if (!r) return "Pendente";
-
-    // ✅ prioridade: status real do banco
-    const st = norm(r.status);
-    if (st) {
-      if (st === "REALIZADA") return "REALIZADA";
-      if (st === "AGENDADA") return "AGENDADA";
-      if (st === "PENDENTE") return "PENDENTE";
-      if (st === "EM ANDAMENTO") return "EM ANDAMENTO";
-    }
-
-    // ✅ se ata real existe, considera realizada
-    if (hasAtaReal(r)) return "REALIZADA";
-
-    // senão, mostra gravacao_status se existir
-    const gs = norm(r.gravacao_status);
-    if (gs) return gs;
-
-    return "PENDENTE";
-  };
-
-  const badgeStyle = (label) => {
-    const v = norm(label);
-    if (v === "AGENDADA") return "bg-slate-700 text-slate-100 border border-slate-600";
-    if (v === "PENDENTE") return "bg-slate-700 text-slate-100 border border-slate-600";
-    if (v === "EM ANDAMENTO") return "bg-blue-600/20 text-blue-200 border border-blue-500/30";
-    if (v === "GRAVANDO") return "bg-red-600/30 text-red-200 border border-red-500/30";
-    if (v === "ERRO") return "bg-red-900/40 text-red-200 border border-red-500/30";
-    if (v === "REALIZADA") return "bg-green-600/20 text-green-200 border border-green-500/30";
-    if (v.includes("PROCESS")) return "bg-blue-600/20 text-blue-200 border border-blue-500/30";
-    if (v.includes("PRONTO") || v.includes("CONCL")) return "bg-emerald-600/20 text-emerald-200 border border-emerald-500/30";
-    return "bg-slate-700 text-slate-100 border border-slate-600";
-  };
-
-  /* =========================
-     Start/Stop Recording
-  ========================= */
-  const onStart = async () => {
-    if (!selecionada?.id) return alert("Selecione uma reunião.");
-    if (isRecording) return;
-
-    // trava regravação quando já foi gravada/processada/ata existe
-    if (isLocked(selecionada)) {
-      setShowUnlock(true);
-      return;
-    }
-
-    try {
-      await startRecording({
-        reuniaoId: selecionada.id,
-        reuniaoTitulo: selecionada.titulo,
-      });
-      await fetchReunioes();
-      setTab("execucoes");
-    } catch (e) {
-      console.error("startRecording (Copiloto):", e);
-      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
-    }
-  };
-
-  const onStop = async () => {
-    try {
-      await stopRecording();
-      await fetchReunioes();
-      if (selecionada?.id) {
-        await fetchExecucoes(selecionada.id);
-        await fetchAcoes(selecionada);
-      }
-    } catch (e) {
-      console.error("stopRecording (Copiloto):", e);
-      alert("Erro ao encerrar a gravação.");
-    }
-  };
-
-  /* =========================
-     Admin Unlock (liberar regravação)
-     ✅ Seu problema “senha inválida” normalmente é:
-       - login salvo não é o mesmo campo (login vs email),
-       - ou senha no banco não bate (hash),
-       - ou você está no supabaseClient errado.
-     Aqui eu deixei validação mais robusta (login OU email).
-  ========================= */
-  function getLoginSalvo() {
-    return (
-      localStorage.getItem("inove_login") ||
-      sessionStorage.getItem("inove_login") ||
-      localStorage.getItem("login") ||
-      sessionStorage.getItem("login") ||
-      ""
-    );
-  }
-
-  async function validarAdmin(senhaDigitada) {
-    const login = String(getLoginSalvo() || "").trim();
-    const senha = String(senhaDigitada || "").trim();
-    if (!login || !senha) return false;
-
-    // tenta por login OU email
-    const q = await supabase
-      .from("usuarios_aprovadores")
-      .select("id, nivel, ativo, login, email")
-      .or(`login.eq.${login},email.eq.${login}`)
-      .eq("senha", senha)
-      .eq("ativo", true)
-      .maybeSingle();
-
-    if (!q?.data || q?.error) return false;
-
-    return String(q.data?.nivel || "").toLowerCase() === "administrador";
-  }
-
-  async function liberarRegravacao(reuniaoId) {
-    const who = String(getLoginSalvo() || "ADMIN").trim();
-
-    const payload = {
-      status: "Pendente",
-      gravacao_status: null,
-      gravacao_erro: `LIBERADO PARA REGRAVAR por ${who} em ${nowIso()}`,
-      updated_at: nowIso(),
-    };
-
-    const { error } = await supabase.from("reunioes").update(payload).eq("id", reuniaoId);
-    if (error) throw error;
-  }
-
-  const onConfirmUnlock = async () => {
-    if (!selecionada?.id) return;
-    if (!senhaAdmin) return;
-
-    setUnlocking(true);
-    try {
-      const ok = await validarAdmin(senhaAdmin);
-      if (!ok) {
-        alert("Senha inválida ou usuário não é Administrador (login/email).");
-        return;
-      }
-
-      await liberarRegravacao(selecionada.id);
-
-      setShowUnlock(false);
-      setSenhaAdmin("");
-      await fetchReunioes();
-      alert("Regravação liberada. Agora você pode iniciar novamente.");
-    } catch (e) {
-      console.error("unlock error:", e);
-      alert("Erro ao liberar regravação: " + (e?.message || e));
-    } finally {
-      setUnlocking(false);
     }
   };
 
@@ -591,19 +397,21 @@ export default function Copiloto() {
 
   const tipoSelecionado = selecionada ? getTipoReuniao(selecionada) : "—";
 
-  /* =========================
-     Render
-  ========================= */
   return (
     <Layout>
-      <div className="h-screen bg-[#0b1220] text-white flex overflow-hidden">
-        {/* =====================
-            COLUNA ESQUERDA (mais estreita)
-        ===================== */}
-        <div className="w-[420px] min-w-[380px] max-w-[460px] flex flex-col p-5 border-r border-slate-800">
-          <div className="flex items-center gap-2 mb-4">
-            <Cpu size={22} className="text-blue-400" />
-            <h1 className="text-lg font-black tracking-tight text-blue-300">COPILOTO TÁTICO</h1>
+      {/* ✅ Tema claro / tira “tela escura” */}
+      <div className="h-screen bg-[#f6f8fc] text-slate-900 flex overflow-hidden">
+        {/* COLUNA ESQUERDA */}
+        <div className="w-[420px] min-w-[380px] max-w-[460px] flex flex-col p-5 border-r border-slate-200 bg-white">
+          {/* ✅ nome melhor + logo melhor */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm">
+              <Bot size={20} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-extrabold">Assistente</div>
+              <h1 className="text-lg font-black tracking-tight truncate">Copiloto de Reuniões</h1>
+            </div>
           </div>
 
           <div className="flex gap-2 mb-3">
@@ -611,7 +419,7 @@ export default function Copiloto() {
               <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
               <input
                 type="date"
-                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/40"
+                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
                 value={dataFiltro}
                 onChange={(e) => setDataFiltro(e.target.value)}
               />
@@ -622,14 +430,14 @@ export default function Copiloto() {
               <input
                 type="text"
                 placeholder="Buscar..."
-                className="w-full bg-slate-900/60 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/40"
+                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
               />
             </div>
           </div>
 
-          <div className="flex-1 bg-slate-900/30 border border-slate-800 rounded-2xl overflow-y-auto custom-scrollbar">
+          <div className="flex-1 bg-white border border-slate-200 rounded-2xl overflow-y-auto">
             {reunioesFiltradas.map((r) => {
               const lbl = badgeLabel(r);
               const locked = isLocked(r);
@@ -639,33 +447,33 @@ export default function Copiloto() {
                 <button
                   key={r.id}
                   onClick={() => !isRecording && setSelecionada(r)}
-                  className={`w-full text-left p-4 border-b border-slate-800/60 hover:bg-slate-800/40 transition-colors ${
-                    selecionada?.id === r.id ? "bg-blue-600/10 border-l-4 border-l-blue-400" : "border-l-4 border-l-transparent"
+                  className={`w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors ${
+                    selecionada?.id === r.id ? "bg-blue-50 border-l-4 border-l-blue-600" : "border-l-4 border-l-transparent"
                   } ${isRecording ? "opacity-80 cursor-not-allowed" : ""}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="font-black text-xs truncate">{r.titulo || "Sem título"}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 font-black uppercase">
-                          {tipo || "Geral"}
+                        <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-extrabold uppercase">
+                          {tipo}
                         </span>
                         {locked && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 font-black uppercase flex items-center gap-1">
+                          <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-extrabold uppercase flex items-center gap-1">
                             <Lock size={12} /> BLOQUEADO
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-1">
+                      <div className="text-[11px] text-slate-500 mt-1">
                         {toBR(r.data_hora)}
                         {typeof r.duracao_segundos === "number" && r.duracao_segundos > 0 ? (
-                          <span className="text-slate-500"> • {secondsToMMSS(r.duracao_segundos)}</span>
+                          <span className="text-slate-400"> • {secondsToMMSS(r.duracao_segundos)}</span>
                         ) : null}
                       </div>
                     </div>
 
                     <span
-                      className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase whitespace-nowrap ${badgeStyle(lbl)}`}
+                      className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${badgeClass(lbl)}`}
                       title={r.gravacao_erro || ""}
                     >
                       {lbl}
@@ -676,38 +484,26 @@ export default function Copiloto() {
             })}
 
             {reunioesFiltradas.length === 0 && (
-              <div className="p-6 text-xs text-slate-400">Nenhuma reunião nesta data.</div>
+              <div className="p-6 text-xs text-slate-500">Nenhuma reunião nesta data.</div>
             )}
           </div>
 
           {/* CONTROLES */}
-          <div className="mt-4 bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-11 h-11 rounded-2xl flex items-center justify-center border ${
-                  isRecording ? "bg-red-500/10 border-red-500/30 text-red-300" : "bg-blue-500/10 border-blue-500/30 text-blue-300"
-                }`}
-              >
-                {isRecording ? <div className="w-3 h-3 bg-red-500 rounded-full animate-ping" /> : <Monitor size={20} />}
-              </div>
-
-              <div>
-                <div className="text-[10px] text-slate-500 font-black uppercase">Tempo de sessão</div>
-                <div className="text-lg font-black font-mono leading-none">{secondsToMMSS(timer)}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
-                  {isRecording && current?.reuniaoTitulo ? `Gravando: ${current.reuniaoTitulo}` : "Pronto para gravar"}
-                </div>
+          <div className="mt-4 bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] text-slate-500 font-extrabold uppercase">Tempo de sessão</div>
+              <div className="text-lg font-black font-mono leading-none">{secondsToMMSS(timer)}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {isRecording && current?.reuniaoTitulo ? `Gravando: ${current.reuniaoTitulo}` : "Pronto para gravar"}
               </div>
             </div>
 
             {isProcessing ? (
-              <div className="flex items-center gap-2 text-blue-300 font-black text-xs animate-pulse">
-                <Loader2 className="animate-spin" size={16} /> FINALIZANDO...
-              </div>
+              <div className="text-blue-700 font-extrabold text-xs animate-pulse">FINALIZANDO...</div>
             ) : isRecording ? (
               <button
                 onClick={onStop}
-                className="bg-white text-slate-900 px-5 py-2.5 rounded-xl font-black text-xs hover:bg-red-50 transition-all"
+                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-slate-800 transition-all"
               >
                 ENCERRAR
               </button>
@@ -715,7 +511,7 @@ export default function Copiloto() {
               <button
                 onClick={onStart}
                 disabled={!selecionada}
-                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-lg shadow-blue-900/30"
+                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-sm"
               >
                 INICIAR GRAVAÇÃO
               </button>
@@ -723,278 +519,123 @@ export default function Copiloto() {
           </div>
         </div>
 
-        {/* =====================
-            COLUNA DIREITA (profissional com tabs)
-        ===================== */}
-        <div className="flex-1 p-6 bg-[#0b1220]">
-          <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-            {/* Header reunião selecionada */}
+        {/* COLUNA DIREITA */}
+        <div className="flex-1 p-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[10px] text-slate-400 font-black uppercase">Reunião selecionada</div>
+                <div className="text-[10px] text-slate-500 font-extrabold uppercase">Reunião selecionada</div>
                 <div className="text-base font-black truncate">{selecionada?.titulo || "—"}</div>
-                <div className="text-xs text-slate-400 mt-1">
-                  Tipo: <span className="text-slate-200 font-bold">{tipoSelecionado}</span> • Execução:{" "}
-                  <span className="text-slate-200 font-bold">{selecionada?.data_hora ? toBR(selecionada.data_hora) : "—"}</span>
+                <div className="text-xs text-slate-600 mt-1">
+                  Tipo: <span className="text-slate-900 font-bold">{tipoSelecionado}</span> • Execução:{" "}
+                  <span className="text-slate-900 font-bold">
+                    {selecionada?.data_hora ? toBR(selecionada.data_hora) : "—"}
+                  </span>
                 </div>
               </div>
 
-              {/* Estado / alerta “inconsistência” */}
-              <div className="flex items-center gap-2">
-                {norm(selecionada?.gravacao_status) === "ERRO" && hasAtaReal(selecionada) ? (
-                  <div className="flex items-center gap-2 text-[11px] text-amber-200 bg-amber-600/10 border border-amber-500/20 rounded-xl px-3 py-2">
-                    <AlertTriangle size={14} />
-                    Status ERRO, mas ATA existe (ok)
-                  </div>
-                ) : null}
+              <div className="flex gap-2">
+                <TabButton active={tab === "ata"} onClick={() => setTab("ata")} icon={<FileText size={16} />}>
+                  Ata Principal
+                </TabButton>
+                <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
+                  Ações
+                </TabButton>
               </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <TabButton active={tab === "execucoes"} onClick={() => setTab("execucoes")} icon={<PlayCircle size={16} />}>
-                Execuções
-              </TabButton>
-
-              <TabButton active={tab === "ata_ia"} onClick={() => setTab("ata_ia")} icon={<FileText size={16} />}>
-                Ata IA
-              </TabButton>
-
-              <TabButton active={tab === "ata_manual"} onClick={() => setTab("ata_manual")} icon={<Pencil size={16} />}>
-                Ata Manual
-              </TabButton>
-
-              <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
-                Ações
-              </TabButton>
             </div>
           </div>
 
-          {/* Conteúdo tabs */}
           <div className="mt-4">
             {!selecionada ? (
-              <div className="text-slate-400 text-sm">Selecione uma reunião.</div>
-            ) : tab === "execucoes" ? (
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
+              <div className="text-slate-600 text-sm">Selecione uma reunião.</div>
+            ) : tab === "ata" ? (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <div className="text-xs font-black text-slate-200 flex items-center gap-2">
-                      <PlayCircle size={16} className="text-blue-300" />
-                      Histórico de Execuções
-                    </div>
-                    <div className="text-[11px] text-slate-400 mt-1">
-                      Cada gravação gera uma execução. Nada é apagado.
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => fetchExecucoes(selecionada.id)}
-                    className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl"
-                    disabled={loadingExec}
-                  >
-                    {loadingExec ? "Atualizando..." : "Atualizar"}
-                  </button>
-                </div>
-
-                {/* players */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-                    <div className="text-[10px] font-black text-slate-400 uppercase mb-2 flex items-center gap-2">
-                      <PlayCircle size={14} /> Vídeo compilado
-                    </div>
-                    {mediaUrls.video ? (
-                      <video controls className="w-full rounded-xl bg-black">
-                        <source src={mediaUrls.video} type="video/webm" />
-                      </video>
-                    ) : (
-                      <div className="text-xs text-slate-400">Sem vídeo compilado ainda (gravacao_path vazio).</div>
-                    )}
-                  </div>
-
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-                    <div className="text-[10px] font-black text-slate-400 uppercase mb-2 flex items-center gap-2">
-                      <Headphones size={14} /> Áudio compilado
-                    </div>
-                    {mediaUrls.audio ? (
-                      <audio controls className="w-full">
-                        <source src={mediaUrls.audio} type="audio/webm" />
-                      </audio>
-                    ) : (
-                      <div className="text-xs text-slate-400">Sem áudio compilado ainda (gravacao_audio_path vazio).</div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {loadingExec ? (
-                    <div className="text-slate-400 text-sm">Carregando execuções...</div>
-                  ) : execucoes.length === 0 ? (
-                    <div className="text-slate-400 text-sm">Sem execuções registradas ainda.</div>
-                  ) : (
-                    execucoes.map((e) => (
-                      <div key={e.session_id} className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-xs font-black text-slate-200 truncate">
-                              Sessão: <span className="text-slate-300 font-mono">{e.session_id}</span>
-                            </div>
-                            <div className="text-[11px] text-slate-400 mt-1">
-                              Última parte: {toBR(e.created_at)} • Partes:{" "}
-                              <span className="text-slate-200 font-bold">{e.parts}</span> • Tamanho:{" "}
-                              <span className="text-slate-200 font-bold">{formatBytes(e.bytes)}</span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] px-2 py-1 rounded-lg font-black uppercase bg-slate-800 border border-slate-700 text-slate-200">
-                            {String(e.status || "UPLOADED")}
-                          </span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : tab === "ata_ia" ? (
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-xs font-black text-slate-200 flex items-center gap-2">
-                    <FileText size={16} className="text-emerald-300" />
-                    Ata IA (pauta)
+                  <div className="text-sm font-black text-slate-900 flex items-center gap-2">
+                    <FileText size={16} className="text-blue-700" />
+                    Ata Principal
                   </div>
 
                   <div className="flex gap-2">
-                    {isEditingIA ? (
+                    {isEditingAta ? (
                       <>
                         <button
                           onClick={() => {
-                            setAtaIAValue(String(selecionada.pauta || selecionada.ata || "").trim());
-                            setIsEditingIA(false);
+                            setAtaValue(String(selecionada.pauta || selecionada.ata || "").trim());
+                            setIsEditingAta(false);
                           }}
-                          className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl flex items-center gap-2"
+                          className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl flex items-center gap-2"
                         >
                           <X size={14} /> Cancelar
                         </button>
                         <button
-                          onClick={salvarAtaIA}
-                          className="text-[11px] font-black bg-emerald-600 hover:bg-emerald-500 px-3 py-2 rounded-xl flex items-center gap-2"
+                          onClick={salvarAtaPrincipal}
+                          className="text-[12px] font-extrabold bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl flex items-center gap-2"
                         >
                           <Save size={14} /> Salvar
                         </button>
                       </>
                     ) : (
                       <button
-                        onClick={() => setIsEditingIA(true)}
-                        className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl flex items-center gap-2"
+                        onClick={() => setIsEditingAta(true)}
+                        className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl flex items-center gap-2"
                       >
-                        <Pencil size={14} /> Editar
+                        <Save size={14} /> Editar
                       </button>
                     )}
                   </div>
                 </div>
 
-                {isEditingIA ? (
+                {isEditingAta ? (
                   <textarea
-                    className="w-full min-h-[320px] bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-xs font-mono outline-none focus:ring-2 ring-blue-500/40"
-                    value={ataIAValue}
-                    onChange={(e) => setAtaIAValue(e.target.value)}
-                    placeholder="Cole/edite aqui a ATA gerada pela IA..."
+                    className="w-full min-h-[420px] bg-white border border-slate-200 rounded-2xl p-4 text-sm outline-none focus:ring-2 ring-blue-500/25"
+                    value={ataValue}
+                    onChange={(e) => setAtaValue(e.target.value)}
+                    placeholder="Ata principal da reunião..."
                   />
                 ) : (
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
-                    {String(ataIAValue || "").trim() ? ataIAValue : "Sem ATA IA ainda."}
-                  </div>
-                )}
-              </div>
-            ) : tab === "ata_manual" ? (
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-xs font-black text-slate-200 flex items-center gap-2">
-                    <Pencil size={16} className="text-amber-300" />
-                    Ata Manual (responsável)
-                  </div>
-
-                  <div className="flex gap-2">
-                    {isEditingManual ? (
-                      <>
-                        <button
-                          onClick={() => {
-                            setAtaManualValue(String(selecionada.observacoes || "").trim());
-                            setIsEditingManual(false);
-                          }}
-                          className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl flex items-center gap-2"
-                        >
-                          <X size={14} /> Cancelar
-                        </button>
-                        <button
-                          onClick={salvarAtaManual}
-                          className="text-[11px] font-black bg-amber-600 hover:bg-amber-500 px-3 py-2 rounded-xl flex items-center gap-2"
-                        >
-                          <Save size={14} /> Salvar
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => setIsEditingManual(true)}
-                        className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl flex items-center gap-2"
-                      >
-                        <Pencil size={14} /> Editar
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-400 mb-3">
-                  Essa ata é a versão humana (anotações do responsável). Fica separada da IA.
-                </div>
-
-                {isEditingManual ? (
-                  <textarea
-                    className="w-full min-h-[320px] bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-sm outline-none focus:ring-2 ring-blue-500/40"
-                    value={ataManualValue}
-                    onChange={(e) => setAtaManualValue(e.target.value)}
-                    placeholder="Digite aqui a ATA manual / notas do responsável..."
-                  />
-                ) : (
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
-                    {String(ataManualValue || "").trim() ? ataManualValue : "Sem ATA manual ainda."}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-900 whitespace-pre-wrap leading-relaxed min-h-[420px]">
+                    {String(ataValue || "").trim() ? ataValue : "Sem ata principal ainda."}
                   </div>
                 )}
               </div>
             ) : (
               // tab === "acoes"
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-3">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <div className="text-xs font-black text-slate-200 flex items-center gap-2">
-                      <CheckCircle size={16} className="text-green-300" />
-                      Ações
+                    <div className="text-sm font-black text-slate-900 flex items-center gap-2">
+                      <ClipboardList size={16} className="text-blue-700" />
+                      Central de Ações (contexto da reunião)
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-1">
-                      Da reunião + backlog pendente do <b>tipo</b> ({tipoSelecionado}).
+                    <div className="text-[12px] text-slate-600 mt-1">
+                      Ações da reunião + backlog pendente do tipo <b>{tipoSelecionado}</b>.
                     </div>
                   </div>
 
                   <button
                     onClick={() => fetchAcoes(selecionada)}
-                    className="text-[11px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-xl"
+                    className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl"
                     disabled={loadingAcoes}
                   >
                     {loadingAcoes ? "Atualizando..." : "Atualizar"}
                   </button>
                 </div>
 
-                {/* Nova ação */}
-                <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 mb-4">
-                  <div className="text-[11px] font-black text-slate-300 uppercase mb-2">Nova ação</div>
+                {/* ✅ Criar ação: mesma “estrutura” (não aparece ata/execução) */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4">
+                  <div className="text-[11px] font-extrabold text-slate-600 uppercase mb-2">Criar nova ação</div>
 
                   <textarea
-                    className="w-full bg-slate-900/40 border border-slate-800 rounded-2xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/40 h-24"
-                    placeholder="O que precisa ser feito?"
+                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/25 h-24"
+                    placeholder="Descreva a ação..."
                     value={novaAcao.descricao}
                     onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
                   />
 
                   <div className="flex gap-2 mt-2">
                     <input
-                      className="flex-1 bg-slate-900/40 border border-slate-800 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/40"
+                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
                       placeholder="Responsável"
                       value={novaAcao.responsavel}
                       onChange={(e) => setNovaAcao((p) => ({ ...p, responsavel: e.target.value }))}
@@ -1002,33 +643,32 @@ export default function Copiloto() {
                     <button
                       onClick={salvarAcao}
                       disabled={!novaAcao.descricao?.trim()}
-                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-4 py-2 rounded-xl font-black text-xs flex items-center gap-2"
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-4 py-2 rounded-xl font-black text-sm flex items-center gap-2"
                     >
                       <Plus size={16} /> Criar
                     </button>
                   </div>
 
-                  <div className="text-[11px] text-slate-500 mt-2">
-                    Tipo aplicado automaticamente: <b className="text-slate-200">{tipoSelecionado}</b>
+                  <div className="text-[12px] text-slate-600 mt-2">
+                    Tipo aplicado automaticamente: <b className="text-slate-900">{tipoSelecionado}</b>
                   </div>
                 </div>
 
-                {/* Tabs ações */}
+                {/* “estrutura Central” => duas listas claras */}
                 <div className="flex gap-2 mb-3">
-                  <SmallPill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
-                    Da reunião
-                  </SmallPill>
-                  <SmallPill active={acaoTab === "tipo"} onClick={() => setAcaoTab("tipo")}>
-                    Pendentes do tipo
-                  </SmallPill>
+                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
+                    Ações da reunião
+                  </Pill>
+                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
+                    Backlog pendente do tipo
+                  </Pill>
                 </div>
 
-                {/* Listas */}
                 {loadingAcoes ? (
-                  <div className="text-slate-400 text-sm">Carregando ações...</div>
+                  <div className="text-slate-600 text-sm">Carregando ações...</div>
                 ) : acaoTab === "reuniao" ? (
                   (acoesDaReuniao || []).length === 0 ? (
-                    <div className="text-slate-400 text-sm">Nenhuma ação cadastrada nesta reunião.</div>
+                    <div className="text-slate-600 text-sm">Nenhuma ação cadastrada nesta reunião.</div>
                   ) : (
                     <div className="space-y-2">
                       {(acoesDaReuniao || []).map((a) => (
@@ -1037,17 +677,11 @@ export default function Copiloto() {
                     </div>
                   )
                 ) : (acoesPendentesTipo || []).length === 0 ? (
-                  <div className="text-slate-400 text-sm">Nenhuma ação pendente para este tipo.</div>
+                  <div className="text-slate-600 text-sm">Nenhuma ação pendente para este tipo.</div>
                 ) : (
                   <div className="space-y-2">
                     {(acoesPendentesTipo || []).map((a) => (
-                      <AcaoCard
-                        key={a.id}
-                        acao={a}
-                        onToggle={() => toggleStatusAcao(a)}
-                        subtitle={`Origem: ${a.data_criacao ? toBRDate(a.data_criacao) : "-"}`}
-                        tone="amber"
-                      />
+                      <AcaoCard key={a.id} acao={a} onToggle={() => toggleStatusAcao(a)} />
                     ))}
                   </div>
                 )}
@@ -1055,71 +689,22 @@ export default function Copiloto() {
             )}
           </div>
         </div>
-
-        {/* MODAL: LIBERAÇÃO ADMIN */}
-        {showUnlock && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="w-full max-w-[460px] bg-slate-950 border border-slate-800 rounded-2xl p-6">
-              <h3 className="text-lg font-black text-white flex items-center gap-2">
-                <Lock size={18} /> Liberação de Regravação
-              </h3>
-              <p className="text-xs text-slate-400 mt-2">
-                Esta reunião já foi gravada/processada (ou já existe ATA). Para gravar novamente, confirme a{" "}
-                <b>senha do Administrador</b>.
-              </p>
-
-              <input
-                type="password"
-                className="w-full mt-4 bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 ring-blue-500/40"
-                placeholder="Senha do Administrador"
-                value={senhaAdmin}
-                onChange={(e) => setSenhaAdmin(e.target.value)}
-              />
-
-              <div className="flex gap-2 mt-5 justify-end">
-                <button
-                  onClick={() => {
-                    setShowUnlock(false);
-                    setSenhaAdmin("");
-                  }}
-                  className="px-4 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-white text-xs font-black hover:bg-slate-800"
-                  disabled={unlocking}
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  onClick={onConfirmUnlock}
-                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-500 disabled:opacity-40"
-                  disabled={unlocking || !senhaAdmin}
-                >
-                  {unlocking ? "Liberando..." : "Liberar"}
-                </button>
-              </div>
-
-              <div className="text-[11px] text-slate-500 mt-4">
-                Se ainda der “senha inválida”, é quase certo que o <b>login salvo</b> (inove_login/login) não está batendo
-                com <b>usuarios_aprovadores.login/email</b> ou a senha no banco está diferente (hash).
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </Layout>
   );
 }
 
 /* =========================
-   UI components
+   Small UI
 ========================= */
 function TabButton({ active, onClick, icon, children }) {
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2 rounded-xl border text-xs font-black flex items-center gap-2 transition-colors ${
+      className={`px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-2 transition-colors ${
         active
-          ? "bg-blue-600/20 border-blue-500/30 text-blue-100"
-          : "bg-slate-900/40 border-slate-800 text-slate-300 hover:bg-slate-800/40"
+          ? "bg-blue-600/10 border-blue-200 text-blue-800"
+          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
       }`}
     >
       {icon}
@@ -1128,58 +713,17 @@ function TabButton({ active, onClick, icon, children }) {
   );
 }
 
-function SmallPill({ active, onClick, children }) {
+function Pill({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`text-[11px] px-3 py-2 rounded-xl font-black border transition-colors ${
+      className={`text-[12px] px-3 py-2 rounded-xl font-extrabold border transition-colors ${
         active
-          ? "bg-blue-600/20 border-blue-500/30 text-blue-100"
-          : "bg-slate-900/40 border-slate-800 text-slate-300 hover:bg-slate-800/40"
+          ? "bg-blue-600/10 border-blue-200 text-blue-800"
+          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
       }`}
     >
       {children}
     </button>
   );
-}
-
-function AcaoCard({ acao, onToggle, subtitle, tone = "green" }) {
-  const done = String(acao?.status || "").toLowerCase() === "concluída" || String(acao?.status || "").toLowerCase() === "concluida";
-
-  const toneCls =
-    tone === "amber"
-      ? "border-amber-500/20 bg-amber-600/10"
-      : "border-emerald-500/20 bg-emerald-600/10";
-
-  return (
-    <div className={`p-4 rounded-2xl border ${toneCls}`}>
-      <div className="flex items-start gap-3">
-        <input type="checkbox" checked={done} onChange={onToggle} className="mt-1 w-4 h-4" />
-        <div className="flex-1">
-          <div className={`text-sm font-bold ${done ? "line-through text-slate-400" : "text-slate-100"}`}>
-            {acao?.descricao || "-"}
-          </div>
-          <div className="text-[11px] text-slate-300 mt-1">
-            <span className="font-black">Responsável:</span> {acao?.responsavel || "Geral"}
-            {acao?.data_vencimento ? <span className="text-slate-400"> • Venc: {toBRDate(acao.data_vencimento)}</span> : null}
-          </div>
-          {subtitle ? <div className="text-[11px] text-slate-400 mt-1">{subtitle}</div> : null}
-          {acao?.observacao ? <div className="text-[11px] text-slate-400 mt-2">Obs: {acao.observacao}</div> : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function formatBytes(bytes) {
-  const n = Number(bytes || 0);
-  if (!n) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
 }
