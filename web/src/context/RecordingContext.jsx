@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { supabase } from "../supabaseClient";
 
 const RecordingContext = createContext(null);
@@ -40,8 +47,7 @@ export function RecordingProvider({ children }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
 
-  // metadados da sessão atual (pra UI global + Copiloto)
-  const [current, setCurrent] = useState(null); 
+  const [current, setCurrent] = useState(null);
   // current: { reuniaoId, reuniaoTitulo, sessionId, startedAtIso }
 
   const recorderRef = useRef(null);
@@ -64,6 +70,10 @@ export function RecordingProvider({ children }) {
   const uploadWorkerRunningRef = useRef(false);
   const uploadsInFlightRef = useRef(new Set());
   const queueDrainPromiseRef = useRef(null);
+
+  // ✅ NOVO: garante que stopRecording() só resolve quando finalize terminar
+  const stopFinalizePromiseRef = useRef(null); // { promise, resolve, reject }
+  const stopFallbackTimeoutRef = useRef(null);
 
   const buildPartPath = (reuniaoId, sessionId, partNumber) =>
     `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
@@ -95,6 +105,36 @@ export function RecordingProvider({ children }) {
       if (ac && ac.state !== "closed") ac.close();
       audioCtxRef.current = null;
     } catch {}
+  };
+
+  // ✅ NOVO: promise helpers (stop aguardando finalize)
+  const createStopPromise = () => {
+    if (stopFinalizePromiseRef.current?.promise) {
+      return stopFinalizePromiseRef.current.promise;
+    }
+    let resolve, reject;
+    const promise = new Promise((r, j) => {
+      resolve = r;
+      reject = j;
+    });
+    stopFinalizePromiseRef.current = { promise, resolve, reject };
+    return promise;
+  };
+
+  const resolveStopPromise = () => {
+    try {
+      stopFinalizePromiseRef.current?.resolve?.();
+    } finally {
+      stopFinalizePromiseRef.current = null;
+    }
+  };
+
+  const rejectStopPromise = (err) => {
+    try {
+      stopFinalizePromiseRef.current?.reject?.(err);
+    } finally {
+      stopFinalizePromiseRef.current = null;
+    }
   };
 
   const enqueueDriveJob = async (reuniaoId) => {
@@ -264,15 +304,25 @@ export function RecordingProvider({ children }) {
     };
 
     rec.onstop = async () => {
-      const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
-      const partNumber = ++partNumberRef.current;
+      try {
+        const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
+        const partNumber = ++partNumberRef.current;
 
-      if (blob.size > 0) enqueueUpload(blob, partNumber);
+        if (blob.size > 0) enqueueUpload(blob, partNumber);
 
-      if (!stopAllRequestedRef.current) {
-        startSegment();
-      } else {
-        await finalizeRecording();
+        if (!stopAllRequestedRef.current) {
+          startSegment();
+        } else {
+          await finalizeRecording();
+        }
+      } catch (e) {
+        console.error("rec.onstop error:", e);
+        // fallback: tenta finalizar mesmo assim para não ficar GRAVANDO
+        try {
+          await finalizeRecording();
+        } catch (err2) {
+          console.error("finalize fallback error:", err2);
+        }
       }
     };
 
@@ -368,9 +418,19 @@ export function RecordingProvider({ children }) {
     startTimerFn();
   };
 
+  // ✅ ATUALIZADO: stop agora aguarda finalize real (não retorna cedo)
   const stopRecording = async () => {
-    if (stopAllRequestedRef.current) return;
+    // se já está parando, espera o finalize pendente (se existir)
+    if (stopAllRequestedRef.current) {
+      if (stopFinalizePromiseRef.current?.promise) {
+        await stopFinalizePromiseRef.current.promise;
+      }
+      return;
+    }
+
     stopAllRequestedRef.current = true;
+
+    const stopPromise = createStopPromise();
 
     try {
       setIsRecording(false);
@@ -378,13 +438,35 @@ export function RecordingProvider({ children }) {
       clearInterval(segmentIntervalRef.current);
 
       const rec = recorderRef.current;
+
+      // fallback: se o onstop não disparar por bug do browser
+      clearTimeout(stopFallbackTimeoutRef.current);
+      stopFallbackTimeoutRef.current = setTimeout(async () => {
+        try {
+          await finalizeRecording();
+        } catch (e) {
+          console.error("stop fallback finalize error:", e);
+        }
+      }, 2500);
+
       if (rec && rec.state === "recording") {
-        rec.stop();
+        rec.stop(); // finalize será chamado no onstop
       } else {
         await finalizeRecording();
       }
-    } catch {
-      await finalizeRecording();
+
+      // ✅ aqui só sai quando finalizeRecording terminar
+      await stopPromise;
+    } catch (e) {
+      console.error("stopRecording error:", e);
+      rejectStopPromise(e);
+      // tenta não deixar travado como GRAVANDO
+      try {
+        await finalizeRecording();
+      } catch {}
+    } finally {
+      clearTimeout(stopFallbackTimeoutRef.current);
+      stopFallbackTimeoutRef.current = null;
     }
   };
 
@@ -404,11 +486,13 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      const { data: reuniaoAtual } = await supabase
+      const { data: reuniaoAtual, error: selErr } = await supabase
         .from("reunioes")
         .select("gravacao_status")
         .eq("id", reuniaoId)
         .single();
+
+      if (selErr) console.warn("finalize select:", selErr);
 
       if (reuniaoAtual?.gravacao_status !== "ERRO") {
         await supabase
@@ -429,6 +513,21 @@ export function RecordingProvider({ children }) {
           .update({ duracao_segundos: duracao, gravacao_fim: nowIso() })
           .eq("id", reuniaoId);
       }
+    } catch (e) {
+      console.error("finalizeRecording error:", e);
+      // marca ERRO para nunca ficar "GRAVANDO" preso
+      try {
+        await supabase
+          .from("reunioes")
+          .update({
+            gravacao_status: "ERRO",
+            gravacao_erro: String(e?.message || e),
+            gravacao_fim: nowIso(),
+          })
+          .eq("id", reuniaoId);
+      } catch (e2) {
+        console.error("finalizeRecording: failed to mark ERRO:", e2);
+      }
     } finally {
       setIsProcessing(false);
 
@@ -446,10 +545,12 @@ export function RecordingProvider({ children }) {
 
       setCurrent(null);
       setTimer(0);
+
+      // ✅ libera quem clicou ENCERRAR
+      resolveStopPromise();
     }
   };
 
-  // Evita “perder” gravação ao fechar/refresh
   useEffect(() => {
     const onBeforeUnload = (e) => {
       if (!isRecording) return;
@@ -473,7 +574,11 @@ export function RecordingProvider({ children }) {
     [isRecording, isProcessing, timer, current]
   );
 
-  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
+  return (
+    <RecordingContext.Provider value={value}>
+      {children}
+    </RecordingContext.Provider>
+  );
 }
 
 export function useRecording() {
