@@ -1,5 +1,12 @@
 // src/context/RecordingContext.jsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { supabase } from "../supabaseClient";
 
 const RecordingContext = createContext(null);
@@ -69,6 +76,9 @@ export function RecordingProvider({ children }) {
   const stopFinalizePromiseRef = useRef(null); // { promise, resolve, reject }
   const stopFallbackTimeoutRef = useRef(null);
 
+  // ✅ evita finalize concorrente + garante idempotência
+  const finalizeRunningRef = useRef(false);
+
   const buildPartPath = (reuniaoId, sessionId, partNumber) =>
     `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
 
@@ -102,7 +112,8 @@ export function RecordingProvider({ children }) {
   };
 
   const createStopPromise = () => {
-    if (stopFinalizePromiseRef.current?.promise) return stopFinalizePromiseRef.current.promise;
+    if (stopFinalizePromiseRef.current?.promise)
+      return stopFinalizePromiseRef.current.promise;
     let resolve, reject;
     const promise = new Promise((r, j) => {
       resolve = r;
@@ -155,7 +166,8 @@ export function RecordingProvider({ children }) {
   };
 
   const waitQueueDrain = async () => {
-    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) return;
+    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0)
+      return;
 
     if (!queueDrainPromiseRef.current) {
       let resolve;
@@ -312,10 +324,7 @@ export function RecordingProvider({ children }) {
     ]);
     if (e2) throw e2;
 
-    const { error: e3 } = await supabase
-      .from("reunioes")
-      .update({ updated_at: nowIso() })
-      .eq("id", reuniaoId);
+    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
     if (e3) throw e3;
   };
 
@@ -346,10 +355,7 @@ export function RecordingProvider({ children }) {
     ]);
     if (e2) throw e2;
 
-    const { error: e3 } = await supabase
-      .from("reunioes")
-      .update({ updated_at: nowIso() })
-      .eq("id", reuniaoId);
+    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
     if (e3) throw e3;
   };
 
@@ -359,6 +365,8 @@ export function RecordingProvider({ children }) {
 
     stopAllRequestedRef.current = false;
     rotatingRef.current = false;
+    finalizeRunningRef.current = false;
+
     setTimer(0);
 
     const sessionUuid =
@@ -474,20 +482,32 @@ export function RecordingProvider({ children }) {
     } finally {
       clearTimeout(stopFallbackTimeoutRef.current);
       stopFallbackTimeoutRef.current = null;
+      // ✅ garantia extra: se por algum motivo a finalize não rodou, não deixa pendurado
+      resolveStopPromise();
     }
   };
 
   const finalizeRecording = async () => {
     const reuniaoId = current?.reuniaoId;
+
+    // ✅ sempre resolve a promise (mesmo sem reuniaoId)
     if (!reuniaoId) {
       resolveStopPromise();
       return;
     }
-    if (isProcessing) return;
 
-    setIsProcessing(true);
+    // ✅ garante idempotência / evita corrida
+    if (finalizeRunningRef.current) {
+      // se já está finalizando em paralelo, apenas aguarda o stopPromise do stopRecording
+      if (stopFinalizePromiseRef.current?.promise) await stopFinalizePromiseRef.current.promise;
+      return;
+    }
+
+    finalizeRunningRef.current = true;
 
     try {
+      setIsProcessing(true);
+
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
 
@@ -495,38 +515,24 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      // checa status atual
-      const { data: reuniaoAtual, error: selErr } = await supabase
-        .from("reunioes")
-        .select("gravacao_status")
-        .eq("id", reuniaoId)
-        .single();
-      if (selErr) throw selErr;
-
-      if (reuniaoAtual?.gravacao_status === "ERRO") {
-        const { error: u2 } = await supabase
-          .from("reunioes")
-          .update({ duracao_segundos: duracao, gravacao_fim: nowIso(), updated_at: nowIso() })
-          .eq("id", reuniaoId);
-        if (u2) throw u2;
-        return;
-      }
-
       // ✅ UPDATE PRINCIPAL: com retry + erro explícito
-      await withRetry(async () => {
-        const { error: upErr } = await supabase
-          .from("reunioes")
-          .update({
-            status: "Realizada",
-            duracao_segundos: duracao,
-            gravacao_fim: nowIso(),
-            gravacao_status: "PRONTO_PROCESSAR",
-            updated_at: nowIso(),
-          })
-          .eq("id", reuniaoId);
+      await withRetry(
+        async () => {
+          const { error: upErr } = await supabase
+            .from("reunioes")
+            .update({
+              status: "Realizada",
+              duracao_segundos: duracao,
+              gravacao_fim: nowIso(),
+              gravacao_status: "PRONTO_PROCESSAR",
+              updated_at: nowIso(),
+            })
+            .eq("id", reuniaoId);
 
-        if (upErr) throw upErr;
-      }, { retries: 3, baseDelayMs: 700 });
+          if (upErr) throw upErr;
+        },
+        { retries: 3, baseDelayMs: 700 }
+      );
 
       // ✅ valida que de fato saiu de GRAVANDO
       const { data: checkRow, error: checkErr } = await supabase
@@ -564,6 +570,9 @@ export function RecordingProvider({ children }) {
       setCurrent(null);
       setTimer(0);
 
+      finalizeRunningRef.current = false;
+
+      // ✅ SEMPRE resolve a promise do stop
       resolveStopPromise();
     }
   };
