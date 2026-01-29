@@ -10,7 +10,7 @@ const ID_MANUTENCAO = 2;
 // ✅ UNID (somente leitura na tela Rotinas, igual padrão)
 const UNIDADES = [
   { value: "kml", label: "km/l" },
-  { value: "un", label: "UN" },
+  { value: "currency", label: "R$" },
   { value: "pct", label: "%" },
   { value: "numero", label: "Número (123)" },
   { value: "binario", label: "Binário (Sim/Não)" },
