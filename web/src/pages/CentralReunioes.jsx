@@ -246,7 +246,7 @@ export default function CentralReunioes() {
 
   const weekDays = eachDayOfInterval({
     start: startOfWeek(currentDate),
-    end: endOfWeek(currentDate)),
+    end: endOfWeek(currentDate),
   });
 
   const handleDragStart = (e, reuniao) => {
