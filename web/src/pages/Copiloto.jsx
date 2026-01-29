@@ -3,11 +3,8 @@ import React, { useState, useEffect, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { Loader2, Cpu, CheckCircle, Monitor, Plus } from "lucide-react";
-import { useRecording } from "../context/RecordingContext"; // ✅ NOVO
+import { useRecording } from "../context/RecordingContext";
 
-/**
- * Helpers (mantive somente os de UI)
- */
 function secondsToMMSS(s) {
   const mm = Math.floor(s / 60).toString().padStart(2, "0");
   const ss = Math.floor(s % 60).toString().padStart(2, "0");
@@ -15,11 +12,9 @@ function secondsToMMSS(s) {
 }
 
 export default function Copiloto() {
-  // ✅ gravação global (não desmonta ao trocar de rota)
   const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
     useRecording();
 
-  // UI / filtros
   const [dataFiltro, setDataFiltro] = useState(
     new Date().toISOString().split("T")[0]
   );
@@ -27,12 +22,10 @@ export default function Copiloto() {
   const [selecionada, setSelecionada] = useState(null);
   const [busca, setBusca] = useState("");
 
-  // ações
   const [acoes, setAcoes] = useState([]);
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
   const [loadingAcoes, setLoadingAcoes] = useState(false);
 
-  // refs (para evitar setState depois de desmontar)
   const isMountedRef = useRef(false);
   const safeSet = (fn) => {
     if (isMountedRef.current) fn();
@@ -71,7 +64,6 @@ export default function Copiloto() {
     }
     safeSet(() => setReunioes(data || []));
 
-    // Se estiver gravando e a reunião atual não estiver selecionada, tenta refletir na UI
     if (isRecording && current?.reuniaoId) {
       const found = (data || []).find((r) => r.id === current.reuniaoId);
       if (found) safeSet(() => setSelecionada(found));
@@ -124,7 +116,6 @@ export default function Copiloto() {
         reuniaoTitulo: selecionada.titulo,
       });
 
-      // garante que a tela reflita a selecionada
       await fetchReunioes();
     } catch (e) {
       console.error("startRecording (Copiloto):", e);
@@ -134,7 +125,7 @@ export default function Copiloto() {
 
   const onStop = async () => {
     try {
-      await stopRecording();
+      await stopRecording(); // ✅ agora aguarda finalizeRecording de verdade
       await fetchReunioes();
     } catch (e) {
       console.error("stopRecording (Copiloto):", e);
@@ -176,7 +167,7 @@ export default function Copiloto() {
               .map((r) => (
                 <div
                   key={r.id}
-                  onClick={() => !isRecording && setSelecionada(r)} // ✅ não troca reunião gravando
+                  onClick={() => !isRecording && setSelecionada(r)}
                   className={`p-4 border-b border-slate-800 cursor-pointer ${
                     selecionada?.id === r.id
                       ? "bg-blue-600/10 border-l-4 border-l-blue-500"
