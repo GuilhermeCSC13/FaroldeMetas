@@ -3,7 +3,7 @@ import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { Bot, Lock } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
-import ModalDetalhesAcao from "../components/acoes/ModalDetalhesAcao";
+import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 
 /* =========================
    Helpers
