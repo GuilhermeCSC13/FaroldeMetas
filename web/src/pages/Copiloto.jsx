@@ -15,66 +15,6 @@ function norm(s) {
   return String(s || "").trim().toUpperCase();
 }
 
-// ✅ texto “real” (ignora placeholders/template)
-function isMeaningfulText(v) {
-  const s = String(v ?? "").trim();
-  if (!s) return false;
-
-  const low = s.toLowerCase();
-
-  // placeholders comuns (ajuste se quiser)
-  const placeholders = [
-    "sem resumo",
-    "sem registros",
-    "selecione uma reunião",
-    "selecione uma reuniao",
-    "—",
-    "-",
-    "n/a",
-    "nao ha",
-    "não há",
-  ];
-
-  if (placeholders.some((p) => low.includes(p))) return false;
-
-  // ✅ exige tamanho mínimo para não considerar template curto
-  return s.length >= 40;
-}
-
-// ✅ “Ata pronta” de verdade (não confundir com pauta/template)
-function hasAtaReal(r) {
-  if (!r) return false;
-
-  // 1) Status real de ata (se existir no seu schema)
-  const ataStatus = String(r.ata_ia_status || r.ata_status || r.status_ata || "")
-    .trim()
-    .toUpperCase();
-
-  const okByStatus = new Set(["PRONTO", "PRONTA", "OK", "GERADA", "FINALIZADA", "CONCLUIDA", "CONCLUÍDA"]);
-  if (okByStatus.has(ataStatus)) return true;
-
-  // 2) Caminhos/urls/fields “de arquivo” (se existir)
-  const ataFields = [
-    r.ata_url,
-    r.ata_storage_path,
-    r.ata_path,
-    r.ata_markdown,
-    r.ata_html,
-    r.ata_pdf_url,
-    r.ata_pdf_path,
-    r.ata_bucket,
-  ].filter(Boolean);
-
-  if (ataFields.length > 0) return true;
-
-  // 3) Conteúdo: só se for “significativo”
-  if (isMeaningfulText(r.pauta)) return true;
-  if (isMeaningfulText(r.ata_texto)) return true;
-  if (isMeaningfulText(r.ata)) return true;
-
-  return false;
-}
-
 export default function Copiloto() {
   const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
     useRecording();
@@ -174,7 +114,8 @@ export default function Copiloto() {
     safeSet(() => setNovaAcao({ descricao: "", responsavel: "" }));
   };
 
-  // ✅ regra de bloqueio: só bloqueia se status REALIZADA ou ATA realmente pronta ou pipeline de gravação
+  // ✅ aqui é a regra oficial do Copiloto:
+  // só “REALIZADA/BLOQUEADO” se realmente gravou/entrou no pipeline.
   const isLocked = useMemo(() => {
     return (r) => {
       if (!r) return false;
@@ -182,13 +123,10 @@ export default function Copiloto() {
       const st = norm(r.status);
       const gs = norm(r.gravacao_status);
 
-      // status final real
+      // status final
       if (st === "REALIZADA") return true;
 
-      // ata realmente pronta (não confundir com template)
-      if (hasAtaReal(r)) return true;
-
-      // estados que indicam pipeline já rolando/concluído
+      // pipeline (após finalizar gravação / entrar na fila)
       const doneOrPipeline = new Set([
         "PRONTO_PROCESSAR",
         "PROCESSANDO",
@@ -205,7 +143,9 @@ export default function Copiloto() {
     };
   }, []);
 
-  // ✅ badge: NÃO marca “REALIZADA” só porque existe pauta
+  // ✅ badge coerente:
+  // - REALIZADA apenas quando status=Realizada ou gravacao_status em pipeline/final
+  // - senão PENDENTE
   const badgeLabel = (r) => {
     if (!r) return "PENDENTE";
 
@@ -213,9 +153,19 @@ export default function Copiloto() {
     const gs = norm(r.gravacao_status);
 
     if (st === "REALIZADA") return "REALIZADA";
-    if (hasAtaReal(r)) return "ATA PRONTA";
 
-    if (gs) return gs;
+    const doneOrPipeline = new Set([
+      "PRONTO_PROCESSAR",
+      "PROCESSANDO",
+      "PROCESSANDO_DRIVE",
+      "ENVIADO_DRIVE",
+      "PRONTO",
+      "CONCLUIDO",
+      "CONCLUÍDO",
+    ]);
+
+    if (doneOrPipeline.has(gs)) return "REALIZADA";
+    if (gs) return gs; // GRAVANDO/ERRO/etc
     if (st) return st;
 
     return "PENDENTE";
@@ -226,7 +176,6 @@ export default function Copiloto() {
     if (v === "GRAVANDO") return "bg-red-600/30 text-red-200 border border-red-500/30";
     if (v === "ERRO") return "bg-red-900/40 text-red-200 border border-red-500/30";
     if (v === "REALIZADA") return "bg-green-600/20 text-green-200 border border-green-500/30";
-    if (v === "ATA PRONTA") return "bg-emerald-600/20 text-emerald-200 border border-emerald-500/30";
     if (v.includes("PROCESS")) return "bg-blue-600/20 text-blue-200 border border-blue-500/30";
     if (v.includes("PRONTO")) return "bg-emerald-600/20 text-emerald-200 border border-emerald-500/30";
     return "bg-slate-700 text-slate-100 border border-slate-600";
@@ -291,8 +240,6 @@ export default function Copiloto() {
     return String(data?.nivel || "").toLowerCase() === "administrador";
   }
 
-  // ✅ liberação sem mexer no schema:
-  // volta a reunião para regravar (limpa status de gravação/pipeline)
   async function liberarRegravacao(reuniaoId) {
     const login = getLoginSalvo() || "ADMIN";
 
@@ -379,7 +326,6 @@ export default function Copiloto() {
                   <div className="flex justify-between items-center gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="font-bold text-sm truncate">{r.titulo}</span>
-
                       {locked && (
                         <span className="text-[10px] px-2 py-1 rounded font-black uppercase bg-slate-800 border border-slate-700 text-slate-200 flex items-center gap-1">
                           <Lock size={12} /> BLOQUEADO
@@ -512,8 +458,8 @@ export default function Copiloto() {
             <div className="w-[440px] bg-slate-900 border border-slate-700 rounded-2xl p-6">
               <h3 className="text-lg font-black text-white">Liberação de Regravação</h3>
               <p className="text-xs text-slate-400 mt-2">
-                Esta reunião já foi gravada/processada (ou a Ata já existe). Para gravar novamente,
-                confirme a <b>senha do Administrador</b>.
+                Esta reunião já foi gravada/processada. Para gravar novamente, confirme a{" "}
+                <b>senha do Administrador</b>.
               </p>
 
               <input
