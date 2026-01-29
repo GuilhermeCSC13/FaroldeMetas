@@ -1,5 +1,5 @@
 // src/pages/Copiloto.jsx
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { Loader2, Cpu, CheckCircle, Monitor, Plus } from "lucide-react";
@@ -15,9 +15,7 @@ export default function Copiloto() {
   const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
     useRecording();
 
-  const [dataFiltro, setDataFiltro] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split("T")[0]);
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
   const [busca, setBusca] = useState("");
@@ -25,6 +23,10 @@ export default function Copiloto() {
   const [acoes, setAcoes] = useState([]);
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
   const [loadingAcoes, setLoadingAcoes] = useState(false);
+
+  // ✅ trava de stop + fallback visual
+  const [stopRequested, setStopRequested] = useState(false);
+  const [stopStartedAt, setStopStartedAt] = useState(null);
 
   const isMountedRef = useRef(false);
   const safeSet = (fn) => {
@@ -50,6 +52,18 @@ export default function Copiloto() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada]);
 
+  // ✅ POLLING: enquanto gravando/finalizando, atualiza lista/status a cada 4s
+  useEffect(() => {
+    if (!isRecording && !isProcessing && !stopRequested) return;
+
+    const t = setInterval(() => {
+      fetchReunioes();
+    }, 4000);
+
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording, isProcessing, stopRequested, dataFiltro]);
+
   const fetchReunioes = async () => {
     const { data, error } = await supabase
       .from("reunioes")
@@ -64,7 +78,8 @@ export default function Copiloto() {
     }
     safeSet(() => setReunioes(data || []));
 
-    if (isRecording && current?.reuniaoId) {
+    // ✅ se estiver gravando, mantém a reunião selecionada alinhada com current
+    if ((isRecording || isProcessing || stopRequested) && current?.reuniaoId) {
       const found = (data || []).find((r) => r.id === current.reuniaoId);
       if (found) safeSet(() => setSelecionada(found));
     }
@@ -108,7 +123,7 @@ export default function Copiloto() {
 
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
-    if (isRecording) return;
+    if (isRecording || isProcessing || stopRequested) return;
 
     try {
       await startRecording({
@@ -124,14 +139,30 @@ export default function Copiloto() {
   };
 
   const onStop = async () => {
+    if (stopRequested) return;
+
     try {
-      await stopRecording(); // ✅ agora aguarda finalizeRecording de verdade
+      setStopRequested(true);
+      setStopStartedAt(Date.now());
+
+      // ✅ aguarda o stop real do contexto
+      await stopRecording();
       await fetchReunioes();
     } catch (e) {
       console.error("stopRecording (Copiloto):", e);
-      alert("Erro ao encerrar a gravação.");
+      alert("Erro ao encerrar a gravação. Veja o console/Render logs.");
+    } finally {
+      // ✅ nunca deixa a UI “sem botão”
+      setStopRequested(false);
+      setStopStartedAt(null);
     }
   };
+
+  // ✅ fallback: se ficar muito tempo finalizando, avisa visualmente
+  const finalizandoHaMuitoTempo = useMemo(() => {
+    if (!stopStartedAt) return false;
+    return Date.now() - stopStartedAt > 30000; // 30s
+  }, [stopStartedAt]);
 
   return (
     <Layout>
@@ -160,19 +191,17 @@ export default function Copiloto() {
           <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto mb-6 custom-scrollbar">
             {(reunioes || [])
               .filter((r) =>
-                (r.titulo || "")
-                  .toLowerCase()
-                  .includes((busca || "").toLowerCase())
+                (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase())
               )
               .map((r) => (
                 <div
                   key={r.id}
-                  onClick={() => !isRecording && setSelecionada(r)}
+                  onClick={() => !isRecording && !isProcessing && !stopRequested && setSelecionada(r)}
                   className={`p-4 border-b border-slate-800 cursor-pointer ${
                     selecionada?.id === r.id
                       ? "bg-blue-600/10 border-l-4 border-l-blue-500"
                       : "hover:bg-slate-800"
-                  } ${isRecording ? "opacity-80" : ""}`}
+                  } ${(isRecording || isProcessing || stopRequested) ? "opacity-80" : ""}`}
                 >
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-sm">{r.titulo}</span>
@@ -189,9 +218,7 @@ export default function Copiloto() {
             <div className="flex items-center gap-4">
               <div
                 className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-                  isRecording
-                    ? "bg-red-500/20 text-red-500"
-                    : "bg-blue-500/20 text-blue-500"
+                  isRecording ? "bg-red-500/20 text-red-500" : "bg-blue-500/20 text-blue-500"
                 }`}
               >
                 {isRecording ? (
@@ -202,21 +229,24 @@ export default function Copiloto() {
               </div>
 
               <div>
-                <p className="text-[10px] font-bold text-slate-500 uppercase">
-                  Tempo de Sessão
-                </p>
-                <p className="text-2xl font-mono font-bold leading-none">
-                  {secondsToMMSS(timer)}
-                </p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase">Tempo de Sessão</p>
+                <p className="text-2xl font-mono font-bold leading-none">{secondsToMMSS(timer)}</p>
                 <p className="text-[10px] text-slate-400 mt-1">
                   {isRecording && current?.reuniaoTitulo
                     ? `Gravando: ${current.reuniaoTitulo}`
                     : "Pronto para gravar"}
                 </p>
+
+                {(isProcessing || stopRequested) && finalizandoHaMuitoTempo && (
+                  <p className="text-[10px] text-amber-300 mt-1">
+                    Finalização demorando… verifique logs do Render (ou a rede).
+                  </p>
+                )}
               </div>
             </div>
 
-            {isProcessing ? (
+            {/* ✅ nunca “some”: sempre cai em um desses estados */}
+            {(isProcessing || stopRequested) ? (
               <div className="flex items-center gap-2 text-blue-400 font-bold animate-pulse">
                 <Loader2 className="animate-spin" /> FINALIZANDO...
               </div>
@@ -250,9 +280,7 @@ export default function Copiloto() {
               className="w-full bg-slate-800 border-none rounded-2xl p-4 text-sm h-24 mb-3 outline-none focus:ring-2 ring-blue-500"
               placeholder="O que precisa ser feito?"
               value={novaAcao.descricao}
-              onChange={(e) =>
-                setNovaAcao({ ...novaAcao, descricao: e.target.value })
-              }
+              onChange={(e) => setNovaAcao({ ...novaAcao, descricao: e.target.value })}
             />
 
             <div className="flex gap-2">
@@ -260,9 +288,7 @@ export default function Copiloto() {
                 className="bg-slate-800 rounded-xl px-4 py-2 text-xs flex-1"
                 placeholder="Responsável"
                 value={novaAcao.responsavel}
-                onChange={(e) =>
-                  setNovaAcao({ ...novaAcao, responsavel: e.target.value })
-                }
+                onChange={(e) => setNovaAcao({ ...novaAcao, responsavel: e.target.value })}
               />
               <button
                 onClick={salvarAcao}
