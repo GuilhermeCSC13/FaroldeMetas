@@ -1,3 +1,4 @@
+// src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -37,12 +38,9 @@ function parseDataLocal(dataString) {
 
 function statusBadge(status) {
   const s = String(status || "").toLowerCase();
-  if (s.includes("realiz")) {
-    return { text: "✅", title: "Realizada" };
-  }
-  if (s.includes("nao") || s.includes("não") || s.includes("cancel")) {
+  if (s.includes("realiz")) return { text: "✅", title: "Realizada" };
+  if (s.includes("nao") || s.includes("não") || s.includes("cancel"))
     return { text: "✖", title: "Não realizada" };
-  }
   return { text: "●", title: "Agendada" };
 }
 
@@ -104,7 +102,8 @@ export default function CentralReunioes() {
     setReunioes(data || []);
   };
 
-  const getTipoById = (id) => tipos.find((t) => String(t.id) === String(id)) || null;
+  const getTipoById = (id) =>
+    tipos.find((t) => String(t.id) === String(id)) || null;
 
   const onDateClick = (day) => {
     setEditingReuniao(null);
@@ -164,17 +163,37 @@ export default function CentralReunioes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // ✅ AJUSTE: validações mínimas para evitar "09:15" em data_hora
+    const dataStr = String(formData.data || "").trim();
+    const horaIni = String(formData.hora_inicio || "").trim();
+
+    if (!dataStr || !horaIni) {
+      alert("Informe data e hora de início.");
+      return;
+    }
+
+    // se por algum motivo DATA recebeu hora (bug de binding), bloqueia
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(dataStr)) {
+      alert(`ERRO: o campo DATA está com hora: "${dataStr}".`);
+      return;
+    }
+
+    // ✅ data_hora sempre ISO completo (timestamptz)
+    const dataHoraIso = new Date(`${dataStr}T${horaIni}:00`).toISOString();
+
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || null;
 
-    const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
-    const duracao_segundos = calcDuracaoSegundos(formData.hora_inicio, formData.hora_fim);
+    const duracao_segundos = calcDuracaoSegundos(
+      formData.hora_inicio,
+      formData.hora_fim
+    );
 
     const dados = {
       titulo: formData.titulo,
-      data_hora: dataHoraIso,
+      data_hora: dataHoraIso, // ✅
       tipo_reuniao_id: formData.tipo_reuniao_id || null,
-      tipo_reuniao: tipoNome || "Geral",
+      tipo_reuniao: tipoNome || "Geral", // se você adicionou a coluna, ok; se não, remova
       horario_inicio: formData.hora_inicio,
       horario_fim: formData.hora_fim,
       duracao_segundos,
@@ -189,10 +208,17 @@ export default function CentralReunioes() {
       const aplicar = window.confirm(
         "Deseja aplicar as mudanças para reuniões futuras desta série?"
       );
-      await atualizarReuniao(editingReuniao.id, dados, aplicar);
+      const resp = await atualizarReuniao(editingReuniao.id, dados, aplicar);
+      if (resp?.error) {
+        alert(resp.error.message || JSON.stringify(resp.error));
+        return;
+      }
     } else {
-      // aqui continua como você já usa (semanal/mensal/unica foi removido do seu fluxo atual)
-      await salvarReuniao(dados, "unica");
+      const resp = await salvarReuniao(dados, "unica");
+      if (resp?.error) {
+        alert(resp.error.message || JSON.stringify(resp.error));
+        return;
+      }
     }
 
     setIsModalOpen(false);
@@ -200,7 +226,8 @@ export default function CentralReunioes() {
   };
 
   const handleDelete = async () => {
-    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO) return;
+    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO)
+      return;
     await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
     setIsModalOpen(false);
     fetchReunioes();
@@ -230,7 +257,9 @@ export default function CentralReunioes() {
     try {
       const dtOrig = parseDataLocal(draggingReuniao.data_hora);
       const hora = format(dtOrig, "HH:mm:ss");
-      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${hora}`;
+      const novaDataHora = new Date(
+        `${format(day, "yyyy-MM-dd")}T${hora}`
+      ).toISOString(); // ✅ garante ISO
 
       await supabase
         .from("reunioes")
@@ -244,7 +273,6 @@ export default function CentralReunioes() {
     }
   };
 
-  // Agrupamento para lista
   const reunioesAgrupadas = useMemo(() => {
     return reunioes.reduce((acc, r) => {
       const day = format(parseDataLocal(r.data_hora), "yyyy-MM-dd");
@@ -261,14 +289,18 @@ export default function CentralReunioes() {
       <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1>
+            <h1 className="text-2xl font-bold text-slate-800">
+              Calendário Tático
+            </h1>
           </div>
           <div className="flex gap-2">
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
               <button
                 onClick={() => setView("calendar")}
                 className={`p-2 rounded ${
-                  view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                  view === "calendar"
+                    ? "bg-blue-100 text-blue-700"
+                    : "text-slate-500"
                 }`}
               >
                 <CalIcon size={18} />
@@ -276,7 +308,9 @@ export default function CentralReunioes() {
               <button
                 onClick={() => setView("week")}
                 className={`p-2 rounded ${
-                  view === "week" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                  view === "week"
+                    ? "bg-blue-100 text-blue-700"
+                    : "text-slate-500"
                 }`}
                 title="Semanal"
               >
@@ -285,7 +319,9 @@ export default function CentralReunioes() {
               <button
                 onClick={() => setView("list")}
                 className={`p-2 rounded ${
-                  view === "list" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                  view === "list"
+                    ? "bg-blue-100 text-blue-700"
+                    : "text-slate-500"
                 }`}
               >
                 <List size={18} />
@@ -373,7 +409,6 @@ export default function CentralReunioes() {
                             {hhmm} {m.titulo}
                           </span>
 
-                          {/* ✅ ● ✖ */}
                           <span
                             className={`text-[10px] font-black ${
                               badge.text === "✅"
@@ -400,10 +435,15 @@ export default function CentralReunioes() {
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
             <div className="grid grid-cols-7 flex-1">
               {weekDays.map((day) => (
-                <div key={day.toString()} className="border-r p-4 bg-white overflow-y-auto">
+                <div
+                  key={day.toString()}
+                  className="border-r p-4 bg-white overflow-y-auto"
+                >
                   <h3
                     className={`text-sm font-bold mb-4 uppercase ${
-                      isSameDay(day, new Date()) ? "text-blue-600" : "text-slate-400"
+                      isSameDay(day, new Date())
+                        ? "text-blue-600"
+                        : "text-slate-400"
                     }`}
                   >
                     {format(day, "EEE dd/MM", { locale: ptBR })}
@@ -425,8 +465,12 @@ export default function CentralReunioes() {
                           style={{ borderLeft: `4px solid ${m.cor}` }}
                         >
                           <div>
-                            <p className="text-[10px] font-bold text-slate-400">{hhmm}</p>
-                            <p className="text-xs font-bold text-slate-700">{m.titulo}</p>
+                            <p className="text-[10px] font-bold text-slate-400">
+                              {hhmm}
+                            </p>
+                            <p className="text-xs font-bold text-slate-700">
+                              {m.titulo}
+                            </p>
                             <p className="text-[10px] text-slate-500 uppercase font-bold">
                               {tipoLabel(m)}
                             </p>
@@ -477,10 +521,17 @@ export default function CentralReunioes() {
                           className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4 justify-between"
                         >
                           <div className="flex items-center gap-4">
-                            <div className="w-2 h-10 rounded-full" style={{ backgroundColor: m.cor }} />
+                            <div
+                              className="w-2 h-10 rounded-full"
+                              style={{ backgroundColor: m.cor }}
+                            />
                             <div>
-                              <p className="text-xs font-bold text-blue-600">{hhmm}</p>
-                              <h4 className="font-bold text-slate-800">{m.titulo}</h4>
+                              <p className="text-xs font-bold text-blue-600">
+                                {hhmm}
+                              </p>
+                              <h4 className="font-bold text-slate-800">
+                                {m.titulo}
+                              </h4>
                               <p className="text-[10px] text-slate-500 uppercase font-bold">
                                 {tipoLabel(m)}
                               </p>
