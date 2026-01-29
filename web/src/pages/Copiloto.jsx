@@ -1,4 +1,3 @@
-// src/pages/Copiloto.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -18,74 +17,54 @@ import { useRecording } from "../context/RecordingContext";
 /* =========================
    Helpers
 ========================= */
-function nowIso() {
-  return new Date().toISOString();
-}
+const nowIso = () => new Date().toISOString();
 
-function toBR(dt) {
+const toBR = (dt) => {
   try {
     return dt ? new Date(dt).toLocaleString("pt-BR") : "-";
   } catch {
     return "-";
   }
-}
+};
 
-function norm(s) {
-  return String(s || "").trim().toUpperCase();
-}
-
-function secondsToMMSS(s) {
-  const mm = Math.floor((s || 0) / 60)
+const secondsToMMSS = (s = 0) => {
+  const mm = Math.floor(s / 60)
     .toString()
     .padStart(2, "0");
-  const ss = Math.floor((s || 0) % 60)
+  const ss = Math.floor(s % 60)
     .toString()
     .padStart(2, "0");
   return `${mm}:${ss}`;
-}
-
-/**
- * ✅ Só “travado” quando já tem ATA principal (pauta/ata) com conteúdo real
- * ou status real “Realizada”, ou pipeline concluído.
- */
-function hasAtaPrincipalReal(r) {
-  const iaStatus = norm(r?.ata_ia_status);
-  const okByStatus = ["PRONTO", "PRONTA", "OK", "GERADA", "FINALIZADA", "CONCLUIDA"].includes(iaStatus);
-
-  const pauta = String(r?.pauta || "").trim(); // aqui é sua “ATA principal” no banco
-  const ata = String(r?.ata || "").trim();
-
-  const hasText = (txt) => txt && txt.replace(/\s+/g, " ").trim().length >= 40;
-
-  return okByStatus || hasText(pauta) || hasText(ata);
-}
-
-function getTipoReuniao(r) {
-  const t = r?.tipo_reuniao || r?.tipo_reuniao_legacy || r?.tipo || r?.categoria || "Geral";
-  return String(t || "Geral").trim() || "Geral";
-}
+};
 
 /* =========================
-   Card Ação (leve)
+   Card simples de ação
 ========================= */
 function AcaoCard({ acao, onToggle }) {
-  const done =
-    String(acao?.status || "").toLowerCase() === "concluída" ||
-    String(acao?.status || "").toLowerCase() === "concluida";
+  const concluida = acao.status === "Concluída";
 
   return (
     <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-start gap-3">
-        <input type="checkbox" checked={done} onChange={onToggle} className="mt-1 w-4 h-4" />
+        <input
+          type="checkbox"
+          checked={concluida}
+          onChange={onToggle}
+          className="mt-1 w-4 h-4"
+        />
         <div className="flex-1">
-          <div className={`text-sm font-semibold ${done ? "line-through text-slate-400" : "text-slate-900"}`}>
-            {acao?.descricao || "-"}
+          <div
+            className={`text-sm font-semibold ${
+              concluida
+                ? "line-through text-slate-400"
+                : "text-slate-900"
+            }`}
+          >
+            {acao.descricao}
           </div>
           <div className="text-[12px] text-slate-600 mt-1">
-            <span className="font-semibold">Responsável:</span> {acao?.responsavel || "Geral"}
-            {acao?.tipo_reuniao ? <span className="text-slate-500"> • Tipo: {acao.tipo_reuniao}</span> : null}
+            <b>Responsável:</b> {acao.responsavel || "—"}
           </div>
-          {acao?.observacao ? <div className="text-[12px] text-slate-600 mt-2">Obs: {acao.observacao}</div> : null}
         </div>
       </div>
     </div>
@@ -93,69 +72,56 @@ function AcaoCard({ acao, onToggle }) {
 }
 
 /* =========================
-   Page
+   Página
 ========================= */
 export default function Copiloto() {
-  const { isRecording, isProcessing, timer, startRecording, stopRecording, current } = useRecording();
+  const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
+    useRecording();
 
-  const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split("T")[0]);
+  const [dataFiltro, setDataFiltro] = useState(
+    new Date().toISOString().split("T")[0]
+  );
   const [busca, setBusca] = useState("");
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
 
-  // Tabs direita: ✅ sem “Execuções” e sem “Ata IA”
   const [tab, setTab] = useState("ata"); // ata | acoes
 
-  // ATA principal (vinda do banco de atas / campo pauta/ata)
-  const [isEditingAta, setIsEditingAta] = useState(false);
-  const [ataValue, setAtaValue] = useState("");
+  // Ata Manual
+  const [ataManual, setAtaManual] = useState("");
+  const [editAtaManual, setEditAtaManual] = useState(false);
 
-  // Ações (estrutura “Central de Ações” — listas separadas)
-  const [loadingAcoes, setLoadingAcoes] = useState(false);
-  const [acoesDaReuniao, setAcoesDaReuniao] = useState([]);
+  // Ata Principal (read-only)
+  const [ataPrincipal, setAtaPrincipal] = useState("");
+
+  // Ações
+  const [acoesReuniao, setAcoesReuniao] = useState([]);
   const [acoesPendentesTipo, setAcoesPendentesTipo] = useState([]);
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog
-
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
+  const [loadingAcoes, setLoadingAcoes] = useState(false);
 
-  const isMountedRef = useRef(false);
-  const safeSet = (fn) => {
-    if (isMountedRef.current) fn();
-  };
+  const mounted = useRef(true);
 
   useEffect(() => {
-    isMountedRef.current = true;
+    mounted.current = true;
     fetchReunioes();
-    return () => {
-      isMountedRef.current = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => (mounted.current = false);
   }, []);
 
   useEffect(() => {
     fetchReunioes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataFiltro]);
 
   useEffect(() => {
-    if (!selecionada?.id) return;
-
-    // ✅ ATA principal: usa pauta/ata (não mostra ata IA separada)
-    const principal = String(selecionada.pauta || selecionada.ata || "").trim();
-    setAtaValue(principal);
-    setIsEditingAta(false);
-
-    // ✅ carrega ações
+    if (!selecionada) return;
+    carregarAtas(selecionada);
     fetchAcoes(selecionada);
-
-    // começa na ATA
     setTab("ata");
-    setAcaoTab("reuniao");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada?.id]);
 
   /* =========================
-     Fetch Reuniões
+     Fetch reuniões
   ========================= */
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -163,347 +129,235 @@ export default function Copiloto() {
       .select("*")
       .gte("data_hora", `${dataFiltro}T00:00:00`)
       .lte("data_hora", `${dataFiltro}T23:59:59`)
-      .order("data_hora", { ascending: true });
+      .order("data_hora");
 
     if (error) {
-      console.error("fetchReunioes:", error);
+      console.error(error);
       return;
     }
 
-    safeSet(() => setReunioes(data || []));
+    if (!mounted.current) return;
+    setReunioes(data || []);
 
-    if (selecionada?.id) {
-      const found = (data || []).find((r) => r.id === selecionada.id);
-      if (found) safeSet(() => setSelecionada(found));
-    }
-
-    // se está gravando, prende a selecionada na reunião atual
     if (isRecording && current?.reuniaoId) {
-      const found = (data || []).find((r) => r.id === current.reuniaoId);
-      if (found) safeSet(() => setSelecionada(found));
+      const r = data.find((x) => x.id === current.reuniaoId);
+      if (r) setSelecionada(r);
     }
   };
 
   /* =========================
-     Lock / Badge
-     ✅ “Realizada” só por status real OU ATA principal real.
+     Atas
   ========================= */
-  const isLocked = useMemo(() => {
-    return (r) => {
-      if (!r) return false;
-      if (hasAtaPrincipalReal(r)) return true;
+  const carregarAtas = async (r) => {
+    // Ata Manual
+    setAtaManual(r.ata_manual || "");
+    setEditAtaManual(false);
 
-      const st = norm(r.status);
-      const gs = norm(r.gravacao_status);
-
-      if (st === "REALIZADA") return true;
-
-      const doneOrPipeline = new Set([
-        "PRONTO_PROCESSAR",
-        "PROCESSANDO",
-        "PROCESSANDO_DRIVE",
-        "ENVIADO_DRIVE",
-        "PRONTO",
-        "CONCLUIDO",
-      ]);
-      if (doneOrPipeline.has(gs)) return true;
-
-      return false;
-    };
-  }, []);
-
-  const badgeLabel = (r) => {
-    if (!r) return "PENDENTE";
-    const st = norm(r.status);
-
-    if (st === "REALIZADA") return "REALIZADA";
-    if (st === "AGENDADA") return "AGENDADA";
-    if (st === "PENDENTE") return "PENDENTE";
-    if (st === "EM ANDAMENTO") return "EM ANDAMENTO";
-
-    if (hasAtaPrincipalReal(r)) return "REALIZADA";
-
-    const gs = norm(r.gravacao_status);
-    if (gs) return gs;
-
-    return "PENDENTE";
-  };
-
-  const badgeClass = (lbl) => {
-    const v = norm(lbl);
-    if (v === "REALIZADA") return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
-    if (v === "EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border border-blue-200";
-    if (v === "AGENDADA") return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    if (v === "PENDENTE") return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    if (v.includes("PROCESS") || v.includes("PRONTO")) return "bg-blue-600/15 text-blue-700 border border-blue-200";
-    if (v === "ERRO") return "bg-red-600/15 text-red-700 border border-red-200";
-    return "bg-slate-600/10 text-slate-700 border border-slate-200";
-  };
-
-  /* =========================
-     Recording
-  ========================= */
-  const onStart = async () => {
-    if (!selecionada?.id) return alert("Selecione uma reunião.");
-    if (isRecording) return;
-
-    if (isLocked(selecionada)) {
-      return alert("Reunião bloqueada (já possui ata/pipeline).");
+    // Ata Principal (vem do tipo)
+    if (!r.tipo_reuniao_id) {
+      setAtaPrincipal("");
+      return;
     }
 
-    try {
-      await startRecording({
-        reuniaoId: selecionada.id,
-        reuniaoTitulo: selecionada.titulo,
-      });
-      await fetchReunioes();
-      setTab("ata");
-    } catch (e) {
-      console.error("startRecording:", e);
-      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
-    }
+    const { data } = await supabase
+      .from("tipos_reuniao")
+      .select("ata_principal")
+      .eq("id", r.tipo_reuniao_id)
+      .single();
+
+    setAtaPrincipal(data?.ata_principal || "");
   };
 
-  const onStop = async () => {
-    try {
-      await stopRecording();
-      await fetchReunioes();
-      if (selecionada?.id) await fetchAcoes(selecionada);
-    } catch (e) {
-      console.error("stopRecording:", e);
-      alert("Erro ao encerrar a gravação.");
-    }
-  };
-
-  /* =========================
-     ATA principal (salva em pauta)
-  ========================= */
-  const salvarAtaPrincipal = async () => {
-    if (!selecionada?.id) return;
+  const salvarAtaManual = async () => {
+    if (!selecionada) return;
 
     const { error } = await supabase
       .from("reunioes")
-      .update({ pauta: ataValue, updated_at: nowIso() })
+      .update({ ata_manual: ataManual })
       .eq("id", selecionada.id);
 
     if (error) {
-      alert("Erro ao salvar Ata: " + (error.message || error));
+      alert("Erro ao salvar ata manual");
       return;
     }
-    setIsEditingAta(false);
-    await fetchReunioes();
+
+    setEditAtaManual(false);
+    fetchReunioes();
   };
 
   /* =========================
-     Ações (estrutura “Central”)
+     Gravação
   ========================= */
-  const fetchAcoes = async (r) => {
-    if (!r?.id) return;
+  const onStart = async () => {
+    if (!selecionada) return alert("Selecione uma reunião");
+    if (isRecording) return;
 
-    safeSet(() => setLoadingAcoes(true));
-    try {
-      // 1) Ações da reunião
-      const { data: daReuniao, error: e1 } = await supabase
-        .from("acoes")
-        .select("*")
-        .eq("reuniao_id", r.id)
-        .order("created_at", { ascending: false });
+    await startRecording({
+      reuniaoId: selecionada.id,
+      reuniaoTitulo: selecionada.titulo,
+    });
 
-      if (e1) throw e1;
-      safeSet(() => setAcoesDaReuniao(daReuniao || []));
-
-      // 2) Backlog do tipo (pendentes)
-      const tipo = getTipoReuniao(r);
-
-      const { data: pendTipo, error: e2 } = await supabase
-        .from("acoes")
-        .select("*")
-        .eq("status", "Aberta")
-        .eq("tipo_reuniao", tipo)
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      if (e2) throw e2;
-
-      const filtradas = (pendTipo || []).filter((a) => !a.reuniao_id || a.reuniao_id !== r.id);
-      safeSet(() => setAcoesPendentesTipo(filtradas));
-    } catch (e) {
-      console.error("fetchAcoes:", e);
-      safeSet(() => {
-        setAcoesDaReuniao([]);
-        setAcoesPendentesTipo([]);
-      });
-    } finally {
-      safeSet(() => setLoadingAcoes(false));
-    }
+    fetchReunioes();
   };
 
-  const salvarAcao = async () => {
-    if (!selecionada?.id) return;
-    if (!novaAcao.descricao?.trim()) return;
+  const onStop = async () => {
+    await stopRecording();
+    fetchReunioes();
+    fetchAcoes(selecionada);
+  };
 
-    const tipo = getTipoReuniao(selecionada);
+  /* =========================
+     Ações
+  ========================= */
+  const fetchAcoes = async (r) => {
+    if (!r?.id || !r?.tipo_reuniao_id) return;
+
+    setLoadingAcoes(true);
+
+    // Ações da reunião
+    const { data: daReuniao } = await supabase
+      .from("acoes")
+      .select("*")
+      .eq("reuniao_id", r.id)
+      .order("data_criacao", { ascending: false });
+
+    // Backlog pendente do tipo
+    const { data: backlog } = await supabase
+      .from("acoes")
+      .select("*")
+      .eq("tipo_reuniao_id", r.tipo_reuniao_id)
+      .neq("status", "Concluída")
+      .order("data_criacao", { ascending: false });
+
+    if (!mounted.current) return;
+
+    setAcoesReuniao(daReuniao || []);
+    setAcoesPendentesTipo(
+      (backlog || []).filter((a) => a.reuniao_id !== r.id)
+    );
+    setLoadingAcoes(false);
+  };
+
+  const criarAcao = async () => {
+    if (!selecionada || !novaAcao.descricao.trim()) return;
 
     const payload = {
       descricao: novaAcao.descricao.trim(),
-      responsavel: (novaAcao.responsavel || "Geral").trim(),
+      responsavel: novaAcao.responsavel || null,
       status: "Aberta",
       reuniao_id: selecionada.id,
-      tipo_reuniao: tipo,
+      tipo_reuniao_id: selecionada.tipo_reuniao_id,
       data_criacao: nowIso(),
-      created_at: nowIso(),
     };
 
-    const { data, error } = await supabase.from("acoes").insert([payload]).select("*");
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert(payload)
+      .select()
+      .single();
+
     if (error) {
-      console.error("salvarAcao:", error);
-      alert("Erro ao criar ação: " + (error.message || error));
+      alert("Erro ao criar ação");
       return;
     }
 
-    safeSet(() => {
-      setNovaAcao({ descricao: "", responsavel: "" });
-      setAcoesDaReuniao((prev) => [data?.[0], ...(prev || [])].filter(Boolean));
-    });
-
-    // ✅ após criar: vai pra “Da reunião” (como você pediu)
+    setNovaAcao({ descricao: "", responsavel: "" });
+    setAcoesReuniao((prev) => [data, ...prev]);
     setTab("acoes");
     setAcaoTab("reuniao");
   };
 
-  const toggleStatusAcao = async (acao) => {
-    const novoStatus = acao.status === "Aberta" ? "Concluída" : "Aberta";
+  const toggleAcao = async (acao) => {
+    const novoStatus =
+      acao.status === "Concluída" ? "Aberta" : "Concluída";
 
-    const patch = (list) => (list || []).map((a) => (a.id === acao.id ? { ...a, status: novoStatus } : a));
-    safeSet(() => {
-      setAcoesDaReuniao(patch(acoesDaReuniao));
-      setAcoesPendentesTipo(patch(acoesPendentesTipo));
-    });
+    await supabase
+      .from("acoes")
+      .update({
+        status: novoStatus,
+        data_conclusao: novoStatus === "Concluída" ? nowIso() : null,
+      })
+      .eq("id", acao.id);
 
-    const { error } = await supabase.from("acoes").update({ status: novoStatus }).eq("id", acao.id);
-    if (error) {
-      alert("Erro ao atualizar status: " + (error.message || error));
-      fetchAcoes(selecionada);
-    }
+    fetchAcoes(selecionada);
   };
 
   /* =========================
-     UI computed
+     UI helpers
   ========================= */
   const reunioesFiltradas = useMemo(() => {
-    const q = (busca || "").toLowerCase();
-    return (reunioes || []).filter((r) => (r.titulo || "").toLowerCase().includes(q));
+    return reunioes.filter((r) =>
+      (r.titulo || "").toLowerCase().includes(busca.toLowerCase())
+    );
   }, [reunioes, busca]);
 
-  const tipoSelecionado = selecionada ? getTipoReuniao(selecionada) : "—";
-
+  /* =========================
+     Render
+  ========================= */
   return (
     <Layout>
-      {/* ✅ Tema claro / tira “tela escura” */}
-      <div className="h-screen bg-[#f6f8fc] text-slate-900 flex overflow-hidden">
+      <div className="h-screen bg-[#f6f8fc] flex overflow-hidden">
         {/* COLUNA ESQUERDA */}
-        <div className="w-[420px] min-w-[380px] max-w-[460px] flex flex-col p-5 border-r border-slate-200 bg-white">
-          {/* ✅ nome melhor + logo melhor */}
+        <div className="w-[420px] bg-white border-r p-5 flex flex-col">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm">
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center">
               <Bot size={20} />
             </div>
-            <div className="min-w-0">
-              <div className="text-xs uppercase tracking-wider text-slate-500 font-extrabold">Assistente</div>
-              <h1 className="text-lg font-black tracking-tight truncate">Copiloto de Reuniões</h1>
-            </div>
+            <h1 className="font-black text-lg">Copiloto de Reuniões</h1>
           </div>
 
           <div className="flex gap-2 mb-3">
-            <div className="relative flex-1">
-              <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
-              <input
-                type="date"
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
-                value={dataFiltro}
-                onChange={(e) => setDataFiltro(e.target.value)}
-              />
-            </div>
-
-            <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar..."
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-              />
-            </div>
+            <input
+              type="date"
+              value={dataFiltro}
+              onChange={(e) => setDataFiltro(e.target.value)}
+              className="flex-1 border rounded-xl px-3 py-2 text-xs"
+            />
+            <input
+              placeholder="Buscar..."
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="flex-1 border rounded-xl px-3 py-2 text-xs"
+            />
           </div>
 
-          <div className="flex-1 bg-white border border-slate-200 rounded-2xl overflow-y-auto">
-            {reunioesFiltradas.map((r) => {
-              const lbl = badgeLabel(r);
-              const locked = isLocked(r);
-              const tipo = getTipoReuniao(r);
-
-              return (
-                <button
-                  key={r.id}
-                  onClick={() => !isRecording && setSelecionada(r)}
-                  className={`w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors ${
-                    selecionada?.id === r.id ? "bg-blue-50 border-l-4 border-l-blue-600" : "border-l-4 border-l-transparent"
-                  } ${isRecording ? "opacity-80 cursor-not-allowed" : ""}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-black text-xs truncate">{r.titulo || "Sem título"}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-extrabold uppercase">
-                          {tipo}
-                        </span>
-                        {locked && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 font-extrabold uppercase flex items-center gap-1">
-                            <Lock size={12} /> BLOQUEADO
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        {toBR(r.data_hora)}
-                        {typeof r.duracao_segundos === "number" && r.duracao_segundos > 0 ? (
-                          <span className="text-slate-400"> • {secondsToMMSS(r.duracao_segundos)}</span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <span
-                      className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${badgeClass(lbl)}`}
-                      title={r.gravacao_erro || ""}
-                    >
-                      {lbl}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-
-            {reunioesFiltradas.length === 0 && (
-              <div className="p-6 text-xs text-slate-500">Nenhuma reunião nesta data.</div>
-            )}
+          <div className="flex-1 overflow-y-auto border rounded-2xl">
+            {reunioesFiltradas.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => !isRecording && setSelecionada(r)}
+                className={`w-full text-left p-4 border-b ${
+                  selecionada?.id === r.id
+                    ? "bg-blue-50 border-l-4 border-l-blue-600"
+                    : ""
+                }`}
+              >
+                <div className="font-bold text-xs">{r.titulo}</div>
+                <div className="text-[11px] text-slate-500">
+                  {toBR(r.data_hora)}
+                </div>
+              </button>
+            ))}
           </div>
 
-          {/* CONTROLES */}
-          <div className="mt-4 bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
+          <div className="mt-4 p-4 border rounded-2xl flex justify-between">
             <div>
-              <div className="text-[10px] text-slate-500 font-extrabold uppercase">Tempo de sessão</div>
-              <div className="text-lg font-black font-mono leading-none">{secondsToMMSS(timer)}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                {isRecording && current?.reuniaoTitulo ? `Gravando: ${current.reuniaoTitulo}` : "Pronto para gravar"}
+              <div className="text-[10px] text-slate-500 uppercase font-bold">
+                Tempo
+              </div>
+              <div className="font-mono font-black">
+                {secondsToMMSS(timer)}
               </div>
             </div>
 
             {isProcessing ? (
-              <div className="text-blue-700 font-extrabold text-xs animate-pulse">FINALIZANDO...</div>
+              <div className="text-blue-600 font-bold text-xs">
+                FINALIZANDO...
+              </div>
             ) : isRecording ? (
               <button
                 onClick={onStop}
-                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-slate-800 transition-all"
+                className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-black"
               >
                 ENCERRAR
               </button>
@@ -511,183 +365,143 @@ export default function Copiloto() {
               <button
                 onClick={onStart}
                 disabled={!selecionada}
-                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-sm"
+                className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black disabled:opacity-30"
               >
-                INICIAR GRAVAÇÃO
+                INICIAR
               </button>
             )}
           </div>
         </div>
 
         {/* COLUNA DIREITA */}
-        <div className="flex-1 p-6">
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[10px] text-slate-500 font-extrabold uppercase">Reunião selecionada</div>
-                <div className="text-base font-black truncate">{selecionada?.titulo || "—"}</div>
-                <div className="text-xs text-slate-600 mt-1">
-                  Tipo: <span className="text-slate-900 font-bold">{tipoSelecionado}</span> • Execução:{" "}
-                  <span className="text-slate-900 font-bold">
-                    {selecionada?.data_hora ? toBR(selecionada.data_hora) : "—"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <TabButton active={tab === "ata"} onClick={() => setTab("ata")} icon={<FileText size={16} />}>
-                  Ata Principal
-                </TabButton>
-                <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
-                  Ações
-                </TabButton>
-              </div>
+        <div className="flex-1 p-6 overflow-y-auto">
+          {!selecionada ? (
+            <div className="text-slate-600">
+              Selecione uma reunião
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-4">
+                <Tab active={tab === "ata"} onClick={() => setTab("ata")}>
+                  Ata
+                </Tab>
+                <Tab active={tab === "acoes"} onClick={() => setTab("acoes")}>
+                  Ações
+                </Tab>
+              </div>
 
-          <div className="mt-4">
-            {!selecionada ? (
-              <div className="text-slate-600 text-sm">Selecione uma reunião.</div>
-            ) : tab === "ata" ? (
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-sm font-black text-slate-900 flex items-center gap-2">
-                    <FileText size={16} className="text-blue-700" />
-                    Ata Principal
-                  </div>
+              {tab === "ata" ? (
+                <>
+                  {/* ATA PRINCIPAL */}
+                  <Section title="Ata Principal">
+                    <pre className="whitespace-pre-wrap text-sm">
+                      {ataPrincipal || "—"}
+                    </pre>
+                  </Section>
 
-                  <div className="flex gap-2">
-                    {isEditingAta ? (
+                  {/* ATA MANUAL */}
+                  <Section title="Ata Manual">
+                    {editAtaManual ? (
                       <>
-                        <button
-                          onClick={() => {
-                            setAtaValue(String(selecionada.pauta || selecionada.ata || "").trim());
-                            setIsEditingAta(false);
-                          }}
-                          className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl flex items-center gap-2"
-                        >
-                          <X size={14} /> Cancelar
-                        </button>
-                        <button
-                          onClick={salvarAtaPrincipal}
-                          className="text-[12px] font-extrabold bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl flex items-center gap-2"
-                        >
-                          <Save size={14} /> Salvar
-                        </button>
+                        <textarea
+                          className="w-full min-h-[200px] border rounded-xl p-3 text-sm"
+                          value={ataManual}
+                          onChange={(e) =>
+                            setAtaManual(e.target.value)
+                          }
+                        />
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={salvarAtaManual}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
+                          >
+                            Salvar
+                          </button>
+                          <button
+                            onClick={() => setEditAtaManual(false)}
+                            className="border px-4 py-2 rounded-xl text-xs"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
                       </>
                     ) : (
-                      <button
-                        onClick={() => setIsEditingAta(true)}
-                        className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl flex items-center gap-2"
-                      >
-                        <Save size={14} /> Editar
-                      </button>
+                      <>
+                        <pre className="whitespace-pre-wrap text-sm">
+                          {ataManual || "—"}
+                        </pre>
+                        <button
+                          onClick={() => setEditAtaManual(true)}
+                          className="mt-2 text-xs font-bold text-blue-600"
+                        >
+                          Editar ata manual
+                        </button>
+                      </>
                     )}
-                  </div>
-                </div>
-
-                {isEditingAta ? (
-                  <textarea
-                    className="w-full min-h-[420px] bg-white border border-slate-200 rounded-2xl p-4 text-sm outline-none focus:ring-2 ring-blue-500/25"
-                    value={ataValue}
-                    onChange={(e) => setAtaValue(e.target.value)}
-                    placeholder="Ata principal da reunião..."
-                  />
-                ) : (
-                  <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-900 whitespace-pre-wrap leading-relaxed min-h-[420px]">
-                    {String(ataValue || "").trim() ? ataValue : "Sem ata principal ainda."}
-                  </div>
-                )}
-              </div>
-            ) : (
-              // tab === "acoes"
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <div className="text-sm font-black text-slate-900 flex items-center gap-2">
-                      <ClipboardList size={16} className="text-blue-700" />
-                      Central de Ações (contexto da reunião)
-                    </div>
-                    <div className="text-[12px] text-slate-600 mt-1">
-                      Ações da reunião + backlog pendente do tipo <b>{tipoSelecionado}</b>.
-                    </div>
+                  </Section>
+                </>
+              ) : (
+                <Section title="Ações">
+                  <div className="mb-3 flex gap-2">
+                    <TabSmall
+                      active={acaoTab === "reuniao"}
+                      onClick={() => setAcaoTab("reuniao")}
+                    >
+                      Da reunião
+                    </TabSmall>
+                    <TabSmall
+                      active={acaoTab === "backlog"}
+                      onClick={() => setAcaoTab("backlog")}
+                    >
+                      Pendentes do tipo
+                    </TabSmall>
                   </div>
 
-                  <button
-                    onClick={() => fetchAcoes(selecionada)}
-                    className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl"
-                    disabled={loadingAcoes}
-                  >
-                    {loadingAcoes ? "Atualizando..." : "Atualizar"}
-                  </button>
-                </div>
-
-                {/* ✅ Criar ação: mesma “estrutura” (não aparece ata/execução) */}
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4">
-                  <div className="text-[11px] font-extrabold text-slate-600 uppercase mb-2">Criar nova ação</div>
-
-                  <textarea
-                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/25 h-24"
-                    placeholder="Descreva a ação..."
-                    value={novaAcao.descricao}
-                    onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
-                  />
-
-                  <div className="flex gap-2 mt-2">
+                  <div className="mb-4">
+                    <textarea
+                      placeholder="Nova ação..."
+                      value={novaAcao.descricao}
+                      onChange={(e) =>
+                        setNovaAcao({
+                          ...novaAcao,
+                          descricao: e.target.value,
+                        })
+                      }
+                      className="w-full border rounded-xl p-3 text-sm"
+                    />
                     <input
-                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
                       placeholder="Responsável"
                       value={novaAcao.responsavel}
-                      onChange={(e) => setNovaAcao((p) => ({ ...p, responsavel: e.target.value }))}
+                      onChange={(e) =>
+                        setNovaAcao({
+                          ...novaAcao,
+                          responsavel: e.target.value,
+                        })
+                      }
+                      className="w-full border rounded-xl p-3 text-sm mt-2"
                     />
                     <button
-                      onClick={salvarAcao}
-                      disabled={!novaAcao.descricao?.trim()}
-                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-4 py-2 rounded-xl font-black text-sm flex items-center gap-2"
+                      onClick={criarAcao}
+                      className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
                     >
-                      <Plus size={16} /> Criar
+                      Criar ação
                     </button>
                   </div>
 
-                  <div className="text-[12px] text-slate-600 mt-2">
-                    Tipo aplicado automaticamente: <b className="text-slate-900">{tipoSelecionado}</b>
-                  </div>
-                </div>
-
-                {/* “estrutura Central” => duas listas claras */}
-                <div className="flex gap-2 mb-3">
-                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
-                    Ações da reunião
-                  </Pill>
-                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
-                    Backlog pendente do tipo
-                  </Pill>
-                </div>
-
-                {loadingAcoes ? (
-                  <div className="text-slate-600 text-sm">Carregando ações...</div>
-                ) : acaoTab === "reuniao" ? (
-                  (acoesDaReuniao || []).length === 0 ? (
-                    <div className="text-slate-600 text-sm">Nenhuma ação cadastrada nesta reunião.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {(acoesDaReuniao || []).map((a) => (
-                        <AcaoCard key={a.id} acao={a} onToggle={() => toggleStatusAcao(a)} />
-                      ))}
-                    </div>
-                  )
-                ) : (acoesPendentesTipo || []).length === 0 ? (
-                  <div className="text-slate-600 text-sm">Nenhuma ação pendente para este tipo.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {(acoesPendentesTipo || []).map((a) => (
-                      <AcaoCard key={a.id} acao={a} onToggle={() => toggleStatusAcao(a)} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+                  {(acaoTab === "reuniao"
+                    ? acoesReuniao
+                    : acoesPendentesTipo
+                  ).map((a) => (
+                    <AcaoCard
+                      key={a.id}
+                      acao={a}
+                      onToggle={() => toggleAcao(a)}
+                    />
+                  ))}
+                </Section>
+              )}
+            </>
+          )}
         </div>
       </div>
     </Layout>
@@ -695,35 +509,43 @@ export default function Copiloto() {
 }
 
 /* =========================
-   Small UI
+   UI pequenos
 ========================= */
-function TabButton({ active, onClick, icon, children }) {
+function Tab({ active, children, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-2 transition-colors ${
+      className={`px-4 py-2 rounded-xl text-xs font-black border ${
         active
-          ? "bg-blue-600/10 border-blue-200 text-blue-800"
-          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+          ? "bg-blue-600/10 border-blue-300 text-blue-800"
+          : "bg-white border-slate-200"
       }`}
     >
-      {icon}
       {children}
     </button>
   );
 }
 
-function Pill({ active, onClick, children }) {
+function TabSmall({ active, children, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`text-[12px] px-3 py-2 rounded-xl font-extrabold border transition-colors ${
+      className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
         active
-          ? "bg-blue-600/10 border-blue-200 text-blue-800"
-          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+          ? "bg-blue-600/10 border-blue-300 text-blue-800"
+          : "bg-white border-slate-200"
       }`}
     >
       {children}
     </button>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="bg-white border rounded-2xl p-5 mb-4">
+      <div className="font-black text-sm mb-3">{title}</div>
+      {children}
+    </div>
   );
 }
