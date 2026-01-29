@@ -1,4 +1,3 @@
-// src/services/agendaService.js
 import { addDays, addMonths } from "date-fns";
 import { supabase } from "../supabaseClient";
 
@@ -15,38 +14,33 @@ export const gerarDatasRecorrentes = (dataInicialISO, regra, qtd = 12) => {
   return datas;
 };
 
-// Salva Nova Reunião
 export const salvarReuniao = async (dados, regraRecorrencia) => {
-  // ✅ IMPORTANT: seu banco exige tipo_reuniao_legacy NOT NULL
   const {
     titulo,
-    tipo_reuniao_legacy,
-    tipo_reuniao_id,
     data_hora,
     cor,
     area_id,
     responsavel,
-    pauta,
     ata,
     status,
-    horario_inicio,
-    horario_fim,
+    tipo_reuniao_id,
+    tipo_reuniao_legacy,
     duracao_segundos,
   } = dados;
 
   const basePayload = {
     titulo,
     data_hora,
-    tipo_reuniao_id: tipo_reuniao_id || null,
-    tipo_reuniao_legacy: tipo_reuniao_legacy || "Geral", // ✅ garante não-null
     cor,
     area_id,
     responsavel,
-    pauta: pauta ?? null,
-    ata: ata ?? null,
+    ata,
     status: status || "Agendada",
-    horario_inicio: horario_inicio ?? null,
-    horario_fim: horario_fim ?? null,
+
+    tipo_reuniao_id: tipo_reuniao_id || null,
+    tipo_reuniao_legacy: tipo_reuniao_legacy || "Geral", // NOT NULL
+
+    // ✅ só numérico (se existir). Não manda strings tipo "09:00"
     duracao_segundos: duracao_segundos ?? null,
   };
 
@@ -55,7 +49,6 @@ export const salvarReuniao = async (dados, regraRecorrencia) => {
   }
 
   const datas = gerarDatasRecorrentes(data_hora, regraRecorrencia);
-
   const payloadSerie = datas.map((dt) => ({
     ...basePayload,
     data_hora: dt.toISOString(),
@@ -64,25 +57,24 @@ export const salvarReuniao = async (dados, regraRecorrencia) => {
   return await supabase.from("reunioes").insert(payloadSerie);
 };
 
-// Atualiza Reunião
 export const atualizarReuniao = async (id, novosDados, aplicarEmSerie = false) => {
   if (!aplicarEmSerie) {
-    // ✅ garante que tipo_reuniao_legacy nunca vai como null
-    const safe = {
-      ...novosDados,
-      tipo_reuniao_legacy: novosDados.tipo_reuniao_legacy || "Geral",
-    };
-    return await supabase.from("reunioes").update(safe).eq("id", id);
+    const payload = { ...novosDados };
+
+    // ✅ garantias: não mandar campos que podem ser timestamptz no banco
+    delete payload.horario_inicio;
+    delete payload.horario_fim;
+
+    return await supabase.from("reunioes").update(payload).eq("id", id);
   }
 
-  // Série: usa tipo_reuniao_legacy como "chave" de agrupamento
-  const { data: original } = await supabase
+  const { data: original, error: errOrig } = await supabase
     .from("reunioes")
     .select("tipo_reuniao_legacy, data_hora")
     .eq("id", id)
     .single();
 
-  if (!original) return { error: "Original não encontrada" };
+  if (errOrig || !original) return { error: errOrig || new Error("Original não encontrada") };
 
   return await supabase
     .from("reunioes")
@@ -90,8 +82,13 @@ export const atualizarReuniao = async (id, novosDados, aplicarEmSerie = false) =
       titulo: novosDados.titulo,
       cor: novosDados.cor,
       responsavel: novosDados.responsavel,
-      tipo_reuniao_legacy: novosDados.tipo_reuniao_legacy || original.tipo_reuniao_legacy || "Geral",
+      ata: novosDados.ata,
+      status: novosDados.status,
+      tipo_reuniao_id: novosDados.tipo_reuniao_id || null,
+      tipo_reuniao_legacy:
+        novosDados.tipo_reuniao_legacy || original.tipo_reuniao_legacy || "Geral",
+      duracao_segundos: novosDados.duracao_segundos ?? null,
     })
-    .eq("tipo_reuniao_legacy", original.tipo_reuniao_legacy) // ✅ aqui
+    .eq("tipo_reuniao_legacy", original.tipo_reuniao_legacy)
     .gte("data_hora", original.data_hora);
 };
