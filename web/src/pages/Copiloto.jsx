@@ -142,20 +142,22 @@ export default function Copiloto() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada]);
 
-  // ✅ Se o usuário trocar de aba do navegador / esconder a página, encerra.
+  // ✅ AJUSTE: trocar de aba NÃO encerra gravação (mantém botão ENCERRAR)
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.hidden && isRecording) {
-        console.warn("Aba ficou oculta. Encerrando gravação para evitar travar.");
-        safeStopRecording();
+        console.warn(
+          "Aba ficou oculta. Mantendo gravação ativa (não encerrando automaticamente)."
+        );
+        // ❌ não chama safeStopRecording()
       }
     };
 
-    // ✅ Se a página for “suspensa” (mobile) ou navegarem pra fora
+    // ✅ pagehide pode acontecer em refresh/navegação; não encerrar automaticamente
     const onPageHide = () => {
       if (isRecording) {
-        console.warn("pagehide detectado. Encerrando gravação.");
-        safeStopRecording();
+        console.warn("pagehide detectado. Mantendo gravação ativa.");
+        // ❌ não chama safeStopRecording()
       }
     };
 
@@ -175,7 +177,6 @@ export default function Copiloto() {
       window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRecording]);
 
   const fetchReunioes = async () => {
