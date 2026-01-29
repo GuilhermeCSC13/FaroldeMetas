@@ -1,11 +1,5 @@
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+// src/context/RecordingContext.jsx
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 
 const RecordingContext = createContext(null);
@@ -47,6 +41,7 @@ export function RecordingProvider({ children }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
 
+  // metadados da sessão atual (pra UI global + Copiloto)
   const [current, setCurrent] = useState(null);
   // current: { reuniaoId, reuniaoTitulo, sessionId, startedAtIso }
 
@@ -71,7 +66,7 @@ export function RecordingProvider({ children }) {
   const uploadsInFlightRef = useRef(new Set());
   const queueDrainPromiseRef = useRef(null);
 
-  // ✅ NOVO: garante que stopRecording() só resolve quando finalize terminar
+  // ✅ NOVO: promise para o botão ENCERRAR aguardar finalização real
   const stopFinalizePromiseRef = useRef(null); // { promise, resolve, reject }
   const stopFallbackTimeoutRef = useRef(null);
 
@@ -85,6 +80,7 @@ export function RecordingProvider({ children }) {
       setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
   };
+
   const stopTimerFn = () => clearInterval(timerRef.current);
 
   const cleanupMedia = () => {
@@ -107,11 +103,9 @@ export function RecordingProvider({ children }) {
     } catch {}
   };
 
-  // ✅ NOVO: promise helpers (stop aguardando finalize)
   const createStopPromise = () => {
-    if (stopFinalizePromiseRef.current?.promise) {
-      return stopFinalizePromiseRef.current.promise;
-    }
+    if (stopFinalizePromiseRef.current?.promise) return stopFinalizePromiseRef.current.promise;
+
     let resolve, reject;
     const promise = new Promise((r, j) => {
       resolve = r;
@@ -272,6 +266,7 @@ export function RecordingProvider({ children }) {
     })();
 
     uploadsInFlightRef.current.add(uploadPromise);
+
     try {
       await uploadPromise;
     } finally {
@@ -303,6 +298,7 @@ export function RecordingProvider({ children }) {
       chunks.push(e.data);
     };
 
+    // ✅ onstop robusto: sempre tenta finalizar se stop geral foi pedido
     rec.onstop = async () => {
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
@@ -317,7 +313,6 @@ export function RecordingProvider({ children }) {
         }
       } catch (e) {
         console.error("rec.onstop error:", e);
-        // fallback: tenta finalizar mesmo assim para não ficar GRAVANDO
         try {
           await finalizeRecording();
         } catch (err2) {
@@ -418,9 +413,8 @@ export function RecordingProvider({ children }) {
     startTimerFn();
   };
 
-  // ✅ ATUALIZADO: stop agora aguarda finalize real (não retorna cedo)
+  // ✅ AGORA stopRecording aguarda finalizeRecording terminar (via promise)
   const stopRecording = async () => {
-    // se já está parando, espera o finalize pendente (se existir)
     if (stopAllRequestedRef.current) {
       if (stopFinalizePromiseRef.current?.promise) {
         await stopFinalizePromiseRef.current.promise;
@@ -429,7 +423,6 @@ export function RecordingProvider({ children }) {
     }
 
     stopAllRequestedRef.current = true;
-
     const stopPromise = createStopPromise();
 
     try {
@@ -439,7 +432,7 @@ export function RecordingProvider({ children }) {
 
       const rec = recorderRef.current;
 
-      // fallback: se o onstop não disparar por bug do browser
+      // fallback se o onstop não disparar por algum motivo
       clearTimeout(stopFallbackTimeoutRef.current);
       stopFallbackTimeoutRef.current = setTimeout(async () => {
         try {
@@ -450,17 +443,15 @@ export function RecordingProvider({ children }) {
       }, 2500);
 
       if (rec && rec.state === "recording") {
-        rec.stop(); // finalize será chamado no onstop
+        rec.stop(); // finalize roda no onstop
       } else {
         await finalizeRecording();
       }
 
-      // ✅ aqui só sai quando finalizeRecording terminar
-      await stopPromise;
+      await stopPromise; // ✅ espera finalização real
     } catch (e) {
       console.error("stopRecording error:", e);
       rejectStopPromise(e);
-      // tenta não deixar travado como GRAVANDO
       try {
         await finalizeRecording();
       } catch {}
@@ -471,7 +462,10 @@ export function RecordingProvider({ children }) {
   };
 
   const finalizeRecording = async () => {
-    if (!current?.reuniaoId) return;
+    if (!current?.reuniaoId) {
+      resolveStopPromise();
+      return;
+    }
     if (isProcessing) return;
 
     setIsProcessing(true);
@@ -486,13 +480,11 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      const { data: reuniaoAtual, error: selErr } = await supabase
+      const { data: reuniaoAtual } = await supabase
         .from("reunioes")
         .select("gravacao_status")
         .eq("id", reuniaoId)
         .single();
-
-      if (selErr) console.warn("finalize select:", selErr);
 
       if (reuniaoAtual?.gravacao_status !== "ERRO") {
         await supabase
@@ -515,7 +507,7 @@ export function RecordingProvider({ children }) {
       }
     } catch (e) {
       console.error("finalizeRecording error:", e);
-      // marca ERRO para nunca ficar "GRAVANDO" preso
+      // se falhar finalização, marca ERRO pra não ficar GRAVANDO infinito
       try {
         await supabase
           .from("reunioes")
@@ -525,9 +517,7 @@ export function RecordingProvider({ children }) {
             gravacao_fim: nowIso(),
           })
           .eq("id", reuniaoId);
-      } catch (e2) {
-        console.error("finalizeRecording: failed to mark ERRO:", e2);
-      }
+      } catch {}
     } finally {
       setIsProcessing(false);
 
@@ -546,11 +536,12 @@ export function RecordingProvider({ children }) {
       setCurrent(null);
       setTimer(0);
 
-      // ✅ libera quem clicou ENCERRAR
+      // ✅ libera o clique do ENCERRAR
       resolveStopPromise();
     }
   };
 
+  // Evita perder gravação ao fechar/refresh
   useEffect(() => {
     const onBeforeUnload = (e) => {
       if (!isRecording) return;
@@ -574,11 +565,7 @@ export function RecordingProvider({ children }) {
     [isRecording, isProcessing, timer, current]
   );
 
-  return (
-    <RecordingContext.Provider value={value}>
-      {children}
-    </RecordingContext.Provider>
-  );
+  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
 }
 
 export function useRecording() {
