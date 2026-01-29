@@ -2,13 +2,38 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
-import { Loader2, Cpu, CheckCircle, Monitor, Plus } from "lucide-react";
+import { Loader2, Cpu, CheckCircle, Monitor, Plus, Lock } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 
 function secondsToMMSS(s) {
   const mm = Math.floor(s / 60).toString().padStart(2, "0");
   const ss = Math.floor(s % 60).toString().padStart(2, "0");
   return `${mm}:${ss}`;
+}
+
+// tenta inferir “ATA pronta” sem depender de colunas fixas
+function hasAta(r) {
+  if (!r) return false;
+  const ataFields = [
+    r.ata_url,
+    r.ata_storage_path,
+    r.ata_path,
+    r.ata_texto,
+    r.ata_markdown,
+    r.ata_html,
+    r.ata_pdf_url,
+    r.ata_pdf_path,
+    r.ata_bucket,
+  ].filter(Boolean);
+
+  const ataStatus = String(r.ata_status || r.status_ata || "").toUpperCase();
+  const okByStatus = ["PRONTO", "OK", "GERADA", "FINALIZADA", "CONCLUIDA"].includes(ataStatus);
+
+  return ataFields.length > 0 || okByStatus;
+}
+
+function norm(s) {
+  return String(s || "").trim().toUpperCase();
 }
 
 export default function Copiloto() {
@@ -24,9 +49,10 @@ export default function Copiloto() {
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
   const [loadingAcoes, setLoadingAcoes] = useState(false);
 
-  // ✅ trava de stop + fallback visual
-  const [stopRequested, setStopRequested] = useState(false);
-  const [stopStartedAt, setStopStartedAt] = useState(null);
+  // modal admin
+  const [showUnlock, setShowUnlock] = useState(false);
+  const [senhaAdmin, setSenhaAdmin] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
 
   const isMountedRef = useRef(false);
   const safeSet = (fn) => {
@@ -52,19 +78,8 @@ export default function Copiloto() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada]);
 
-  // ✅ POLLING: enquanto gravando/finalizando, atualiza lista/status a cada 4s
-  useEffect(() => {
-    if (!isRecording && !isProcessing && !stopRequested) return;
-
-    const t = setInterval(() => {
-      fetchReunioes();
-    }, 4000);
-
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRecording, isProcessing, stopRequested, dataFiltro]);
-
   const fetchReunioes = async () => {
+    // ✅ mantém select * (não quebra se não existir coluna de ata)
     const { data, error } = await supabase
       .from("reunioes")
       .select("*")
@@ -76,10 +91,10 @@ export default function Copiloto() {
       console.error("fetchReunioes:", error);
       return;
     }
+
     safeSet(() => setReunioes(data || []));
 
-    // ✅ se estiver gravando, mantém a reunião selecionada alinhada com current
-    if ((isRecording || isProcessing || stopRequested) && current?.reuniaoId) {
+    if (isRecording && current?.reuniaoId) {
       const found = (data || []).find((r) => r.id === current.reuniaoId);
       if (found) safeSet(() => setSelecionada(found));
     }
@@ -121,9 +136,67 @@ export default function Copiloto() {
     safeSet(() => setNovaAcao({ descricao: "", responsavel: "" }));
   };
 
+  // ✅ regra de bloqueio: se já gravou / já processou / ATA pronta → não grava de novo
+  const isLocked = useMemo(() => {
+    return (r) => {
+      if (!r) return false;
+
+      // se já tem ata, considera finalizado
+      if (hasAta(r)) return true;
+
+      const st = norm(r.status);
+      const gs = norm(r.gravacao_status);
+
+      // status final
+      if (st === "REALIZADA") return true;
+
+      // estados que indicam que a gravação já concluiu ou está em pipeline
+      const doneOrPipeline = new Set([
+        "PRONTO_PROCESSAR",
+        "PROCESSANDO",
+        "PROCESSANDO_DRIVE",
+        "ENVIADO_DRIVE",
+        "PRONTO",
+      ]);
+
+      if (doneOrPipeline.has(gs)) return true;
+
+      return false;
+    };
+  }, []);
+
+  // badge “inteligente”: se gravacao_status = ERRO mas ATA existe → mostra REALIZADA
+  const badgeLabel = (r) => {
+    if (!r) return "Pendente";
+
+    if (hasAta(r)) return "REALIZADA";
+
+    const gs = norm(r.gravacao_status);
+    const st = norm(r.status);
+
+    if (gs) return gs;
+    if (st) return st;
+    return "PENDENTE";
+  };
+
+  const badgeStyle = (label) => {
+    const v = norm(label);
+    if (v === "GRAVANDO") return "bg-red-600/30 text-red-200 border border-red-500/30";
+    if (v === "ERRO") return "bg-red-900/40 text-red-200 border border-red-500/30";
+    if (v === "REALIZADA") return "bg-green-600/20 text-green-200 border border-green-500/30";
+    if (v.includes("PROCESS")) return "bg-blue-600/20 text-blue-200 border border-blue-500/30";
+    if (v.includes("PRONTO")) return "bg-emerald-600/20 text-emerald-200 border border-emerald-500/30";
+    return "bg-slate-700 text-slate-100 border border-slate-600";
+  };
+
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
-    if (isRecording || isProcessing || stopRequested) return;
+    if (isRecording) return;
+
+    if (isLocked(selecionada)) {
+      setShowUnlock(true);
+      return;
+    }
 
     try {
       await startRecording({
@@ -139,30 +212,87 @@ export default function Copiloto() {
   };
 
   const onStop = async () => {
-    if (stopRequested) return;
-
     try {
-      setStopRequested(true);
-      setStopStartedAt(Date.now());
-
-      // ✅ aguarda o stop real do contexto
       await stopRecording();
       await fetchReunioes();
     } catch (e) {
       console.error("stopRecording (Copiloto):", e);
-      alert("Erro ao encerrar a gravação. Veja o console/Render logs.");
-    } finally {
-      // ✅ nunca deixa a UI “sem botão”
-      setStopRequested(false);
-      setStopStartedAt(null);
+      alert("Erro ao encerrar a gravação.");
     }
   };
 
-  // ✅ fallback: se ficar muito tempo finalizando, avisa visualmente
-  const finalizandoHaMuitoTempo = useMemo(() => {
-    if (!stopStartedAt) return false;
-    return Date.now() - stopStartedAt > 30000; // 30s
-  }, [stopStartedAt]);
+  // ===== ADMIN UNLOCK =====
+  function getLoginSalvo() {
+    return (
+      localStorage.getItem("inove_login") ||
+      sessionStorage.getItem("inove_login") ||
+      localStorage.getItem("login") ||
+      sessionStorage.getItem("login") ||
+      ""
+    );
+  }
+
+  async function validarAdmin(senhaDigitada) {
+    const login = getLoginSalvo();
+    if (!login) return false;
+
+    const { data, error } = await supabase
+      .from("usuarios_aprovadores")
+      .select("id, nivel, ativo, login")
+      .eq("login", login)
+      .eq("senha", senhaDigitada)
+      .eq("ativo", true)
+      .maybeSingle();
+
+    if (error) return false;
+    return String(data?.nivel || "").toLowerCase() === "administrador";
+  }
+
+  // ✅ liberação sem mexer no schema:
+  // volta a reunião para regravar (limpa status de gravação/pipeline)
+  async function liberarRegravacao(reuniaoId) {
+    const login = getLoginSalvo() || "ADMIN";
+
+    const payload = {
+      // deixa pronto para nova gravação
+      status: "Pendente",
+      gravacao_status: null,
+      gravacao_erro: `LIBERADO PARA REGRAVAR por ${login} em ${new Date().toISOString()}`,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from("reunioes").update(payload).eq("id", reuniaoId);
+    if (error) throw error;
+  }
+
+  const onConfirmUnlock = async () => {
+    if (!selecionada?.id) return;
+    if (!senhaAdmin) return;
+
+    setUnlocking(true);
+    try {
+      const ok = await validarAdmin(senhaAdmin);
+      if (!ok) {
+        alert("Senha inválida ou usuário não é Administrador.");
+        return;
+      }
+
+      await liberarRegravacao(selecionada.id);
+
+      setShowUnlock(false);
+      setSenhaAdmin("");
+      await fetchReunioes();
+      alert("Regravação liberada. Agora você pode iniciar novamente.");
+    } catch (e) {
+      console.error("unlock error:", e);
+      alert("Erro ao liberar regravação.");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const reunioesFiltradas = (reunioes || [])
+    .filter((r) => (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase()));
 
   return (
     <Layout>
@@ -189,28 +319,42 @@ export default function Copiloto() {
           </div>
 
           <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto mb-6 custom-scrollbar">
-            {(reunioes || [])
-              .filter((r) =>
-                (r.titulo || "").toLowerCase().includes((busca || "").toLowerCase())
-              )
-              .map((r) => (
+            {reunioesFiltradas.map((r) => {
+              const lbl = badgeLabel(r);
+              const locked = isLocked(r);
+
+              return (
                 <div
                   key={r.id}
-                  onClick={() => !isRecording && !isProcessing && !stopRequested && setSelecionada(r)}
+                  onClick={() => !isRecording && setSelecionada(r)}
                   className={`p-4 border-b border-slate-800 cursor-pointer ${
                     selecionada?.id === r.id
                       ? "bg-blue-600/10 border-l-4 border-l-blue-500"
                       : "hover:bg-slate-800"
-                  } ${(isRecording || isProcessing || stopRequested) ? "opacity-80" : ""}`}
+                  } ${isRecording ? "opacity-80" : ""}`}
                 >
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-sm">{r.titulo}</span>
-                    <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold uppercase">
-                      {r.gravacao_status || r.status || "Pendente"}
+                  <div className="flex justify-between items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-bold text-sm truncate">{r.titulo}</span>
+                      {locked && (
+                        <span className="text-[10px] px-2 py-1 rounded font-black uppercase bg-slate-800 border border-slate-700 text-slate-200 flex items-center gap-1">
+                          <Lock size={12} /> BLOQUEADO
+                        </span>
+                      )}
+                    </div>
+
+                    <span
+                      className={`text-[10px] px-2 py-1 rounded font-black uppercase whitespace-nowrap ${badgeStyle(
+                        lbl
+                      )}`}
+                      title={r.gravacao_erro || ""}
+                    >
+                      {lbl}
                     </span>
                   </div>
                 </div>
-              ))}
+              );
+            })}
           </div>
 
           {/* CONTROLES */}
@@ -230,23 +374,18 @@ export default function Copiloto() {
 
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">Tempo de Sessão</p>
-                <p className="text-2xl font-mono font-bold leading-none">{secondsToMMSS(timer)}</p>
+                <p className="text-2xl font-mono font-bold leading-none">
+                  {secondsToMMSS(timer)}
+                </p>
                 <p className="text-[10px] text-slate-400 mt-1">
                   {isRecording && current?.reuniaoTitulo
                     ? `Gravando: ${current.reuniaoTitulo}`
                     : "Pronto para gravar"}
                 </p>
-
-                {(isProcessing || stopRequested) && finalizandoHaMuitoTempo && (
-                  <p className="text-[10px] text-amber-300 mt-1">
-                    Finalização demorando… verifique logs do Render (ou a rede).
-                  </p>
-                )}
               </div>
             </div>
 
-            {/* ✅ nunca “some”: sempre cai em um desses estados */}
-            {(isProcessing || stopRequested) ? (
+            {isProcessing ? (
               <div className="flex items-center gap-2 text-blue-400 font-bold animate-pulse">
                 <Loader2 className="animate-spin" /> FINALIZANDO...
               </div>
@@ -324,6 +463,48 @@ export default function Copiloto() {
             )}
           </div>
         </div>
+
+        {/* MODAL: LIBERAÇÃO ADMIN */}
+        {showUnlock && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div className="w-[440px] bg-slate-900 border border-slate-700 rounded-2xl p-6">
+              <h3 className="text-lg font-black text-white">Liberação de Regravação</h3>
+              <p className="text-xs text-slate-400 mt-2">
+                Esta reunião já foi gravada/processada (ou a Ata já existe). Para gravar novamente,
+                confirme a <b>senha do Administrador</b>.
+              </p>
+
+              <input
+                type="password"
+                className="w-full mt-4 bg-slate-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 ring-blue-500"
+                placeholder="Senha do Administrador"
+                value={senhaAdmin}
+                onChange={(e) => setSenhaAdmin(e.target.value)}
+              />
+
+              <div className="flex gap-2 mt-5 justify-end">
+                <button
+                  onClick={() => {
+                    setShowUnlock(false);
+                    setSenhaAdmin("");
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-700"
+                  disabled={unlocking}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  onClick={onConfirmUnlock}
+                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-500 disabled:opacity-40"
+                  disabled={unlocking || !senhaAdmin}
+                >
+                  {unlocking ? "Liberando..." : "Liberar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );
