@@ -189,20 +189,23 @@ export default function CentralReunioes() {
     // ✅ IMPORTANTE:
     // - sempre preencher tipo_reuniao_legacy (NOT NULL)
     // - NÃO enviar horario_fim (pra não cair no erro "timestamp with time zone: 09:15")
+
     const dados = {
       titulo: formData.titulo,
       data_hora: dataHoraIso,
       tipo_reuniao_id: formData.tipo_reuniao_id || null,
-      tipo_reuniao_legacy: tipoNome,
-      horario_inicio: formData.hora_inicio,
+      tipo_reuniao_legacy: tipoNome, // NOT NULL
+
+  // ✅ NÃO envia horario_inicio nem horario_fim (evita erro de tipo no banco)
       duracao_segundos,
+
       cor: formData.cor,
       responsavel: formData.responsavel,
       ata: formData.ata,
       status: formData.status,
       area_id: 4,
     };
-
+    
     try {
       if (editingReuniao) {
         const aplicar = window.confirm(
