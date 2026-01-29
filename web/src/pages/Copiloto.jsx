@@ -64,6 +64,9 @@ export default function Copiloto() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
 
+  // ✅ banner quando a aba estiver oculta durante gravação
+  const [isTabHidden, setIsTabHidden] = useState(false);
+
   // refs (media)
   const recorderRef = useRef(null);
   const mixedStreamRef = useRef(null);
@@ -143,9 +146,13 @@ export default function Copiloto() {
   }, [selecionada]);
 
   // ✅ AJUSTE: trocar de aba NÃO encerra gravação (mantém botão ENCERRAR)
+  // ✅ + Banner quando a aba estiver oculta
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.hidden && isRecording) {
+      const hidden = !!document.hidden;
+      setIsTabHidden(hidden);
+
+      if (hidden && isRecording) {
         console.warn(
           "Aba ficou oculta. Mantendo gravação ativa (não encerrando automaticamente)."
         );
@@ -153,7 +160,7 @@ export default function Copiloto() {
       }
     };
 
-    // ✅ pagehide pode acontecer em refresh/navegação; não encerrar automaticamente
+    // pagehide pode acontecer em refresh/navegação; não encerrar automaticamente
     const onPageHide = () => {
       if (isRecording) {
         console.warn("pagehide detectado. Mantendo gravação ativa.");
@@ -161,12 +168,15 @@ export default function Copiloto() {
       }
     };
 
-    // ✅ Evita o usuário fechar/atualizar e perder controle sem perceber
+    // Evita fechar/atualizar sem perceber
     const onBeforeUnload = (e) => {
       if (!isRecording) return;
       e.preventDefault();
       e.returnValue = "";
     };
+
+    // inicializa estado
+    setIsTabHidden(!!document.hidden);
 
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", onPageHide);
@@ -764,6 +774,16 @@ export default function Copiloto() {
    */
   return (
     <Layout>
+      {/* ✅ Banner: gravação ativa em segundo plano */}
+      {isRecording && isTabHidden && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999]">
+          <div className="bg-amber-500/20 border border-amber-400/40 text-amber-200 px-4 py-3 rounded-2xl text-xs font-bold backdrop-blur">
+            ⚠️ Gravação ativa em segundo plano — volte para esta aba para
+            encerrar com segurança.
+          </div>
+        </div>
+      )}
+
       <div className="h-screen bg-[#0f172a] text-white flex overflow-hidden">
         {/* COLUNA ESQUERDA */}
         <div className="w-7/12 flex flex-col p-6 border-r border-slate-800">
