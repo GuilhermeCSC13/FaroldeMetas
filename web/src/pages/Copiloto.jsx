@@ -3,49 +3,22 @@ import React, { useState, useEffect, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { Loader2, Cpu, CheckCircle, Monitor, Plus } from "lucide-react";
+import { useRecording } from "../context/RecordingContext"; // ✅ NOVO
 
 /**
- * CONFIG
+ * Helpers (mantive somente os de UI)
  */
-const STORAGE_BUCKET = "gravacoes"; // bucket do Supabase Storage
-const SEGMENT_MS = 5 * 60 * 1000; // 5 minutos por arquivo (segmento tocável)
-const MIME_TYPE_PRIMARY = "video/webm;codecs=vp8,opus";
-const MIME_TYPE_FALLBACK = "video/webm";
-
-/**
- * Helpers
- */
-function nowIso() {
-  return new Date().toISOString();
-}
-function safeFilePart(n) {
-  return String(n).padStart(6, "0");
-}
 function secondsToMMSS(s) {
   const mm = Math.floor(s / 60).toString().padStart(2, "0");
   const ss = Math.floor(s % 60).toString().padStart(2, "0");
   return `${mm}:${ss}`;
 }
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
-  let lastErr;
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await fn(attempt);
-    } catch (e) {
-      lastErr = e;
-      if (attempt < retries) {
-        const backoff = baseDelayMs * Math.pow(2, attempt - 1);
-        await sleep(backoff);
-      }
-    }
-  }
-  throw lastErr;
-}
 
 export default function Copiloto() {
+  // ✅ gravação global (não desmonta ao trocar de rota)
+  const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
+    useRecording();
+
   // UI / filtros
   const [dataFiltro, setDataFiltro] = useState(
     new Date().toISOString().split("T")[0]
@@ -59,73 +32,16 @@ export default function Copiloto() {
   const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
   const [loadingAcoes, setLoadingAcoes] = useState(false);
 
-  // gravação
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [timer, setTimer] = useState(0);
-
-  // ✅ banner quando a aba estiver oculta durante gravação
-  const [isTabHidden, setIsTabHidden] = useState(false);
-
-  // refs (media)
-  const recorderRef = useRef(null);
-  const mixedStreamRef = useRef(null);
-  const displayStreamRef = useRef(null);
-  const micStreamRef = useRef(null);
-  const audioCtxRef = useRef(null);
-
-  // temporizadores
-  const startTimeRef = useRef(null);
-  const timerRef = useRef(null);
-  const segmentIntervalRef = useRef(null);
-
-  // sessão / partes
-  const sessionIdRef = useRef(null);
-  const partNumberRef = useRef(0);
-
-  // flags
-  const stopAllRequestedRef = useRef(false);
-  const rotatingRef = useRef(false);
-  const lastErrorRef = useRef(null);
-
-  // fila de upload (para não travar encoder/UI)
-  const uploadQueueRef = useRef([]); // items: { blob, partNumber }
-  const uploadWorkerRunningRef = useRef(false);
-  const uploadsInFlightRef = useRef(new Set()); // promises
-  const queueDrainPromiseRef = useRef(null);
-
-  // ✅ blindagem: evita setState depois que o componente desmonta
+  // refs (para evitar setState depois de desmontar)
   const isMountedRef = useRef(false);
-  const safeSet = (setter) => {
-    if (isMountedRef.current) setter();
+  const safeSet = (fn) => {
+    if (isMountedRef.current) fn();
   };
 
-  /**
-   * Data fetch
-   */
   useEffect(() => {
     isMountedRef.current = true;
-
     fetchReunioes();
-
     return () => {
-      // ✅ AO SAIR DA TELA (trocar rota/aba do Farol), encerra com segurança
-      // fire-and-forget (cleanup não pode await)
-      try {
-        if (
-          (recorderRef.current && recorderRef.current.state === "recording") ||
-          stopAllRequestedRef.current === false
-        ) {
-          // pede stop geral (vai tentar finalizar e subir o que der)
-          safeStopRecording();
-        }
-      } catch (e) {
-        // fallback bruto: para tracks pra não ficar preso
-        cleanupMedia();
-      }
-
-      clearInterval(timerRef.current);
-      clearInterval(segmentIntervalRef.current);
       isMountedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,10 +49,6 @@ export default function Copiloto() {
 
   useEffect(() => {
     fetchReunioes();
-    return () => {
-      clearInterval(timerRef.current);
-      clearInterval(segmentIntervalRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataFiltro]);
 
@@ -144,50 +56,6 @@ export default function Copiloto() {
     if (selecionada) fetchAcoes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada]);
-
-  // ✅ AJUSTE: trocar de aba NÃO encerra gravação (mantém botão ENCERRAR)
-  // ✅ + Banner quando a aba estiver oculta
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      const hidden = !!document.hidden;
-      setIsTabHidden(hidden);
-
-      if (hidden && isRecording) {
-        console.warn(
-          "Aba ficou oculta. Mantendo gravação ativa (não encerrando automaticamente)."
-        );
-        // ❌ não chama safeStopRecording()
-      }
-    };
-
-    // pagehide pode acontecer em refresh/navegação; não encerrar automaticamente
-    const onPageHide = () => {
-      if (isRecording) {
-        console.warn("pagehide detectado. Mantendo gravação ativa.");
-        // ❌ não chama safeStopRecording()
-      }
-    };
-
-    // Evita fechar/atualizar sem perceber
-    const onBeforeUnload = (e) => {
-      if (!isRecording) return;
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    // inicializa estado
-    setIsTabHidden(!!document.hidden);
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", onPageHide);
-    window.addEventListener("beforeunload", onBeforeUnload);
-
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pagehide", onPageHide);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
-  }, [isRecording]);
 
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -202,9 +70,17 @@ export default function Copiloto() {
       return;
     }
     safeSet(() => setReunioes(data || []));
+
+    // Se estiver gravando e a reunião atual não estiver selecionada, tenta refletir na UI
+    if (isRecording && current?.reuniaoId) {
+      const found = (data || []).find((r) => r.id === current.reuniaoId);
+      if (found) safeSet(() => setSelecionada(found));
+    }
   };
 
   const fetchAcoes = async () => {
+    if (!selecionada?.id) return;
+
     safeSet(() => setLoadingAcoes(true));
     const { data, error } = await supabase
       .from("acoes")
@@ -218,6 +94,7 @@ export default function Copiloto() {
   };
 
   const salvarAcao = async () => {
+    if (!selecionada?.id) return;
     if (!novaAcao.descricao?.trim()) return;
 
     const payload = {
@@ -226,564 +103,47 @@ export default function Copiloto() {
       status: "Aberta",
     };
 
-    const { data, error } = await supabase
-      .from("acoes")
-      .insert([payload])
-      .select();
+    const { data, error } = await supabase.from("acoes").insert([payload]).select();
 
     if (error) {
       console.error("salvarAcao:", error);
       return;
     }
-    safeSet(() => setAcoes([data[0], ...acoes]));
+
+    safeSet(() => setAcoes([data?.[0], ...(acoes || [])].filter(Boolean)));
     safeSet(() => setNovaAcao({ descricao: "", responsavel: "" }));
   };
 
-  /**
-   * Timer
-   */
-  const startTimer = () => {
-    clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (!startTimeRef.current) return;
-      safeSet(() =>
-        setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000))
-      );
-    }, 1000);
-  };
-  const stopTimer = () => clearInterval(timerRef.current);
-
-  /**
-   * Storage path builder
-   */
-  const buildPartPath = (reuniaoId, sessionId, partNumber) => {
-    return `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(
-      partNumber
-    )}.webm`;
-  };
-
-  /**
-   * >>> Drive Queue Job (apenas fila; não muda gravacao_status)
-   */
-  const enqueueDriveJob = async () => {
-    if (!selecionada?.id) return;
-
-    const { data: r, error: e1 } = await supabase
-      .from("reunioes")
-      .select("id, gravacao_bucket, gravacao_prefix")
-      .eq("id", selecionada.id)
-      .single();
-
-    if (e1) throw e1;
-
-    const prefix = String(r?.gravacao_prefix || "").trim();
-
-    if (!prefix.startsWith(`reunioes/${selecionada.id}/sess_`)) {
-      throw new Error(
-        `Prefix inválido: "${prefix}". Esperado: reunioes/${selecionada.id}/sess_<uuid>/`
-      );
-    }
-
-    const { error: e2 } = await supabase.from("drive_upload_queue").insert([
-      {
-        reuniao_id: selecionada.id,
-        status: "PENDENTE",
-        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
-        storage_prefix: prefix,
-        last_error: null,
-      },
-    ]);
-
-    if (e2) throw e2;
-
-    await supabase
-      .from("reunioes")
-      .update({ updated_at: nowIso() })
-      .eq("id", selecionada.id);
-  };
-
-  /**
-   * >>> Compile Queue Job (FILA para compilar vídeo + gerar ATA IA; não muda gravacao_status)
-   */
-  const enqueueCompileJob = async () => {
-    if (!selecionada?.id) return;
-
-    const { data: r, error: e1 } = await supabase
-      .from("reunioes")
-      .select("id, gravacao_bucket, gravacao_prefix")
-      .eq("id", selecionada.id)
-      .single();
-
-    if (e1) throw e1;
-
-    const prefix = String(r?.gravacao_prefix || "").trim();
-
-    if (!prefix.startsWith(`reunioes/${selecionada.id}/sess_`)) {
-      throw new Error(
-        `Prefix inválido: "${prefix}". Esperado: reunioes/${selecionada.id}/sess_<uuid>/`
-      );
-    }
-
-    const { error: e2 } = await supabase.from("recording_compile_queue").insert([
-      {
-        reuniao_id: selecionada.id,
-        status: "PENDENTE",
-        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
-        storage_prefix: prefix,
-        tentativas: 0,
-        last_error: null,
-      },
-    ]);
-
-    if (e2) throw e2;
-
-    await supabase
-      .from("reunioes")
-      .update({ updated_at: nowIso() })
-      .eq("id", selecionada.id);
-  };
-
-  /**
-   * Upload (segmento) + metadata
-   */
-  const uploadPart = async (blob, partNumber) => {
-    if (!selecionada?.id) return;
-    if (!sessionIdRef.current) return;
-
-    const reuniaoId = selecionada.id;
-    const sessionId = sessionIdRef.current;
-
-    const path = buildPartPath(reuniaoId, sessionId, partNumber);
-
-    const uploadPromise = (async () => {
-      await withRetry(async () => {
-        const { error: upErr } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .upload(path, blob, {
-            contentType: "video/webm",
-            cacheControl: "3600",
-            upsert: false,
-          });
-        if (upErr) throw upErr;
-      });
-
-      await withRetry(async () => {
-        const { error: insErr } = await supabase
-          .from("reuniao_gravacao_partes")
-          .insert([
-            {
-              reuniao_id: reuniaoId,
-              session_id: sessionId,
-              part_number: partNumber,
-              storage_bucket: STORAGE_BUCKET,
-              storage_path: path,
-              bytes: blob.size,
-              status: "UPLOADED",
-            },
-          ]);
-        if (insErr) throw insErr;
-      });
-    })();
-
-    uploadsInFlightRef.current.add(uploadPromise);
-
-    try {
-      await uploadPromise;
-    } catch (e) {
-      console.error("uploadPart error:", e);
-      lastErrorRef.current = e;
-
-      await supabase
-        .from("reunioes")
-        .update({
-          gravacao_status: "ERRO",
-          gravacao_erro: String(e?.message || e),
-          updated_at: nowIso(),
-        })
-        .eq("id", reuniaoId);
-
-      await safeStopRecording();
-    } finally {
-      uploadsInFlightRef.current.delete(uploadPromise);
-    }
-  };
-
-  /**
-   * Queue worker: processa uploads sequencialmente (sem travar o MediaRecorder)
-   */
-  const runUploadWorker = async () => {
-    if (uploadWorkerRunningRef.current) return;
-    uploadWorkerRunningRef.current = true;
-
-    try {
-      while (uploadQueueRef.current.length > 0) {
-        const item = uploadQueueRef.current.shift();
-        if (!item) continue;
-        await uploadPart(item.blob, item.partNumber);
-      }
-    } finally {
-      uploadWorkerRunningRef.current = false;
-      if (
-        queueDrainPromiseRef.current &&
-        uploadQueueRef.current.length === 0 &&
-        uploadsInFlightRef.current.size === 0
-      ) {
-        queueDrainPromiseRef.current.resolve?.();
-        queueDrainPromiseRef.current = null;
-      }
-    }
-  };
-
-  const enqueueUpload = (blob, partNumber) => {
-    uploadQueueRef.current.push({ blob, partNumber });
-    runUploadWorker();
-  };
-
-  const waitQueueDrain = async () => {
-    if (
-      uploadQueueRef.current.length === 0 &&
-      uploadsInFlightRef.current.size === 0
-    ) {
-      return;
-    }
-
-    if (!queueDrainPromiseRef.current) {
-      let resolve;
-      const p = new Promise((r) => (resolve = r));
-      queueDrainPromiseRef.current = { promise: p, resolve };
-    }
-
-    runUploadWorker();
-    await queueDrainPromiseRef.current.promise;
-  };
-
-  /**
-   * Cria MediaRecorder para o stream já mixado
-   */
-  const createRecorder = () => {
-    const stream = mixedStreamRef.current;
-    if (!stream) throw new Error("Stream de gravação não inicializado.");
-
-    let options = {};
-    if (window.MediaRecorder?.isTypeSupported?.(MIME_TYPE_PRIMARY)) {
-      options = { mimeType: MIME_TYPE_PRIMARY };
-    } else if (window.MediaRecorder?.isTypeSupported?.(MIME_TYPE_FALLBACK)) {
-      options = { mimeType: MIME_TYPE_FALLBACK };
-    }
-
-    const recorder = new MediaRecorder(stream, options);
-    return recorder;
-  };
-
-  /**
-   * Inicia um segmento: recorder.start() e aguarda stop para gerar blob “tocável”
-   */
-  const startSegment = () => {
-    const rec = createRecorder();
-    recorderRef.current = rec;
-
-    const chunks = [];
-
-    rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      chunks.push(e.data);
-    };
-
-    rec.onerror = (e) => {
-      console.error("MediaRecorder error:", e);
-      lastErrorRef.current = e?.error || e;
-    };
-
-    rec.onstop = async () => {
-      const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
-      const partNumber = ++partNumberRef.current;
-
-      if (blob.size > 0) enqueueUpload(blob, partNumber);
-
-      if (!stopAllRequestedRef.current) {
-        try {
-          startSegment();
-        } catch (e) {
-          console.error("Falha ao iniciar novo segmento:", e);
-          lastErrorRef.current = e;
-          await safeStopRecording();
-        }
-      } else {
-        await finalizeRecording();
-      }
-    };
-
-    rec.start();
-  };
-
-  /**
-   * Rotaciona segmento a cada SEGMENT_MS
-   */
-  const rotateSegment = async () => {
-    if (rotatingRef.current) return;
-    rotatingRef.current = true;
-
-    try {
-      const rec = recorderRef.current;
-      if (!rec) return;
-      if (rec.state === "recording") {
-        rec.stop();
-      }
-    } catch (e) {
-      console.error("rotateSegment:", e);
-      lastErrorRef.current = e;
-      await safeStopRecording();
-    } finally {
-      rotatingRef.current = false;
-    }
-  };
-
-  /**
-   * Start recording: tela + áudio do mic (mix) e segmentação
-   */
-  const startRecording = async () => {
-    if (!selecionada) return alert("Selecione uma reunião.");
+  const onStart = async () => {
+    if (!selecionada?.id) return alert("Selecione uma reunião.");
     if (isRecording) return;
 
-    lastErrorRef.current = null;
-    stopAllRequestedRef.current = false;
-    rotatingRef.current = false;
-    safeSet(() => setTimer(0));
-
     try {
-      const sessionUuid =
-        crypto?.randomUUID?.() ||
-        `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const sessionId = `sess_${sessionUuid}`;
-
-      sessionIdRef.current = sessionId;
-      partNumberRef.current = 0;
-
-      await supabase
-        .from("reunioes")
-        .update({
-          status: "Em Andamento",
-          gravacao_status: "GRAVANDO",
-          gravacao_session_id: sessionId,
-          gravacao_bucket: STORAGE_BUCKET,
-          gravacao_prefix: `reunioes/${selecionada.id}/${sessionId}/`,
-          gravacao_inicio: nowIso(),
-          gravacao_erro: null,
-        })
-        .eq("id", selecionada.id);
-
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
-      const micStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+      await startRecording({
+        reuniaoId: selecionada.id,
+        reuniaoTitulo: selecionada.titulo,
       });
 
-      displayStreamRef.current = displayStream;
-      micStreamRef.current = micStream;
-
-      const videoTrack = displayStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.onended = () => {
-          console.warn("Tela encerrada pelo usuário (track ended).");
-          safeStopRecording();
-        };
-      }
-
-      const audioCtx = new AudioContext();
-      audioCtxRef.current = audioCtx;
-
-      const dest = audioCtx.createMediaStreamDestination();
-      audioCtx.createMediaStreamSource(micStream).connect(dest);
-
-      if (displayStream.getAudioTracks().length > 0) {
-        audioCtx.createMediaStreamSource(displayStream).connect(dest);
-      }
-
-      const mixedStream = new MediaStream([
-        ...displayStream.getVideoTracks(),
-        ...dest.stream.getAudioTracks(),
-      ]);
-      mixedStreamRef.current = mixedStream;
-
-      startSegment();
-
-      clearInterval(segmentIntervalRef.current);
-      segmentIntervalRef.current = setInterval(() => {
-        if (!stopAllRequestedRef.current) rotateSegment();
-      }, SEGMENT_MS);
-
-      startTimeRef.current = Date.now();
-      safeSet(() => setIsRecording(true));
-      startTimer();
-    } catch (e) {
-      console.error("startRecording:", e);
-      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
-
-      if (selecionada?.id) {
-        await supabase
-          .from("reunioes")
-          .update({
-            gravacao_status: "ERRO",
-            gravacao_erro: String(e?.message || e),
-          })
-          .eq("id", selecionada.id);
-      }
-
-      safeSet(() => setIsRecording(false));
-      stopTimer();
-      cleanupMedia();
-    }
-  };
-
-  /**
-   * Stop geral
-   */
-  const safeStopRecording = async () => {
-    if (stopAllRequestedRef.current) return;
-    stopAllRequestedRef.current = true;
-
-    try {
-      safeSet(() => setIsRecording(false));
-      stopTimer();
-      clearInterval(segmentIntervalRef.current);
-
-      const rec = recorderRef.current;
-      if (rec && rec.state === "recording") {
-        rec.stop();
-      } else {
-        await finalizeRecording();
-      }
-    } catch (e) {
-      console.error("safeStopRecording:", e);
-      await finalizeRecording();
-    }
-  };
-
-  const stopRecording = () => {
-    safeStopRecording();
-  };
-
-  /**
-   * Finalização
-   */
-  const finalizeRecording = async () => {
-    if (!selecionada?.id) return;
-    if (isProcessing) return;
-
-    safeSet(() => setIsProcessing(true));
-
-    try {
-      await waitQueueDrain();
-      await Promise.allSettled(Array.from(uploadsInFlightRef.current));
-
-      const duracao = startTimeRef.current
-        ? Math.floor((Date.now() - startTimeRef.current) / 1000)
-        : timer;
-
-      const { data: reuniaoAtual, error: selErr } = await supabase
-        .from("reunioes")
-        .select("gravacao_status")
-        .eq("id", selecionada.id)
-        .single();
-
-      if (selErr) console.warn("finalize select:", selErr);
-
-      const statusAtual = reuniaoAtual?.gravacao_status;
-
-      if (statusAtual !== "ERRO") {
-        await supabase
-          .from("reunioes")
-          .update({
-            status: "Realizada",
-            duracao_segundos: duracao,
-            gravacao_fim: nowIso(),
-            gravacao_status: "PRONTO_PROCESSAR",
-          })
-          .eq("id", selecionada.id);
-
-        await enqueueDriveJob();
-        await enqueueCompileJob();
-      } else {
-        await supabase
-          .from("reunioes")
-          .update({
-            duracao_segundos: duracao,
-            gravacao_fim: nowIso(),
-          })
-          .eq("id", selecionada.id);
-      }
-
+      // garante que a tela reflita a selecionada
       await fetchReunioes();
     } catch (e) {
-      console.error("finalizeRecording:", e);
-      if (selecionada?.id) {
-        await supabase
-          .from("reunioes")
-          .update({
-            gravacao_status: "ERRO",
-            gravacao_erro: String(e?.message || e),
-          })
-          .eq("id", selecionada.id);
-      }
-    } finally {
-      safeSet(() => setIsProcessing(false));
-
-      cleanupMedia();
-
-      sessionIdRef.current = null;
-      partNumberRef.current = 0;
-      startTimeRef.current = null;
-      stopAllRequestedRef.current = false;
-      rotatingRef.current = false;
-
-      uploadQueueRef.current = [];
-      uploadsInFlightRef.current.clear();
-      queueDrainPromiseRef.current = null;
+      console.error("startRecording (Copiloto):", e);
+      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
     }
   };
 
-  /**
-   * Media cleanup
-   */
-  const cleanupMedia = () => {
+  const onStop = async () => {
     try {
-      recorderRef.current = null;
-
-      const ds = displayStreamRef.current;
-      if (ds) ds.getTracks().forEach((t) => t.stop());
-      displayStreamRef.current = null;
-
-      const ms = micStreamRef.current;
-      if (ms) ms.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-
-      mixedStreamRef.current = null;
-
-      const ac = audioCtxRef.current;
-      if (ac && ac.state !== "closed") ac.close();
-      audioCtxRef.current = null;
+      await stopRecording();
+      await fetchReunioes();
     } catch (e) {
-      console.warn("cleanupMedia:", e);
+      console.error("stopRecording (Copiloto):", e);
+      alert("Erro ao encerrar a gravação.");
     }
   };
 
-  /**
-   * UI
-   */
   return (
     <Layout>
-      {/* ✅ Banner: gravação ativa em segundo plano */}
-      {isRecording && isTabHidden && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999]">
-          <div className="bg-amber-500/20 border border-amber-400/40 text-amber-200 px-4 py-3 rounded-2xl text-xs font-bold backdrop-blur">
-            ⚠️ Gravação ativa em segundo plano — volte para esta aba para
-            encerrar com segurança.
-          </div>
-        </div>
-      )}
-
       <div className="h-screen bg-[#0f172a] text-white flex overflow-hidden">
         {/* COLUNA ESQUERDA */}
         <div className="w-7/12 flex flex-col p-6 border-r border-slate-800">
@@ -816,12 +176,12 @@ export default function Copiloto() {
               .map((r) => (
                 <div
                   key={r.id}
-                  onClick={() => !isRecording && setSelecionada(r)}
+                  onClick={() => !isRecording && setSelecionada(r)} // ✅ não troca reunião gravando
                   className={`p-4 border-b border-slate-800 cursor-pointer ${
                     selecionada?.id === r.id
                       ? "bg-blue-600/10 border-l-4 border-l-blue-500"
                       : "hover:bg-slate-800"
-                  }`}
+                  } ${isRecording ? "opacity-80" : ""}`}
                 >
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-sm">{r.titulo}</span>
@@ -858,7 +218,9 @@ export default function Copiloto() {
                   {secondsToMMSS(timer)}
                 </p>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Segmentos: {Math.max(partNumberRef.current, 0)} (a cada 5 min)
+                  {isRecording && current?.reuniaoTitulo
+                    ? `Gravando: ${current.reuniaoTitulo}`
+                    : "Pronto para gravar"}
                 </p>
               </div>
             </div>
@@ -869,14 +231,14 @@ export default function Copiloto() {
               </div>
             ) : isRecording ? (
               <button
-                onClick={stopRecording}
+                onClick={onStop}
                 className="bg-white text-slate-900 px-8 py-3 rounded-2xl font-black text-xs hover:bg-red-50 transition-all"
               >
                 ENCERRAR
               </button>
             ) : (
               <button
-                onClick={startRecording}
+                onClick={onStart}
                 disabled={!selecionada}
                 className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs hover:bg-blue-500 disabled:opacity-20 transition-all shadow-lg shadow-blue-900/40"
               >
@@ -913,7 +275,8 @@ export default function Copiloto() {
               />
               <button
                 onClick={salvarAcao}
-                className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500"
+                disabled={!selecionada || !novaAcao.descricao?.trim()}
+                className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500 disabled:opacity-30"
               >
                 <Plus size={20} />
               </button>
@@ -927,6 +290,10 @@ export default function Copiloto() {
 
             {loadingAcoes ? (
               <div className="text-slate-400 text-sm">Carregando ações...</div>
+            ) : (acoes || []).length === 0 ? (
+              <div className="text-slate-400 text-sm">
+                {selecionada ? "Nenhuma ação cadastrada ainda." : "Selecione uma reunião."}
+              </div>
             ) : (
               (acoes || []).map((a) => (
                 <div
