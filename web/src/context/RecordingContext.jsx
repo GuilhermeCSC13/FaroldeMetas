@@ -74,7 +74,6 @@ export function RecordingProvider({ children }) {
 
   // ✅ promise do stop aguardar finalização
   const stopFinalizePromiseRef = useRef(null); // { promise, resolve, reject }
-  const stopFallbackTimeoutRef = useRef(null);
 
   // ✅ evita finalize concorrente + garante idempotência
   const finalizeRunningRef = useRef(false);
@@ -261,6 +260,8 @@ export function RecordingProvider({ children }) {
       chunks.push(e.data);
     };
 
+    // ✅ onstop agora só fecha o blob e manda pra fila.
+    // ❌ NÃO finaliza aqui (não confiar no onstop)
     rec.onstop = async () => {
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
@@ -270,16 +271,9 @@ export function RecordingProvider({ children }) {
 
         if (!stopAllRequestedRef.current) {
           startSegment();
-        } else {
-          await finalizeRecording();
         }
       } catch (e) {
         console.error("rec.onstop error:", e);
-        try {
-          await finalizeRecording();
-        } catch (err2) {
-          console.error("finalize fallback error:", err2);
-        }
       }
     };
 
@@ -409,6 +403,7 @@ export function RecordingProvider({ children }) {
 
     const videoTrack = displayStream.getVideoTracks()[0];
     if (videoTrack) {
+      // se user parar compartilhamento, encerra com finalize forçado
       videoTrack.onended = () => stopRecording();
     }
 
@@ -440,12 +435,9 @@ export function RecordingProvider({ children }) {
     startTimerFn();
   };
 
-  // ✅ stop aguarda finalize REAL (e finalize não deixa GRAVANDO infinito)
+  // ✅ STOP DEFINITIVO: não depende de onstop
   const stopRecording = async () => {
-    if (stopAllRequestedRef.current) {
-      if (stopFinalizePromiseRef.current?.promise) await stopFinalizePromiseRef.current.promise;
-      return;
-    }
+    if (stopAllRequestedRef.current) return;
 
     stopAllRequestedRef.current = true;
     const stopPromise = createStopPromise();
@@ -457,20 +449,18 @@ export function RecordingProvider({ children }) {
 
       const rec = recorderRef.current;
 
-      clearTimeout(stopFallbackTimeoutRef.current);
-      stopFallbackTimeoutRef.current = setTimeout(async () => {
-        try {
-          await finalizeRecording();
-        } catch (e) {
-          console.error("stop fallback finalize error:", e);
+      // tenta parar o recorder, mas NÃO depende disso
+      try {
+        if (rec && rec.state === "recording") {
+          // não confiar no onstop para fluxo
+          rec.stop();
         }
-      }, 2500);
-
-      if (rec && rec.state === "recording") {
-        rec.stop();
-      } else {
-        await finalizeRecording();
+      } catch (e) {
+        console.warn("rec.stop falhou, seguindo para finalize:", e);
       }
+
+      // 🔥 finaliza sempre, independente do MediaRecorder
+      await finalizeRecording();
 
       await stopPromise;
     } catch (e) {
@@ -480,33 +470,27 @@ export function RecordingProvider({ children }) {
         await finalizeRecording();
       } catch {}
     } finally {
-      clearTimeout(stopFallbackTimeoutRef.current);
-      stopFallbackTimeoutRef.current = null;
-      // ✅ garantia extra: se por algum motivo a finalize não rodou, não deixa pendurado
-      resolveStopPromise();
+      resolveStopPromise(); // nunca deixa pendurado
     }
   };
 
   const finalizeRecording = async () => {
     const reuniaoId = current?.reuniaoId;
 
-    // ✅ sempre resolve a promise (mesmo sem reuniaoId)
     if (!reuniaoId) {
       resolveStopPromise();
       return;
     }
 
-    // ✅ garante idempotência / evita corrida
-    if (finalizeRunningRef.current) {
-      // se já está finalizando em paralelo, apenas aguarda o stopPromise do stopRecording
-      if (stopFinalizePromiseRef.current?.promise) await stopFinalizePromiseRef.current.promise;
-      return;
-    }
-
+    if (finalizeRunningRef.current) return;
     finalizeRunningRef.current = true;
 
     try {
       setIsProcessing(true);
+
+      // dá uma janela curta pra capturar o último chunk do onstop
+      // (se o onstop rodar, ele enfileira o blob)
+      await sleep(400);
 
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
@@ -515,7 +499,6 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      // ✅ UPDATE PRINCIPAL: com retry + erro explícito
       await withRetry(
         async () => {
           const { error: upErr } = await supabase
@@ -534,7 +517,7 @@ export function RecordingProvider({ children }) {
         { retries: 3, baseDelayMs: 700 }
       );
 
-      // ✅ valida que de fato saiu de GRAVANDO
+      // valida que saiu de GRAVANDO
       const { data: checkRow, error: checkErr } = await supabase
         .from("reunioes")
         .select("gravacao_status")
@@ -546,7 +529,6 @@ export function RecordingProvider({ children }) {
         throw new Error("Update não aplicou: gravacao_status permaneceu GRAVANDO.");
       }
 
-      // fila jobs (se falhar aqui, não volta pra GRAVANDO; marca ERRO)
       await enqueueDriveJob(reuniaoId);
       await enqueueCompileJob(reuniaoId);
     } catch (e) {
@@ -572,7 +554,6 @@ export function RecordingProvider({ children }) {
 
       finalizeRunningRef.current = false;
 
-      // ✅ SEMPRE resolve a promise do stop
       resolveStopPromise();
     }
   };
