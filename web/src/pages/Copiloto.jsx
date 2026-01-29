@@ -91,9 +91,43 @@ export default function Copiloto() {
   const uploadsInFlightRef = useRef(new Set()); // promises
   const queueDrainPromiseRef = useRef(null);
 
+  // ✅ blindagem: evita setState depois que o componente desmonta
+  const isMountedRef = useRef(false);
+  const safeSet = (setter) => {
+    if (isMountedRef.current) setter();
+  };
+
   /**
    * Data fetch
    */
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    fetchReunioes();
+
+    return () => {
+      // ✅ AO SAIR DA TELA (trocar rota/aba do Farol), encerra com segurança
+      // fire-and-forget (cleanup não pode await)
+      try {
+        if (
+          (recorderRef.current && recorderRef.current.state === "recording") ||
+          stopAllRequestedRef.current === false
+        ) {
+          // pede stop geral (vai tentar finalizar e subir o que der)
+          safeStopRecording();
+        }
+      } catch (e) {
+        // fallback bruto: para tracks pra não ficar preso
+        cleanupMedia();
+      }
+
+      clearInterval(timerRef.current);
+      clearInterval(segmentIntervalRef.current);
+      isMountedRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     fetchReunioes();
     return () => {
@@ -108,6 +142,42 @@ export default function Copiloto() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada]);
 
+  // ✅ Se o usuário trocar de aba do navegador / esconder a página, encerra.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden && isRecording) {
+        console.warn("Aba ficou oculta. Encerrando gravação para evitar travar.");
+        safeStopRecording();
+      }
+    };
+
+    // ✅ Se a página for “suspensa” (mobile) ou navegarem pra fora
+    const onPageHide = () => {
+      if (isRecording) {
+        console.warn("pagehide detectado. Encerrando gravação.");
+        safeStopRecording();
+      }
+    };
+
+    // ✅ Evita o usuário fechar/atualizar e perder controle sem perceber
+    const onBeforeUnload = (e) => {
+      if (!isRecording) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording]);
+
   const fetchReunioes = async () => {
     const { data, error } = await supabase
       .from("reunioes")
@@ -120,11 +190,11 @@ export default function Copiloto() {
       console.error("fetchReunioes:", error);
       return;
     }
-    setReunioes(data || []);
+    safeSet(() => setReunioes(data || []));
   };
 
   const fetchAcoes = async () => {
-    setLoadingAcoes(true);
+    safeSet(() => setLoadingAcoes(true));
     const { data, error } = await supabase
       .from("acoes")
       .select("*")
@@ -132,8 +202,8 @@ export default function Copiloto() {
       .order("created_at", { ascending: false });
 
     if (error) console.error("fetchAcoes:", error);
-    setAcoes(data || []);
-    setLoadingAcoes(false);
+    safeSet(() => setAcoes(data || []));
+    safeSet(() => setLoadingAcoes(false));
   };
 
   const salvarAcao = async () => {
@@ -154,8 +224,8 @@ export default function Copiloto() {
       console.error("salvarAcao:", error);
       return;
     }
-    setAcoes([data[0], ...acoes]);
-    setNovaAcao({ descricao: "", responsavel: "" });
+    safeSet(() => setAcoes([data[0], ...acoes]));
+    safeSet(() => setNovaAcao({ descricao: "", responsavel: "" }));
   };
 
   /**
@@ -165,7 +235,9 @@ export default function Copiloto() {
     clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       if (!startTimeRef.current) return;
-      setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      safeSet(() =>
+        setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000))
+      );
     }, 1000);
   };
   const stopTimer = () => clearInterval(timerRef.current);
@@ -181,10 +253,6 @@ export default function Copiloto() {
 
   /**
    * >>> Drive Queue Job (apenas fila; não muda gravacao_status)
-   * - Busca bucket/prefix da reunião (fonte de verdade)
-   * - Valida prefix esperado: reunioes/<reuniao_uuid>/sess_<uuid>/
-   * - Insere na fila SEM session_id (sua tabela não tem essa coluna)
-   * - NÃO altera gravacao_status (evita conflito com PRONTO_PROCESSAR / worker)
    */
   const enqueueDriveJob = async () => {
     if (!selecionada?.id) return;
@@ -217,7 +285,6 @@ export default function Copiloto() {
 
     if (e2) throw e2;
 
-    // mantém apenas "updated_at" para rastreio (sem trocar gravacao_status)
     await supabase
       .from("reunioes")
       .update({ updated_at: nowIso() })
@@ -259,7 +326,6 @@ export default function Copiloto() {
 
     if (e2) throw e2;
 
-    // rastreio sem mexer em gravacao_status
     await supabase
       .from("reunioes")
       .update({ updated_at: nowIso() })
@@ -325,7 +391,6 @@ export default function Copiloto() {
         })
         .eq("id", reuniaoId);
 
-      // Se falhar upload, pedimos stop geral para não seguir gravando “no vazio”
       await safeStopRecording();
     } finally {
       uploadsInFlightRef.current.delete(uploadPromise);
@@ -343,13 +408,10 @@ export default function Copiloto() {
       while (uploadQueueRef.current.length > 0) {
         const item = uploadQueueRef.current.shift();
         if (!item) continue;
-
-        // executa upload do segmento
         await uploadPart(item.blob, item.partNumber);
       }
     } finally {
       uploadWorkerRunningRef.current = false;
-      // se alguém estava aguardando dreno
       if (
         queueDrainPromiseRef.current &&
         uploadQueueRef.current.length === 0 &&
@@ -363,12 +425,10 @@ export default function Copiloto() {
 
   const enqueueUpload = (blob, partNumber) => {
     uploadQueueRef.current.push({ blob, partNumber });
-    // dispara worker async
     runUploadWorker();
   };
 
   const waitQueueDrain = async () => {
-    // já drenou?
     if (
       uploadQueueRef.current.length === 0 &&
       uploadsInFlightRef.current.size === 0
@@ -376,14 +436,12 @@ export default function Copiloto() {
       return;
     }
 
-    // cria promessa “drain”
     if (!queueDrainPromiseRef.current) {
       let resolve;
       const p = new Promise((r) => (resolve = r));
       queueDrainPromiseRef.current = { promise: p, resolve };
     }
 
-    // garante worker rodando
     runUploadWorker();
     await queueDrainPromiseRef.current.promise;
   };
@@ -426,16 +484,11 @@ export default function Copiloto() {
     };
 
     rec.onstop = async () => {
-      // gera arquivo completo do segmento
       const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
       const partNumber = ++partNumberRef.current;
 
-      // joga na fila (não await aqui)
-      if (blob.size > 0) {
-        enqueueUpload(blob, partNumber);
-      }
+      if (blob.size > 0) enqueueUpload(blob, partNumber);
 
-      // se não for stop geral, inicia próximo segmento imediatamente
       if (!stopAllRequestedRef.current) {
         try {
           startSegment();
@@ -445,12 +498,11 @@ export default function Copiloto() {
           await safeStopRecording();
         }
       } else {
-        // stop geral: finaliza depois
         await finalizeRecording();
       }
     };
 
-    rec.start(); // sem timeslice => segmento “fechado” fica tocável
+    rec.start();
   };
 
   /**
@@ -464,7 +516,7 @@ export default function Copiloto() {
       const rec = recorderRef.current;
       if (!rec) return;
       if (rec.state === "recording") {
-        rec.stop(); // onstop enfileira upload e inicia próximo (se não for stop geral)
+        rec.stop();
       }
     } catch (e) {
       console.error("rotateSegment:", e);
@@ -476,7 +528,7 @@ export default function Copiloto() {
   };
 
   /**
-   * Start recording: tela + áudio do mic (mix) e segmentação em arquivos tocáveis
+   * Start recording: tela + áudio do mic (mix) e segmentação
    */
   const startRecording = async () => {
     if (!selecionada) return alert("Selecione uma reunião.");
@@ -485,13 +537,12 @@ export default function Copiloto() {
     lastErrorRef.current = null;
     stopAllRequestedRef.current = false;
     rotatingRef.current = false;
-    setTimer(0);
+    safeSet(() => setTimer(0));
 
     try {
-      // blindagem simples caso ambiente não suporte randomUUID
       const sessionUuid =
-        (crypto?.randomUUID?.() ||
-          `${Date.now()}_${Math.random().toString(16).slice(2)}`);
+        crypto?.randomUUID?.() ||
+        `${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const sessionId = `sess_${sessionUuid}`;
 
       sessionIdRef.current = sessionId;
@@ -510,7 +561,6 @@ export default function Copiloto() {
         })
         .eq("id", selecionada.id);
 
-      // captura streams
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: true,
@@ -522,7 +572,6 @@ export default function Copiloto() {
       displayStreamRef.current = displayStream;
       micStreamRef.current = micStream;
 
-      // stop se usuário encerrar compartilhamento
       const videoTrack = displayStream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.onended = () => {
@@ -531,7 +580,6 @@ export default function Copiloto() {
         };
       }
 
-      // mix de áudio
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
 
@@ -548,17 +596,15 @@ export default function Copiloto() {
       ]);
       mixedStreamRef.current = mixedStream;
 
-      // inicia primeiro segmento
       startSegment();
 
-      // agenda rotação a cada 5 min
       clearInterval(segmentIntervalRef.current);
       segmentIntervalRef.current = setInterval(() => {
         if (!stopAllRequestedRef.current) rotateSegment();
       }, SEGMENT_MS);
 
       startTimeRef.current = Date.now();
-      setIsRecording(true);
+      safeSet(() => setIsRecording(true));
       startTimer();
     } catch (e) {
       console.error("startRecording:", e);
@@ -574,35 +620,33 @@ export default function Copiloto() {
           .eq("id", selecionada.id);
       }
 
-      setIsRecording(false);
+      safeSet(() => setIsRecording(false));
       stopTimer();
       cleanupMedia();
     }
   };
 
   /**
-   * Stop geral: para intervalo, pede stop do recorder atual e finaliza ao drenar fila
+   * Stop geral
    */
   const safeStopRecording = async () => {
     if (stopAllRequestedRef.current) return;
     stopAllRequestedRef.current = true;
 
     try {
-      setIsRecording(false);
+      safeSet(() => setIsRecording(false));
       stopTimer();
       clearInterval(segmentIntervalRef.current);
 
       const rec = recorderRef.current;
       if (rec && rec.state === "recording") {
-        rec.stop(); // vai cair em onstop => finalizeRecording()
+        rec.stop();
       } else {
         await finalizeRecording();
       }
     } catch (e) {
       console.error("safeStopRecording:", e);
       await finalizeRecording();
-    } finally {
-      // streams fecham no finalize (para evitar cortar audio/video antes do stop completar)
     }
   };
 
@@ -611,19 +655,15 @@ export default function Copiloto() {
   };
 
   /**
-   * Finalização: aguarda fila e uploads, marca PRONTO_PROCESSAR/ERRO e limpa mídia
-   * - Mantém PRONTO_PROCESSAR como status (não sobrescreve)
-   * - Cria fila no drive_upload_queue após finalizar
-   * - Cria fila no recording_compile_queue para compilar vídeo + gerar ATA IA em segundo plano
+   * Finalização
    */
   const finalizeRecording = async () => {
     if (!selecionada?.id) return;
     if (isProcessing) return;
 
-    setIsProcessing(true);
+    safeSet(() => setIsProcessing(true));
 
     try {
-      // aguarda uploads pendentes (fila + in-flight)
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
 
@@ -652,10 +692,7 @@ export default function Copiloto() {
           })
           .eq("id", selecionada.id);
 
-        // fila para Drive (se você usa)
         await enqueueDriveJob();
-
-        // >>> FILA para compilar vídeo + gerar ATA IA em segundo plano
         await enqueueCompileJob();
       } else {
         await supabase
@@ -680,9 +717,8 @@ export default function Copiloto() {
           .eq("id", selecionada.id);
       }
     } finally {
-      setIsProcessing(false);
+      safeSet(() => setIsProcessing(false));
 
-      // limpa mídia e refs
       cleanupMedia();
 
       sessionIdRef.current = null;
@@ -691,7 +727,6 @@ export default function Copiloto() {
       stopAllRequestedRef.current = false;
       rotatingRef.current = false;
 
-      // limpa queue
       uploadQueueRef.current = [];
       uploadsInFlightRef.current.clear();
       queueDrainPromiseRef.current = null;
