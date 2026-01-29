@@ -1,4 +1,3 @@
-// src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -38,10 +37,31 @@ function parseDataLocal(dataString) {
 
 function statusBadge(status) {
   const s = String(status || "").toLowerCase();
-  if (s.includes("realiz")) return { text: "✅", title: "Realizada" };
-  if (s.includes("nao") || s.includes("não") || s.includes("cancel"))
+  if (s.includes("realiz")) {
+    return { text: "✅", title: "Realizada" };
+  }
+  if (s.includes("nao") || s.includes("não") || s.includes("cancel")) {
     return { text: "✖", title: "Não realizada" };
+  }
   return { text: "●", title: "Agendada" };
+}
+
+// ✅ BLINDAGEM: remove qualquer "HH:MM" puro e chaves comuns de hora
+function sanitizeReuniaoPayload(payload) {
+  const clean = { ...payload };
+
+  delete clean.horario_fim;
+  delete clean.hora_fim;
+  delete clean.horario_inicio;
+  delete clean.hora_inicio;
+
+  for (const [k, v] of Object.entries(clean)) {
+    if (typeof v === "string" && /^\d{2}:\d{2}$/.test(v)) {
+      delete clean[k];
+    }
+  }
+
+  return clean;
 }
 
 export default function CentralReunioes() {
@@ -69,10 +89,12 @@ export default function CentralReunioes() {
 
   useEffect(() => {
     fetchTipos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     fetchReunioes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDate]);
 
   const fetchTipos = async () => {
@@ -163,27 +185,10 @@ export default function CentralReunioes() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // ✅ AJUSTE: validações mínimas para evitar "09:15" em data_hora
-    const dataStr = String(formData.data || "").trim();
-    const horaIni = String(formData.hora_inicio || "").trim();
-
-    if (!dataStr || !horaIni) {
-      alert("Informe data e hora de início.");
-      return;
-    }
-
-    // se por algum motivo DATA recebeu hora (bug de binding), bloqueia
-    if (/^\d{2}:\d{2}(:\d{2})?$/.test(dataStr)) {
-      alert(`ERRO: o campo DATA está com hora: "${dataStr}".`);
-      return;
-    }
-
-    // ✅ data_hora sempre ISO completo (timestamptz)
-    const dataHoraIso = new Date(`${dataStr}T${horaIni}:00`).toISOString();
-
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || null;
 
+    const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
     const duracao_segundos = calcDuracaoSegundos(
       formData.hora_inicio,
       formData.hora_fim
@@ -191,12 +196,16 @@ export default function CentralReunioes() {
 
     const dados = {
       titulo: formData.titulo,
-      data_hora: dataHoraIso, // ✅
+      data_hora: dataHoraIso,
       tipo_reuniao_id: formData.tipo_reuniao_id || null,
-      tipo_reuniao: tipoNome || "Geral", // se você adicionou a coluna, ok; se não, remova
-      horario_inicio: formData.hora_inicio,
-      horario_fim: formData.hora_fim,
-      duracao_segundos,
+      tipo_reuniao: tipoNome || "Geral",
+
+      // ⚠️ se sua tabela NÃO tem esses campos (ou são timestamptz), não pode mandar "09:15"
+      // mantemos no form/UI mas NÃO enviamos ao banco:
+      // horario_inicio: formData.hora_inicio,
+      // horario_fim: formData.hora_fim,
+
+      duracao_segundos, // se não existir, pode remover também
       cor: formData.cor,
       responsavel: formData.responsavel,
       ata: formData.ata,
@@ -204,21 +213,15 @@ export default function CentralReunioes() {
       area_id: 4,
     };
 
+    const dadosLimpos = sanitizeReuniaoPayload(dados);
+
     if (editingReuniao) {
       const aplicar = window.confirm(
         "Deseja aplicar as mudanças para reuniões futuras desta série?"
       );
-      const resp = await atualizarReuniao(editingReuniao.id, dados, aplicar);
-      if (resp?.error) {
-        alert(resp.error.message || JSON.stringify(resp.error));
-        return;
-      }
+      await atualizarReuniao(editingReuniao.id, dadosLimpos, aplicar);
     } else {
-      const resp = await salvarReuniao(dados, "unica");
-      if (resp?.error) {
-        alert(resp.error.message || JSON.stringify(resp.error));
-        return;
-      }
+      await salvarReuniao(dadosLimpos, "unica");
     }
 
     setIsModalOpen(false);
@@ -226,8 +229,11 @@ export default function CentralReunioes() {
   };
 
   const handleDelete = async () => {
-    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO)
+    if (
+      window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO
+    )
       return;
+
     await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
     setIsModalOpen(false);
     fetchReunioes();
@@ -240,7 +246,7 @@ export default function CentralReunioes() {
 
   const weekDays = eachDayOfInterval({
     start: startOfWeek(currentDate),
-    end: endOfWeek(currentDate),
+    end: endOfWeek(currentDate)),
   });
 
   const handleDragStart = (e, reuniao) => {
@@ -257,9 +263,7 @@ export default function CentralReunioes() {
     try {
       const dtOrig = parseDataLocal(draggingReuniao.data_hora);
       const hora = format(dtOrig, "HH:mm:ss");
-      const novaDataHora = new Date(
-        `${format(day, "yyyy-MM-dd")}T${hora}`
-      ).toISOString(); // ✅ garante ISO
+      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${hora}`;
 
       await supabase
         .from("reunioes")
@@ -289,9 +293,7 @@ export default function CentralReunioes() {
       <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">
-              Calendário Tático
-            </h1>
+            <h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1>
           </div>
           <div className="flex gap-2">
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
