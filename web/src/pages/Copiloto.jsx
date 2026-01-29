@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { Bot, Lock } from "lucide-react";
@@ -8,7 +8,17 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 /* =========================
    Helpers
 ========================= */
-const nowIso = () => new Date().toISOString();
+const hojeInicio = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+};
+
+const hojeFim = () => {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d.toISOString();
+};
 
 const toBR = (dt) =>
   dt ? new Date(dt).toLocaleString("pt-BR") : "-";
@@ -19,15 +29,17 @@ const toBR = (dt) =>
 export default function Copiloto() {
   const {
     isRecording,
-    isProcessing,
-    timer,
     startRecording,
     stopRecording,
-    current,
+    timer,
   } = useRecording();
+
+  const mounted = useRef(true);
 
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
+
+  const [aba, setAba] = useState("principal"); // principal | manual | acoes
 
   const [ataPrincipal, setAtaPrincipal] = useState("");
   const [ataManual, setAtaManual] = useState("");
@@ -39,17 +51,15 @@ export default function Copiloto() {
 
   const [acaoSelecionada, setAcaoSelecionada] = useState(null);
 
-  const [senhaAdm, setSenhaAdm] = useState("");
   const [showUnlock, setShowUnlock] = useState(false);
-
-  const mounted = useRef(true);
+  const [senhaAdm, setSenhaAdm] = useState("");
 
   /* =========================
      Load inicial
   ========================= */
   useEffect(() => {
     mounted.current = true;
-    fetchReunioes();
+    fetchReunioesDoDia();
     return () => (mounted.current = false);
   }, []);
 
@@ -60,13 +70,15 @@ export default function Copiloto() {
   }, [selecionada?.id]);
 
   /* =========================
-     Reuniões
+     Reuniões (SOMENTE DO DIA)
   ========================= */
-  const fetchReunioes = async () => {
+  const fetchReunioesDoDia = async () => {
     const { data } = await supabase
       .from("reunioes")
       .select("*")
-      .order("data_hora", { ascending: false });
+      .gte("data_hora", hojeInicio())
+      .lte("data_hora", hojeFim())
+      .order("data_hora");
 
     if (!mounted.current) return;
     setReunioes(data || []);
@@ -95,7 +107,7 @@ export default function Copiloto() {
       .eq("id", selecionada.id);
 
     setEditAtaManual(false);
-    fetchReunioes();
+    fetchReunioesDoDia();
   };
 
   /* =========================
@@ -104,7 +116,7 @@ export default function Copiloto() {
   const iniciar = async () => {
     if (!selecionada) return;
     await startRecording({ reuniaoId: selecionada.id });
-    fetchReunioes();
+    fetchReunioesDoDia();
   };
 
   const encerrar = async () => {
@@ -115,11 +127,11 @@ export default function Copiloto() {
       .update({ status: "Realizada" })
       .eq("id", selecionada.id);
 
-    fetchReunioes();
+    fetchReunioesDoDia();
   };
 
   /* =========================
-     Reabrir com senha ADM
+     Reabrir (ADM)
   ========================= */
   const validarSenhaAdm = async () => {
     const { data } = await supabase
@@ -139,14 +151,14 @@ export default function Copiloto() {
 
     setShowUnlock(false);
     setSenhaAdm("");
-    fetchReunioes();
+    fetchReunioesDoDia();
   };
 
   /* =========================
      Ações
   ========================= */
   const fetchAcoes = async (r) => {
-    const { data: acoesR } = await supabase
+    const { data: rAcoes } = await supabase
       .from("acoes")
       .select("*")
       .eq("reuniao_id", r.id);
@@ -180,7 +192,7 @@ export default function Copiloto() {
 
     if (!mounted.current) return;
 
-    setAcoesReuniao(acoesR || []);
+    setAcoesReuniao(rAcoes || []);
     setAcoesBacklog(backlog || []);
     setAcoesDesdeUltima(realizadas);
   };
@@ -191,129 +203,132 @@ export default function Copiloto() {
   return (
     <Layout>
       <div className="flex h-screen bg-[#f6f8fc]">
-        {/* ESQUERDA */}
-        <div className="w-[420px] bg-white border-r p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-blue-600 rounded-2xl text-white flex items-center justify-center">
-              <Bot size={20} />
+        {/* COLUNA ESQUERDA */}
+        <div className="w-[420px] bg-white border-r flex flex-col">
+          <div className="p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-blue-600 rounded-2xl text-white flex items-center justify-center">
+                <Bot size={20} />
+              </div>
+              <h1 className="font-black">Copiloto Tático</h1>
             </div>
-            <h1 className="font-black">Copiloto Tático</h1>
+
+            {reunioes.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => !isRecording && setSelecionada(r)}
+                className={`w-full p-4 text-left rounded-xl mb-2 ${
+                  selecionada?.id === r.id
+                    ? "bg-blue-50 border-l-4 border-blue-600"
+                    : "bg-white"
+                }`}
+              >
+                <div className="font-bold text-sm">{r.titulo}</div>
+                <div className="text-xs text-slate-500">
+                  {toBR(r.data_hora)}
+                </div>
+              </button>
+            ))}
           </div>
 
-          {reunioes.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => !isRecording && setSelecionada(r)}
-              className={`w-full p-4 text-left rounded-xl mb-2 ${
-                selecionada?.id === r.id
-                  ? "bg-blue-50 border-l-4 border-blue-600"
-                  : "bg-white"
-              }`}
-            >
-              <div className="font-bold text-sm">{r.titulo}</div>
-              <div className="text-xs text-slate-500">{toBR(r.data_hora)}</div>
-            </button>
-          ))}
+          {/* RODAPÉ FIXO */}
+          <div className="mt-auto p-5 border-t">
+            {isRecording ? (
+              <button
+                onClick={encerrar}
+                className="w-full bg-slate-900 text-white py-3 rounded-xl text-xs font-black"
+              >
+                Encerrar • {timer}
+              </button>
+            ) : selecionada?.status === "Realizada" ? (
+              <button
+                onClick={() => setShowUnlock(true)}
+                className="w-full flex items-center justify-center gap-2 text-xs font-bold text-red-600"
+              >
+                <Lock size={14} /> Reabrir (ADM)
+              </button>
+            ) : (
+              <button
+                onClick={iniciar}
+                disabled={!selecionada}
+                className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-black"
+              >
+                Iniciar Gravação
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* DIREITA */}
+        {/* COLUNA DIREITA */}
         <div className="flex-1 p-6 overflow-y-auto">
           {!selecionada ? (
-            <div>Selecione uma reunião</div>
+            <div>Selecione uma reunião do dia</div>
           ) : (
             <>
-              {/* CONTROLES */}
-              <div className="flex gap-3 mb-4">
-                {isRecording ? (
-                  <button
-                    onClick={encerrar}
-                    className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-black"
-                  >
-                    Encerrar
-                  </button>
-                ) : selecionada.status === "Realizada" ? (
-                  <button
-                    onClick={() => setShowUnlock(true)}
-                    className="flex items-center gap-2 text-xs font-bold text-red-600"
-                  >
-                    <Lock size={14} /> Reabrir (ADM)
-                  </button>
-                ) : (
-                  <button
-                    onClick={iniciar}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-                  >
-                    Iniciar
-                  </button>
-                )}
+              {/* ABAS */}
+              <div className="flex gap-2 mb-4">
+                <Tab label="Ata Principal" active={aba === "principal"} onClick={() => setAba("principal")} />
+                <Tab label="Ata Manual" active={aba === "manual"} onClick={() => setAba("manual")} />
+                <Tab label="Ações" active={aba === "acoes"} onClick={() => setAba("acoes")} />
               </div>
 
-              {/* ATA PRINCIPAL */}
-              <Section title="Ata Principal">
-                <pre className="whitespace-pre-wrap">{ataPrincipal || "—"}</pre>
-              </Section>
+              {aba === "principal" && (
+                <Section>
+                  <pre className="whitespace-pre-wrap">{ataPrincipal || "—"}</pre>
+                </Section>
+              )}
 
-              {/* ATA MANUAL */}
-              <Section title="Ata Manual">
-                {editAtaManual ? (
-                  <>
-                    <textarea
-                      className="w-full min-h-[200px] border rounded-xl p-3"
-                      value={ataManual}
-                      onChange={(e) => setAtaManual(e.target.value)}
-                    />
-                    <button
-                      onClick={salvarAtaManual}
-                      className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-                    >
-                      Salvar
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <pre className="whitespace-pre-wrap">
-                      {ataManual || "—"}
-                    </pre>
-                    <button
-                      onClick={() => setEditAtaManual(true)}
-                      className="text-xs text-blue-600 font-bold mt-2"
-                    >
-                      Editar
-                    </button>
-                  </>
-                )}
-              </Section>
+              {aba === "manual" && (
+                <Section>
+                  {editAtaManual ? (
+                    <>
+                      <textarea
+                        className="w-full min-h-[240px] border rounded-xl p-3"
+                        value={ataManual}
+                        onChange={(e) => setAtaManual(e.target.value)}
+                      />
+                      <button
+                        onClick={salvarAtaManual}
+                        className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
+                      >
+                        Salvar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <pre className="whitespace-pre-wrap">{ataManual || "—"}</pre>
+                      <button
+                        onClick={() => setEditAtaManual(true)}
+                        className="text-xs text-blue-600 font-bold mt-2"
+                      >
+                        Editar
+                      </button>
+                    </>
+                  )}
+                </Section>
+              )}
 
-              {/* AÇÕES */}
-              <Section title="Ações da reunião">
-                {acoesReuniao.map((a) => (
-                  <LinhaAcao
-                    key={a.id}
-                    acao={a}
-                    onClick={() => setAcaoSelecionada(a)}
-                  />
-                ))}
-              </Section>
+              {aba === "acoes" && (
+                <>
+                  <Section title="Ações da reunião">
+                    {acoesReuniao.map((a) => (
+                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
+                    ))}
+                  </Section>
 
-              <Section title="Pendências do tipo">
-                {acoesBacklog.map((a) => (
-                  <LinhaAcao
-                    key={a.id}
-                    acao={a}
-                    onClick={() => setAcaoSelecionada(a)}
-                  />
-                ))}
-              </Section>
+                  <Section title="Pendências do tipo">
+                    {acoesBacklog.map((a) => (
+                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
+                    ))}
+                  </Section>
 
-              <Section title="Realizadas desde a última reunião">
-                {acoesDesdeUltima.map((a) => (
-                  <LinhaAcao
-                    key={a.id}
-                    acao={a}
-                    onClick={() => setAcaoSelecionada(a)}
-                  />
-                ))}
-              </Section>
+                  <Section title="Concluídas desde a última reunião">
+                    {acoesDesdeUltima.map((a) => (
+                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
+                    ))}
+                  </Section>
+                </>
+              )}
             </>
           )}
         </div>
@@ -359,12 +374,12 @@ export default function Copiloto() {
 }
 
 /* =========================
-   Componentes simples
+   Componentes
 ========================= */
 function Section({ title, children }) {
   return (
     <div className="bg-white border rounded-2xl p-5 mb-4">
-      <div className="font-black text-sm mb-3">{title}</div>
+      {title && <div className="font-black text-sm mb-3">{title}</div>}
       {children}
     </div>
   );
@@ -383,3 +398,17 @@ function LinhaAcao({ acao, onClick }) {
     </button>
   );
 }
+
+function Tab({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 rounded-xl text-xs font-black ${
+        active ? "bg-blue-600 text-white" : "bg-white border"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
