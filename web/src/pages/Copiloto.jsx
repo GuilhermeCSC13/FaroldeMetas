@@ -1,24 +1,28 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
-import { Bot, Lock } from "lucide-react";
+import {
+  Loader2,
+  Cpu,
+  CheckCircle,
+  Monitor,
+  Plus,
+  Lock,
+  FileText,
+  StickyNote,
+  ListChecks,
+} from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 
 /* =========================
    Helpers
 ========================= */
-const hojeInicio = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
-};
-
-const hojeFim = () => {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
-};
+function secondsToMMSS(s) {
+  const mm = Math.floor(s / 60).toString().padStart(2, "0");
+  const ss = Math.floor(s % 60).toString().padStart(2, "0");
+  return `${mm}:${ss}`;
+}
 
 const toBR = (dt) =>
   dt ? new Date(dt).toLocaleString("pt-BR") : "-";
@@ -29,59 +33,81 @@ const toBR = (dt) =>
 export default function Copiloto() {
   const {
     isRecording,
+    isProcessing,
+    timer,
     startRecording,
     stopRecording,
-    timer,
+    current,
   } = useRecording();
 
-  const mounted = useRef(true);
-
+  const [dataFiltro, setDataFiltro] = useState(
+    new Date().toISOString().split("T")[0]
+  );
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
+  const [busca, setBusca] = useState("");
 
-  const [aba, setAba] = useState("principal"); // principal | manual | acoes
+  const [acoes, setAcoes] = useState([]);
+  const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
+  const [loadingAcoes, setLoadingAcoes] = useState(false);
 
   const [ataPrincipal, setAtaPrincipal] = useState("");
   const [ataManual, setAtaManual] = useState("");
   const [editAtaManual, setEditAtaManual] = useState(false);
 
-  const [acoesReuniao, setAcoesReuniao] = useState([]);
-  const [acoesBacklog, setAcoesBacklog] = useState([]);
-  const [acoesDesdeUltima, setAcoesDesdeUltima] = useState([]);
-
+  const [abaDireita, setAbaDireita] = useState("acoes"); // acoes | ata_principal | ata_manual
   const [acaoSelecionada, setAcaoSelecionada] = useState(null);
 
   const [showUnlock, setShowUnlock] = useState(false);
   const [senhaAdm, setSenhaAdm] = useState("");
 
+  const isMountedRef = useRef(false);
+  const safeSet = (fn) => {
+    if (isMountedRef.current) fn();
+  };
+
   /* =========================
-     Load inicial
+     Lifecycle
   ========================= */
   useEffect(() => {
-    mounted.current = true;
-    fetchReunioesDoDia();
-    return () => (mounted.current = false);
+    isMountedRef.current = true;
+    fetchReunioes();
+    return () => (isMountedRef.current = false);
   }, []);
 
   useEffect(() => {
-    if (!selecionada) return;
-    carregarAtas(selecionada);
-    fetchAcoes(selecionada);
+    fetchReunioes();
+  }, [dataFiltro]);
+
+  useEffect(() => {
+    if (selecionada) {
+      fetchAcoes();
+      carregarAtas(selecionada);
+    }
   }, [selecionada?.id]);
 
   /* =========================
-     Reuniões (SOMENTE DO DIA)
+     Reuniões
   ========================= */
-  const fetchReunioesDoDia = async () => {
-    const { data } = await supabase
+  const fetchReunioes = async () => {
+    const { data, error } = await supabase
       .from("reunioes")
       .select("*")
-      .gte("data_hora", hojeInicio())
-      .lte("data_hora", hojeFim())
-      .order("data_hora");
+      .gte("data_hora", `${dataFiltro}T00:00:00`)
+      .lte("data_hora", `${dataFiltro}T23:59:59`)
+      .order("data_hora", { ascending: true });
 
-    if (!mounted.current) return;
-    setReunioes(data || []);
+    if (error) {
+      console.error("fetchReunioes:", error);
+      return;
+    }
+
+    safeSet(() => setReunioes(data || []));
+
+    if (isRecording && current?.reuniaoId) {
+      const found = (data || []).find((r) => r.id === current.reuniaoId);
+      if (found) safeSet(() => setSelecionada(found));
+    }
   };
 
   /* =========================
@@ -107,31 +133,75 @@ export default function Copiloto() {
       .eq("id", selecionada.id);
 
     setEditAtaManual(false);
-    fetchReunioesDoDia();
+  };
+
+  /* =========================
+     Ações
+  ========================= */
+  const fetchAcoes = async () => {
+    if (!selecionada?.id) return;
+
+    safeSet(() => setLoadingAcoes(true));
+
+    const { data, error } = await supabase
+      .from("acoes")
+      .select("*")
+      .eq("reuniao_id", selecionada.id)
+      .order("created_at", { ascending: false });
+
+    if (error) console.error("fetchAcoes:", error);
+    safeSet(() => setAcoes(data || []));
+    safeSet(() => setLoadingAcoes(false));
+  };
+
+  const salvarAcao = async () => {
+    if (!selecionada?.id || !novaAcao.descricao?.trim()) return;
+
+    const payload = {
+      ...novaAcao,
+      reuniao_id: selecionada.id,
+      tipo_reuniao_id: selecionada.tipo_reuniao_id,
+      status: "Aberta",
+    };
+
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert([payload])
+      .select();
+
+    if (error) {
+      console.error("salvarAcao:", error);
+      return;
+    }
+
+    safeSet(() =>
+      setAcoes([data?.[0], ...(acoes || [])].filter(Boolean))
+    );
+    safeSet(() => setNovaAcao({ descricao: "", responsavel: "" }));
   };
 
   /* =========================
      Gravação
   ========================= */
-  const iniciar = async () => {
-    if (!selecionada) return;
-    await startRecording({ reuniaoId: selecionada.id });
-    fetchReunioesDoDia();
+  const onStart = async () => {
+    if (!selecionada?.id) return alert("Selecione uma reunião.");
+    await startRecording({
+      reuniaoId: selecionada.id,
+      reuniaoTitulo: selecionada.titulo,
+    });
   };
 
-  const encerrar = async () => {
+  const onStop = async () => {
     await stopRecording();
-
     await supabase
       .from("reunioes")
       .update({ status: "Realizada" })
       .eq("id", selecionada.id);
-
-    fetchReunioesDoDia();
+    fetchReunioes();
   };
 
   /* =========================
-     Reabrir (ADM)
+     Reabrir com ADM
   ========================= */
   const validarSenhaAdm = async () => {
     const { data } = await supabase
@@ -151,50 +221,7 @@ export default function Copiloto() {
 
     setShowUnlock(false);
     setSenhaAdm("");
-    fetchReunioesDoDia();
-  };
-
-  /* =========================
-     Ações
-  ========================= */
-  const fetchAcoes = async (r) => {
-    const { data: rAcoes } = await supabase
-      .from("acoes")
-      .select("*")
-      .eq("reuniao_id", r.id);
-
-    const { data: backlog } = await supabase
-      .from("acoes")
-      .select("*")
-      .eq("tipo_reuniao_id", r.tipo_reuniao_id)
-      .neq("status", "Concluída");
-
-    const { data: ultima } = await supabase
-      .from("reunioes")
-      .select("data_hora")
-      .eq("tipo_reuniao_id", r.tipo_reuniao_id)
-      .lt("data_hora", r.data_hora)
-      .order("data_hora", { ascending: false })
-      .limit(1)
-      .single();
-
-    let realizadas = [];
-    if (ultima?.data_hora) {
-      const { data } = await supabase
-        .from("acoes")
-        .select("*")
-        .eq("tipo_reuniao_id", r.tipo_reuniao_id)
-        .eq("status", "Concluída")
-        .gt("data_conclusao", ultima.data_hora);
-
-      realizadas = data || [];
-    }
-
-    if (!mounted.current) return;
-
-    setAcoesReuniao(rAcoes || []);
-    setAcoesBacklog(backlog || []);
-    setAcoesDesdeUltima(realizadas);
+    fetchReunioes();
   };
 
   /* =========================
@@ -202,131 +229,204 @@ export default function Copiloto() {
   ========================= */
   return (
     <Layout>
-      <div className="flex h-screen bg-[#f6f8fc]">
-        {/* COLUNA ESQUERDA */}
-        <div className="w-[420px] bg-white border-r flex flex-col">
-          <div className="p-5">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-2xl text-white flex items-center justify-center">
-                <Bot size={20} />
-              </div>
-              <h1 className="font-black">Copiloto Tático</h1>
-            </div>
+      <div className="h-screen bg-[#0f172a] text-white flex overflow-hidden">
+        {/* COLUNA ESQUERDA – ORIGINAL */}
+        <div className="w-7/12 flex flex-col p-6 border-r border-slate-800">
+          <h1 className="text-2xl font-black text-blue-500 mb-6 flex items-center gap-2">
+            <Cpu size={32} /> COPILOTO TÁTICO
+          </h1>
 
-            {reunioes.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => !isRecording && setSelecionada(r)}
-                className={`w-full p-4 text-left rounded-xl mb-2 ${
-                  selecionada?.id === r.id
-                    ? "bg-blue-50 border-l-4 border-blue-600"
-                    : "bg-white"
-                }`}
-              >
-                <div className="font-bold text-sm">{r.titulo}</div>
-                <div className="text-xs text-slate-500">
-                  {toBR(r.data_hora)}
-                </div>
-              </button>
-            ))}
+          <div className="flex gap-2 mb-4">
+            <input
+              type="date"
+              className="bg-slate-800 rounded-xl p-3 text-sm flex-1"
+              value={dataFiltro}
+              onChange={(e) => setDataFiltro(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Buscar..."
+              className="bg-slate-800 rounded-xl p-3 text-sm flex-1"
+              onChange={(e) => setBusca(e.target.value)}
+            />
           </div>
 
-          {/* RODAPÉ FIXO */}
-          <div className="mt-auto p-5 border-t">
-            {isRecording ? (
-              <button
-                onClick={encerrar}
-                className="w-full bg-slate-900 text-white py-3 rounded-xl text-xs font-black"
+          <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl overflow-y-auto mb-6">
+            {(reunioes || [])
+              .filter((r) =>
+                (r.titulo || "")
+                  .toLowerCase()
+                  .includes((busca || "").toLowerCase())
+              )
+              .map((r) => (
+                <div
+                  key={r.id}
+                  onClick={() => !isRecording && setSelecionada(r)}
+                  className={`p-4 border-b border-slate-800 cursor-pointer ${
+                    selecionada?.id === r.id
+                      ? "bg-blue-600/10 border-l-4 border-l-blue-500"
+                      : "hover:bg-slate-800"
+                  }`}
+                >
+                  <div className="flex justify-between">
+                    <span className="font-bold text-sm">{r.titulo}</span>
+                    <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold uppercase">
+                      {r.status || "Pendente"}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    {toBR(r.data_hora)}
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {/* CONTROLES – ORIGINAL */}
+          <div className="bg-slate-800/80 p-6 rounded-3xl flex items-center justify-between border border-slate-700">
+            <div className="flex items-center gap-4">
+              <div
+                className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+                  isRecording
+                    ? "bg-red-500/20 text-red-500"
+                    : "bg-blue-500/20 text-blue-500"
+                }`}
               >
-                Encerrar • {timer}
-              </button>
-            ) : selecionada?.status === "Realizada" ? (
+                {isRecording ? (
+                  <div className="w-4 h-4 bg-red-500 rounded-full animate-ping" />
+                ) : (
+                  <Monitor size={28} />
+                )}
+              </div>
+
+              <div>
+                <p className="text-[10px] font-bold text-slate-500 uppercase">
+                  Tempo de Sessão
+                </p>
+                <p className="text-2xl font-mono font-bold">
+                  {secondsToMMSS(timer)}
+                </p>
+              </div>
+            </div>
+
+            {isProcessing ? (
+              <div className="flex items-center gap-2 text-blue-400 font-bold animate-pulse">
+                <Loader2 className="animate-spin" /> FINALIZANDO...
+              </div>
+            ) : isRecording ? (
               <button
-                onClick={() => setShowUnlock(true)}
-                className="w-full flex items-center justify-center gap-2 text-xs font-bold text-red-600"
+                onClick={onStop}
+                className="bg-white text-slate-900 px-8 py-3 rounded-2xl font-black text-xs"
               >
-                <Lock size={14} /> Reabrir (ADM)
+                ENCERRAR
               </button>
             ) : (
               <button
-                onClick={iniciar}
+                onClick={onStart}
                 disabled={!selecionada}
-                className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-black"
+                className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs disabled:opacity-20"
               >
-                Iniciar Gravação
+                INICIAR GRAVAÇÃO
               </button>
             )}
           </div>
         </div>
 
-        {/* COLUNA DIREITA */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {!selecionada ? (
-            <div>Selecione uma reunião do dia</div>
-          ) : (
+        {/* COLUNA DIREITA – CAMADAS */}
+        <div className="w-5/12 p-6 flex flex-col bg-slate-900/80">
+          {/* TABS */}
+          <div className="flex gap-2 mb-4">
+            <Tab label="Ações" icon={ListChecks} active={abaDireita==="acoes"} onClick={()=>setAbaDireita("acoes")} />
+            <Tab label="Ata Principal" icon={FileText} active={abaDireita==="ata_principal"} onClick={()=>setAbaDireita("ata_principal")} />
+            <Tab label="Ata Manual" icon={StickyNote} active={abaDireita==="ata_manual"} onClick={()=>setAbaDireita("ata_manual")} />
+          </div>
+
+          {abaDireita === "acoes" && (
             <>
-              {/* ABAS */}
+              <h2 className="text-xs font-bold text-slate-400 uppercase mb-2">
+                Nova Ação Direta
+              </h2>
+
+              <textarea
+                className="w-full bg-slate-800 rounded-2xl p-4 text-sm h-24 mb-3"
+                placeholder="O que precisa ser feito?"
+                value={novaAcao.descricao}
+                onChange={(e) =>
+                  setNovaAcao({ ...novaAcao, descricao: e.target.value })
+                }
+              />
+
               <div className="flex gap-2 mb-4">
-                <Tab label="Ata Principal" active={aba === "principal"} onClick={() => setAba("principal")} />
-                <Tab label="Ata Manual" active={aba === "manual"} onClick={() => setAba("manual")} />
-                <Tab label="Ações" active={aba === "acoes"} onClick={() => setAba("acoes")} />
+                <input
+                  className="bg-slate-800 rounded-xl px-4 py-2 text-xs flex-1"
+                  placeholder="Responsável"
+                  value={novaAcao.responsavel}
+                  onChange={(e) =>
+                    setNovaAcao({ ...novaAcao, responsavel: e.target.value })
+                  }
+                />
+                <button
+                  onClick={salvarAcao}
+                  disabled={!selecionada}
+                  className="bg-blue-600 p-2 rounded-xl"
+                >
+                  <Plus size={20} />
+                </button>
               </div>
 
-              {aba === "principal" && (
-                <Section>
-                  <pre className="whitespace-pre-wrap">{ataPrincipal || "—"}</pre>
-                </Section>
-              )}
+              <div className="flex-1 overflow-y-auto space-y-3">
+                {loadingAcoes ? (
+                  <div className="text-slate-400">Carregando...</div>
+                ) : (
+                  (acoes || []).map((a) => (
+                    <div
+                      key={a.id}
+                      onClick={() => setAcaoSelecionada(a)}
+                      className="p-4 bg-slate-800/40 border border-slate-800 rounded-2xl cursor-pointer"
+                    >
+                      <p className="text-slate-200 text-sm">{a.descricao}</p>
+                      <p className="mt-2 text-blue-400 font-bold text-xs">
+                        {a.responsavel}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
 
-              {aba === "manual" && (
-                <Section>
-                  {editAtaManual ? (
-                    <>
-                      <textarea
-                        className="w-full min-h-[240px] border rounded-xl p-3"
-                        value={ataManual}
-                        onChange={(e) => setAtaManual(e.target.value)}
-                      />
-                      <button
-                        onClick={salvarAtaManual}
-                        className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-                      >
-                        Salvar
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <pre className="whitespace-pre-wrap">{ataManual || "—"}</pre>
-                      <button
-                        onClick={() => setEditAtaManual(true)}
-                        className="text-xs text-blue-600 font-bold mt-2"
-                      >
-                        Editar
-                      </button>
-                    </>
-                  )}
-                </Section>
-              )}
+          {abaDireita === "ata_principal" && (
+            <pre className="whitespace-pre-wrap text-sm text-slate-200">
+              {ataPrincipal || "—"}
+            </pre>
+          )}
 
-              {aba === "acoes" && (
+          {abaDireita === "ata_manual" && (
+            <>
+              {editAtaManual ? (
                 <>
-                  <Section title="Ações da reunião">
-                    {acoesReuniao.map((a) => (
-                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
-                    ))}
-                  </Section>
-
-                  <Section title="Pendências do tipo">
-                    {acoesBacklog.map((a) => (
-                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
-                    ))}
-                  </Section>
-
-                  <Section title="Concluídas desde a última reunião">
-                    {acoesDesdeUltima.map((a) => (
-                      <LinhaAcao key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
-                    ))}
-                  </Section>
+                  <textarea
+                    className="w-full bg-slate-800 rounded-2xl p-4 text-sm h-64"
+                    value={ataManual}
+                    onChange={(e) => setAtaManual(e.target.value)}
+                  />
+                  <button
+                    onClick={salvarAtaManual}
+                    className="mt-3 bg-blue-600 px-4 py-2 rounded-xl text-xs font-black"
+                  >
+                    Salvar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <pre className="whitespace-pre-wrap text-sm">
+                    {ataManual || "—"}
+                  </pre>
+                  <button
+                    onClick={() => setEditAtaManual(true)}
+                    className="text-xs text-blue-400 mt-2"
+                  >
+                    Editar
+                  </button>
                 </>
               )}
             </>
@@ -338,13 +438,13 @@ export default function Copiloto() {
         <ModalDetalhesAcao
           acao={acaoSelecionada}
           onClose={() => setAcaoSelecionada(null)}
-          onSaved={() => fetchAcoes(selecionada)}
+          onSaved={fetchAcoes}
         />
       )}
 
       {showUnlock && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-2xl w-[360px]">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-2xl w-[360px] text-black">
             <div className="font-black mb-2">Senha do Administrador</div>
             <input
               type="password"
@@ -374,41 +474,17 @@ export default function Copiloto() {
 }
 
 /* =========================
-   Componentes
+   UI Aux
 ========================= */
-function Section({ title, children }) {
-  return (
-    <div className="bg-white border rounded-2xl p-5 mb-4">
-      {title && <div className="font-black text-sm mb-3">{title}</div>}
-      {children}
-    </div>
-  );
-}
-
-function LinhaAcao({ acao, onClick }) {
+function Tab({ label, icon: Icon, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left p-3 border rounded-xl mb-2 hover:bg-slate-50"
-    >
-      <div className="font-semibold text-sm">{acao.descricao}</div>
-      <div className="text-xs text-slate-500">
-        {acao.status} • {acao.responsavel || "—"}
-      </div>
-    </button>
-  );
-}
-
-function Tab({ label, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-xl text-xs font-black ${
-        active ? "bg-blue-600 text-white" : "bg-white border"
+      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black ${
+        active ? "bg-blue-600" : "bg-slate-800 text-slate-400"
       }`}
     >
-      {label}
+      <Icon size={14} /> {label}
     </button>
   );
 }
-
