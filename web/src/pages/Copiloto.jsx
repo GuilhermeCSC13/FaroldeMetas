@@ -17,7 +17,8 @@ import {
   UploadCloud,
   File as FileIcon,
   Check,
-  Loader2 // ✅ Importei Loader2 para o ícone de carregamento
+  Loader2,
+  Trash2 // Adicionado ícone de lixeira
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -137,9 +138,6 @@ export default function Copiloto() {
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
-  // ✅ Usuário Logado (para Quem Criou)
-  const [currentUser, setCurrentUser] = useState(null);
-
   // ✅ Responsável digitável (autocomplete)
   const [responsavelQuery, setResponsavelQuery] = useState("");
   const [respOpen, setRespOpen] = useState(false);
@@ -165,13 +163,10 @@ export default function Copiloto() {
 
     fetchReunioes();
 
-    // 1. Carregar lista de responsáveis e identificar usuário logado
+    // 1. Carregar lista de responsáveis
     (async () => {
       try {
         safeSet(() => setLoadingResponsaveis(true));
-
-        // Pega user da sessão atual
-        const { data: { user } } = await supabase.auth.getUser();
         
         // Carrega todos aprovadores
         const { data, error } = await supabaseInove
@@ -186,24 +181,6 @@ export default function Copiloto() {
           console.error("carregarResponsaveis (usuarios_aprovadores):", error);
         } else {
           safeSet(() => setListaResponsaveis(data || []));
-
-          // Tenta identificar o usuário logado na lista
-          let userEncontrado = null;
-          if (user?.email) {
-            userEncontrado = (data || []).find(
-              (u) =>
-                String(u.email || "").toLowerCase() ===
-                String(user.email).toLowerCase()
-            );
-          }
-          
-          // Se encontrou, salva no state
-          if (userEncontrado) {
-             safeSet(() => setCurrentUser(userEncontrado));
-          } else if (user?.email) {
-             // Fallback: se não achar na lista, cria um obj temporário só com email
-             safeSet(() => setCurrentUser({ email: user.email, nome: "Usuário", sobrenome: user.email }));
-          }
         }
       } finally {
         safeSet(() => setLoadingResponsaveis(false));
@@ -516,13 +493,13 @@ export default function Copiloto() {
   };
 
   /**
-   * ✅ Salvar Ação Atualizado
-   * - Agora com bloqueio de botão (loading state)
-   * - Feedback visual
+   * ✅ Salvar Ação Atualizado (BLINDAGEM)
+   * - Busca usuário logado NA HORA DO CLIQUE
+   * - Envia tipo_reuniao (texto)
    */
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
-    if (creatingAcao) return; // ✅ Evita duplo clique
+    if (creatingAcao) return; // Evita duplo clique
 
     const descricao = String(novaAcao.descricao || "").trim(); // NOME
     const observacao = String(novaAcao.observacao || "").trim(); // DESCRIÇÃO
@@ -536,10 +513,10 @@ export default function Copiloto() {
       return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
     }
 
-    setCreatingAcao(true); // ✅ Inicia Loading e Bloqueia botão
+    setCreatingAcao(true);
 
     try {
-      // responsável selecionado
+      // 1. Identificar Responsável da Ação
       const respRow =
         (listaResponsaveis || []).find(
           (u) => String(u.login || "") === responsavelId
@@ -549,36 +526,53 @@ export default function Copiloto() {
 
       const responsavelNome = buildNomeSobrenome(respRow);
 
-      // ✅ Tenta garantir quem é o usuário logado
-      let criadorFinalId = currentUser?.id || null;
-      let criadorFinalNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
-      
-      // Fallback: se currentUser estiver nulo, tenta pegar da sessão agora
-      if (!criadorFinalId) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user?.email) {
-              criadorFinalNome = user.email; // Pelo menos o email
-              const found = (listaResponsaveis || []).find(u => u.email === user.email);
-              if (found) {
-                  criadorFinalId = found.id;
-                  criadorFinalNome = buildNomeSobrenome(found);
+      // 2. Identificar QUEM CRIOU (Usuário Logado) AGORA
+      const { data: { user } } = await supabase.auth.getUser();
+      let criadorFinalId = null;
+      let criadorFinalNome = "Sistema/Copiloto";
+
+      if (user?.email) {
+          criadorFinalNome = user.email; // Fallback inicial
+          // Tenta achar na lista de aprovadores pelo email
+          const found = (listaResponsaveis || []).find(
+              u => String(u.email || "").toLowerCase() === String(user.email).toLowerCase()
+          );
+          if (found) {
+              criadorFinalId = found.id;
+              criadorFinalNome = buildNomeSobrenome(found);
+          } else {
+              // Se não achou na lista em memória, tenta buscar rápido no banco (garantia extra)
+              const { data: foundDb } = await supabaseInove
+                  .from("usuarios_aprovadores")
+                  .select("id, nome, sobrenome")
+                  .eq("email", user.email)
+                  .eq("ativo", true)
+                  .maybeSingle();
+              
+              if (foundDb) {
+                  criadorFinalId = foundDb.id;
+                  criadorFinalNome = buildNomeSobrenome(foundDb);
               }
           }
       }
 
+      // 3. Montar Payload
       const payloadCriacao = {
         descricao,      // Nome
         observacao,     // Detalhes
         status: "Aberta",
         reuniao_id: selecionada.id,
+        
+        // ✅ Salva o tipo da reunião (texto) além do ID
         tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
+        tipo_reuniao: selecionada.tipo_reuniao || selecionada.tipo || null, 
         
         responsavel_id: null,
         
         responsavel_aprovador_id: respRow?.id ?? null,
         responsavel_nome: responsavelNome,
 
-        // ✅ Quem criou
+        // ✅ Quem criou (Blindado)
         criado_por_aprovador_id: criadorFinalId,
         criado_por_nome: criadorFinalNome,
         
@@ -645,7 +639,7 @@ export default function Copiloto() {
     } catch (err) {
       alert(err.message);
     } finally {
-      setCreatingAcao(false); // ✅ Libera o botão
+      setCreatingAcao(false);
     }
   };
 
@@ -1466,31 +1460,42 @@ function MiniaturaArquivo({ preview, onRemove }) {
   );
 }
 
+// ✅ Componente Atualizado com Status "EXCLUÍDA"
 function AcaoCard({ acao, onClick }) {
   const st = String(acao?.status || "").toLowerCase();
   const done = st === "concluída" || st === "concluida";
+  const excluded = st === "excluída" || st === "excluida"; // ✅ Verifica excluída
 
   const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
 
   return (
     <button
       onClick={onClick}
-      className="w-full text-left p-4 rounded-2xl border border-slate-200 bg-white shadow-sm hover:bg-slate-50 transition-colors"
+      className={`w-full text-left p-4 rounded-2xl border shadow-sm transition-colors ${
+        excluded
+          ? "bg-gray-50 border-gray-200 opacity-60 grayscale" // Estilo para excluída
+          : "bg-white border-slate-200 hover:bg-slate-50"
+      }`}
       type="button"
     >
       <div className="flex items-start gap-3">
-        <div
-          className={`mt-1 w-2.5 h-2.5 rounded-full ${
-            done ? "bg-emerald-500" : "bg-blue-500"
-          }`}
-        />
+        {/* Ícone de Status */}
+        <div className="mt-1">
+            {excluded ? (
+                <Trash2 size={14} className="text-gray-400" /> // Ícone lixeira se excluída
+            ) : (
+                <div className={`w-2.5 h-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-blue-500"}`} />
+            )}
+        </div>
+
         <div className="flex-1">
           <div
             className={`text-sm font-semibold ${
-              done ? "line-through text-slate-400" : "text-slate-900"
+              done || excluded ? "line-through text-slate-400" : "text-slate-900"
             }`}
           >
             {acao?.descricao || "-"}
+            {excluded && <span className="ml-2 text-[10px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded uppercase font-black no-underline inline-block">Excluída</span>}
           </div>
 
           <div className="text-[12px] text-slate-600 mt-1">
