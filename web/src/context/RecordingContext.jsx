@@ -13,7 +13,7 @@ const RecordingContext = createContext(null);
 
 const STORAGE_BUCKET = "gravacoes";
 const SEGMENT_MS = 5 * 60 * 1000;
-const TIMESLICE_MS = 1000; // Gera dados a cada 1s
+const TIMESLICE_MS = 1000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -43,7 +43,7 @@ async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
   throw lastErr;
 }
 
-// --- VISUAL LOGGER COMPONENT (Interno para Debug) ---
+// --- VISUAL LOGGER (Debug na Tela) ---
 const VisualLogger = ({ logs }) => {
   if (logs.length === 0) return null;
   return (
@@ -53,9 +53,9 @@ const VisualLogger = ({ logs }) => {
       fontSize: '10px', fontFamily: 'monospace', padding: '10px', zIndex: 99999,
       pointerEvents: 'none', borderRadius: '8px', border: '1px solid #333'
     }}>
-      <div style={{fontWeight:'bold', borderBottom:'1px solid #555', marginBottom:5}}>DEBUG DE GRAVAÇÃO</div>
+      <div style={{fontWeight:'bold', borderBottom:'1px solid #555', marginBottom:5}}>DEBUG V2.0 (FIX STALE STATE)</div>
       {logs.slice().reverse().map((l, i) => (
-        <div key={i} style={{marginBottom: 2, color: l.includes('❌') ? '#ff5555' : l.includes('✅') ? '#55ff55' : '#ccc'}}>
+        <div key={i} style={{marginBottom: 2, color: l.includes('❌') || l.includes('⚠️') ? '#ff5555' : l.includes('✅') ? '#55ff55' : '#ccc'}}>
           {l}
         </div>
       ))}
@@ -82,7 +82,9 @@ export function RecordingProvider({ children }) {
   const timerRef = useRef(null);
   const segmentIntervalRef = useRef(null);
 
+  // Refs para estado mutável crítico
   const sessionIdRef = useRef(null);
+  const reuniaoIdRef = useRef(null); // ✅ NOVO REF: Garante acesso ao ID sem depender do React State
   const partNumberRef = useRef(0);
 
   const stopAllRequestedRef = useRef(false);
@@ -96,7 +98,6 @@ export function RecordingProvider({ children }) {
   const stopFinalizePromiseRef = useRef(null);
   const finalizeRunningRef = useRef(false);
 
-  // Helper para nome do arquivo
   const buildPartPath = (reuniaoId, sessionId, partNumber) =>
     `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
 
@@ -133,27 +134,25 @@ export function RecordingProvider({ children }) {
   const resolveStopPromise = () => { stopFinalizePromiseRef.current?.resolve?.(); stopFinalizePromiseRef.current = null; };
   const rejectStopPromise = (err) => { stopFinalizePromiseRef.current?.reject?.(err); stopFinalizePromiseRef.current = null; };
 
-  // --- WORKER DE UPLOAD (Blindado) ---
+  // --- WORKER DE UPLOAD ---
   const runUploadWorker = async () => {
     if (uploadWorkerRunningRef.current) return;
     uploadWorkerRunningRef.current = true;
-    addLog("🚀 Worker de upload iniciado");
-
+    
     try {
       while (uploadQueueRef.current.length > 0) {
         const item = uploadQueueRef.current[0];
         if (!item) { uploadQueueRef.current.shift(); continue; }
 
-        addLog(`📤 Enviando Parte ${item.partNumber} (${item.blob.size} bytes)...`);
+        addLog(`📤 Enviando Parte ${item.partNumber} (${item.blob.size} bytes) -> Sessão: ${item.sessionId?.slice(0,8)}...`);
         
         try {
-          // Passamos os dados EXPLÍCITOS do item, não usamos refs globais aqui
           await uploadPart(item.blob, item.partNumber, item.reuniaoId, item.sessionId);
           addLog(`✅ Parte ${item.partNumber} enviada!`);
           uploadQueueRef.current.shift();
         } catch (err) {
           addLog(`❌ Falha upload parte ${item.partNumber}: ${err.message}`);
-          uploadQueueRef.current.shift(); // Remove para não travar fila
+          uploadQueueRef.current.shift();
         }
       }
     } finally {
@@ -162,14 +161,12 @@ export function RecordingProvider({ children }) {
         queueDrainPromiseRef.current.resolve?.();
         queueDrainPromiseRef.current = null;
       }
-      addLog("🏁 Worker pausado (fila vazia)");
     }
   };
 
-  // Enfileira com SNAPSHOT dos IDs (Isso corrige o Race Condition)
   const enqueueUpload = (blob, partNumber, reuniaoId, sessionId) => {
     if (!reuniaoId || !sessionId) {
-      addLog("❌ ERRO CRÍTICO: Tentativa de enqueue sem IDs!");
+      addLog(`❌ ERRO CRÍTICO: ID Nulo no Enqueue (RID:${reuniaoId}, SID:${sessionId})`);
       return;
     }
     uploadQueueRef.current.push({ blob, partNumber, reuniaoId, sessionId });
@@ -178,7 +175,7 @@ export function RecordingProvider({ children }) {
 
   const waitQueueDrain = async () => {
     if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) return;
-    addLog("⏳ Aguardando uploads pendentes...");
+    addLog("⏳ Aguardando uploads...");
     if (!queueDrainPromiseRef.current) {
       let resolve;
       const p = new Promise((r) => (resolve = r));
@@ -186,23 +183,15 @@ export function RecordingProvider({ children }) {
     }
     runUploadWorker();
     await queueDrainPromiseRef.current.promise;
-    addLog("✅ Uploads finalizados.");
   };
 
-  // Upload recebe IDs como argumento (independente do estado global)
   const uploadPart = async (blob, partNumber, reuniaoId, sessionId) => {
     const path = buildPartPath(reuniaoId, sessionId, partNumber);
-    
     const uploadPromise = (async () => {
-      // 1. Supabase Storage
       await withRetry(async () => {
-        const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
-          contentType: "video/webm", upsert: false,
-        });
+        const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, { contentType: "video/webm", upsert: false });
         if (error) throw error;
       });
-
-      // 2. Tabela SQL
       await withRetry(async () => {
         const { error } = await supabase.from("reuniao_gravacao_partes").insert([{
           reuniao_id: reuniaoId, session_id: sessionId, part_number: partNumber,
@@ -211,7 +200,6 @@ export function RecordingProvider({ children }) {
         if (error) throw error;
       });
     })();
-
     uploadsInFlightRef.current.add(uploadPromise);
     try { await uploadPromise; } finally { uploadsInFlightRef.current.delete(uploadPromise); }
   };
@@ -219,15 +207,12 @@ export function RecordingProvider({ children }) {
   const createRecorder = () => {
     const stream = mixedStreamRef.current;
     if (!stream) throw new Error("Stream não existe");
-    
     const mimeTypes = ["video/webm;codecs=vp8,opus", "video/webm", ""];
     let options = undefined;
-
     for (const type of mimeTypes) {
-      if (type === "") break; // Default
+      if (type === "") break;
       if (MediaRecorder.isTypeSupported(type)) {
         options = { mimeType: type };
-        addLog(`🎥 Codec escolhido: ${type}`);
         break;
       }
     }
@@ -243,7 +228,8 @@ export function RecordingProvider({ children }) {
     } catch {}
   };
 
-  const startSegment = () => {
+  // ✅ CORREÇÃO CHAVE: Recebe IDs explicitamente para evitar Stale State
+  const startSegment = (activeReuniaoId, activeSessionId) => {
     try {
       const rec = createRecorder();
       recorderRef.current = rec;
@@ -256,28 +242,28 @@ export function RecordingProvider({ children }) {
       rec.onstop = async () => {
         try {
           const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
-          addLog(`⏹️ Segmento finalizado. Tamanho: ${blob.size} bytes`);
+          addLog(`⏹️ Segmento finalizado. Bytes: ${blob.size}`);
 
-          // CAPTURA IDS ATUAIS PARA O ENQUEUE
-          const currentReuniaoId = current?.reuniaoId;
-          const currentSessionId = sessionIdRef.current;
-
-          if (blob.size > 0 && currentReuniaoId && currentSessionId) {
+          // ✅ Usa os IDs passados como argumento, blindados contra delay do React
+          if (blob.size > 0 && activeReuniaoId && activeSessionId) {
             const part = ++partNumberRef.current;
-            enqueueUpload(blob, part, currentReuniaoId, currentSessionId);
+            enqueueUpload(blob, part, activeReuniaoId, activeSessionId);
           } else {
-            addLog("⚠️ Blob vazio ou sem sessão ativa. Ignorando.");
+            addLog(`⚠️ Erro dados: Blob=${blob.size}, RID=${activeReuniaoId}, SID=${activeSessionId}`);
           }
 
-          if (!stopAllRequestedRef.current) startSegment();
+          if (!stopAllRequestedRef.current) {
+            // Passa os mesmos IDs para o próximo segmento
+            startSegment(activeReuniaoId, activeSessionId);
+          }
         } catch (e) {
-          addLog(`❌ Erro no onstop: ${e.message}`);
+          addLog(`❌ Erro onstop: ${e.message}`);
         }
       };
 
       rec.start(TIMESLICE_MS); 
     } catch (e) {
-      addLog(`❌ Erro ao iniciar recorder: ${e.message}`);
+      addLog(`❌ Erro startSegment: ${e.message}`);
     }
   };
 
@@ -291,9 +277,6 @@ export function RecordingProvider({ children }) {
   };
 
   const enqueueCompileJob = async (reuniaoId) => {
-    // Usa ID salvo ou ref se disponível.
-    // Aqui assumimos que o ref ainda é válido ou passamos via arg se necessário
-    // mas o compile job não é tão sensível a race condition quanto o upload
     const prefix = `reunioes/${reuniaoId}/${sessionIdRef.current || 'unknown'}/`;
     await supabase.from("recording_compile_queue").insert([{
       reuniao_id: reuniaoId, status: "PENDENTE", storage_bucket: STORAGE_BUCKET,
@@ -310,12 +293,16 @@ export function RecordingProvider({ children }) {
     rotatingRef.current = false;
     finalizeRunningRef.current = false;
     setTimer(0);
-    setLogs([]); // Limpa logs antigos
+    setLogs([]);
 
     const sessionId = `sess_${crypto?.randomUUID?.() || Date.now()}`;
+    
+    // ✅ Atualiza Refs imediatamente (Síncrono)
     sessionIdRef.current = sessionId;
+    reuniaoIdRef.current = reuniaoId;
     partNumberRef.current = 0;
 
+    // Atualiza React State (Assíncrono - visual apenas)
     setCurrent({ reuniaoId, reuniaoTitulo: reuniaoTitulo || `Reunião ${reuniaoId}`, sessionId, startedAtIso: nowIso() });
 
     await supabase.from("reunioes").update({
@@ -334,19 +321,17 @@ export function RecordingProvider({ children }) {
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
       const dest = audioCtx.createMediaStreamDestination();
-      
       if (micStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(micStream).connect(dest);
       if (displayStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(displayStream).connect(dest);
-
-      const mixedStream = new MediaStream([...displayStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      mixedStreamRef.current = mixedStream;
+      mixedStreamRef.current = new MediaStream([...displayStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
 
       displayStream.getVideoTracks()[0].onended = () => {
-        addLog("🛑 Compartilhamento de tela encerrado pelo usuário.");
+        addLog("🛑 Stop via navegador.");
         stopRecording();
       };
 
-      startSegment();
+      // ✅ PASSA OS IDS EXPLÍCITOS PARA O INÍCIO DA CADEIA
+      startSegment(reuniaoId, sessionId);
       
       clearInterval(segmentIntervalRef.current);
       segmentIntervalRef.current = setInterval(() => {
@@ -364,7 +349,7 @@ export function RecordingProvider({ children }) {
   };
 
   const stopRecording = async () => {
-    addLog("⏹️ Solicitado Parar Gravação...");
+    addLog("⏹️ Stop solicitado...");
     if (stopAllRequestedRef.current) return;
     stopAllRequestedRef.current = true;
     
@@ -377,7 +362,7 @@ export function RecordingProvider({ children }) {
       
       const rec = recorderRef.current;
       if (rec && rec.state === "recording") {
-        addLog("⏳ Forçando stop final e aguardando dados...");
+        addLog("⏳ Stop recorder...");
         await new Promise((resolve) => {
           const originalOnStop = rec.onstop;
           rec.onstop = async (e) => {
@@ -400,7 +385,8 @@ export function RecordingProvider({ children }) {
   };
 
   const finalizeRecording = async () => {
-    const reuniaoId = current?.reuniaoId;
+    // ✅ Usa o Ref aqui também por segurança
+    const reuniaoId = reuniaoIdRef.current;
     if (!reuniaoId) { resolveStopPromise(); return; }
     if (finalizeRunningRef.current) return;
     finalizeRunningRef.current = true;
@@ -414,24 +400,26 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
-      addLog("📝 Atualizando banco de dados (Realizada)...");
+      addLog("📝 Finalizando banco...");
       await withRetry(async () => {
-        const { error } = await supabase.from("reunioes").update({
+        await supabase.from("reunioes").update({
           status: "Realizada", duracao_segundos: duracao, gravacao_fim: nowIso(),
           gravacao_status: "PRONTO_PROCESSAR", updated_at: nowIso(),
         }).eq("id", reuniaoId);
-        if (error) throw error;
       });
 
       await enqueueCompileJob(reuniaoId);
-      addLog("🎉 PROCESSO FINALIZADO COM SUCESSO!");
+      addLog("🎉 SUCESSO TOTAL!");
 
     } catch (e) {
       await finalizeFailClosed(reuniaoId, e?.message);
     } finally {
       setIsProcessing(false);
       cleanupMedia();
+      
+      // Limpa refs só no final absoluto
       sessionIdRef.current = null;
+      reuniaoIdRef.current = null;
       partNumberRef.current = 0;
       setCurrent(null);
       setTimer(0);
@@ -453,7 +441,6 @@ export function RecordingProvider({ children }) {
   return (
     <RecordingContext.Provider value={value}>
       {children}
-      {/* Painel de Debug Visível */}
       <VisualLogger logs={logs} />
     </RecordingContext.Provider>
   );
