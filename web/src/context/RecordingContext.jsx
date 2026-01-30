@@ -65,7 +65,6 @@ export function RecordingProvider({ children }) {
   const partNumberRef = useRef(0);
 
   const stopAllRequestedRef = useRef(false);
-  const rotatingRef = useRef(false);
 
   // fila de uploads com ids carimbados
   // item: { blob, partNumber, reuniaoId, sessionId }
@@ -159,9 +158,19 @@ export function RecordingProvider({ children }) {
     }
   };
 
-  const enqueueUpload = (blob, partNumber, reuniaoId, sessionId) => {
+  const enqueueUpload = (blob, reuniaoId, sessionId) => {
     if (!blob || blob.size === 0) return;
     if (!reuniaoId || !sessionId) return;
+
+    const partNumber = ++partNumberRef.current;
+
+    console.log("[REC] enqueueUpload", {
+      reuniaoId,
+      sessionId,
+      partNumber,
+      bytes: blob.size,
+    });
+
     uploadQueueRef.current.push({ blob, partNumber, reuniaoId, sessionId });
     runUploadWorker();
   };
@@ -187,7 +196,8 @@ export function RecordingProvider({ children }) {
     const path = buildPartPath(reuniaoId, sessionId, partNumber);
 
     const uploadPromise = (async () => {
-      // 1) upload no Storage
+      console.log("[REC] uploading to storage...", { path, bytes: blob.size });
+
       await withRetry(async () => {
         const { error: upErr } = await supabase.storage
           .from(STORAGE_BUCKET)
@@ -199,7 +209,8 @@ export function RecordingProvider({ children }) {
         if (upErr) throw upErr;
       });
 
-      // 2) registra metadata no banco
+      console.log("[REC] uploaded OK:", path);
+
       await withRetry(async () => {
         const { error: insErr } = await supabase
           .from("reuniao_gravacao_partes")
@@ -216,6 +227,8 @@ export function RecordingProvider({ children }) {
           ]);
         if (insErr) throw insErr;
       });
+
+      console.log("[REC] DB insert OK (reuniao_gravacao_partes):", partNumber);
     })();
 
     uploadsInFlightRef.current.add(uploadPromise);
@@ -236,7 +249,10 @@ export function RecordingProvider({ children }) {
     } else if (window.MediaRecorder?.isTypeSupported?.(MIME_TYPE_FALLBACK)) {
       options = { mimeType: MIME_TYPE_FALLBACK };
     }
-    return new MediaRecorder(stream, options);
+
+    const rec = new MediaRecorder(stream, options);
+    console.log("[REC] MediaRecorder created:", rec.mimeType || "(default)");
+    return rec;
   };
 
   const finalizeFailClosed = async (reuniaoId, message) => {
@@ -253,92 +269,64 @@ export function RecordingProvider({ children }) {
     } catch {}
   };
 
-  const startSegment = () => {
+  const startRecorder = () => {
     const rec = createRecorder();
     recorderRef.current = rec;
 
-    const chunks = [];
     const reuniaoId = current?.reuniaoId;
     const sessionId = sessionIdRef.current;
 
     rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      chunks.push(e.data);
-    };
-
-    rec.onstop = async () => {
       try {
-        const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
-        const partNumber = ++partNumberRef.current;
-        enqueueUpload(blob, partNumber, reuniaoId, sessionId);
+        if (!e.data || e.data.size === 0) return;
+        const blob = new Blob([e.data], { type: rec.mimeType || "video/webm" });
 
-        if (!stopAllRequestedRef.current) startSegment();
-      } catch (e) {
-        console.error("rec.onstop error:", e);
+        console.log("[REC] dataavailable:", {
+          bytes: blob.size,
+          state: rec.state,
+        });
+
+        enqueueUpload(blob, reuniaoId, sessionId);
+      } catch (err) {
+        console.error("[REC] ondataavailable error:", err);
       }
     };
 
-    rec.start();
+    rec.onerror = (e) => {
+      console.error("[REC] recorder error:", e);
+    };
+
+    rec.onstop = () => {
+      console.log("[REC] recorder stopped");
+    };
+
+    // 🔥 não depende de stop para gerar chunk
+    // rec.start(timeslice) => força dataavailable de tempos em tempos
+    rec.start(2000);
+    console.log("[REC] recorder started (timeslice=2000ms)");
   };
 
-  const rotateSegment = async () => {
-    if (rotatingRef.current) return;
-    rotatingRef.current = true;
+  const forceChunk = () => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    if (rec.state !== "recording") return;
+
     try {
-      const rec = recorderRef.current;
-      if (!rec) return;
-      if (rec.state === "recording") {
-        try {
-          rec.requestData();
-        } catch {}
-        rec.stop();
-      }
-    } finally {
-      rotatingRef.current = false;
+      console.log("[REC] forceChunk requestData()");
+      rec.requestData(); // força disparar dataavailable
+    } catch (e) {
+      console.warn("[REC] requestData falhou:", e);
     }
-  };
-
-  // ✅ opcional: manter compile (merge) no Supabase
-  const enqueueCompileJob = async (reuniaoId) => {
-    const { data: r, error: e1 } = await supabase
-      .from("reunioes")
-      .select("id, gravacao_bucket, gravacao_prefix")
-      .eq("id", reuniaoId)
-      .single();
-    if (e1) throw e1;
-
-    const prefix = String(r?.gravacao_prefix || "").trim();
-    if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
-      throw new Error(
-        `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
-      );
-    }
-
-    const { error: e2 } = await supabase.from("recording_compile_queue").insert([
-      {
-        reuniao_id: reuniaoId,
-        status: "PENDENTE",
-        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
-        storage_prefix: prefix,
-        tentativas: 0,
-        last_error: null,
-      },
-    ]);
-    if (e2) throw e2;
-
-    const { error: e3 } = await supabase
-      .from("reunioes")
-      .update({ updated_at: nowIso() })
-      .eq("id", reuniaoId);
-    if (e3) throw e3;
   };
 
   const startRecording = async ({ reuniaoId, reuniaoTitulo }) => {
     if (!reuniaoId) throw new Error("reuniaoId obrigatório.");
     if (isRecording) return;
 
+    console.log("[REC] startRecording:", { reuniaoId, reuniaoTitulo });
+    console.log("[REC] app supabaseUrl:", supabase?.supabaseUrl);
+
     stopAllRequestedRef.current = false;
-    rotatingRef.current = false;
     finalizeRunningRef.current = false;
 
     setTimer(0);
@@ -370,7 +358,11 @@ export function RecordingProvider({ children }) {
         updated_at: nowIso(),
       })
       .eq("id", reuniaoId);
-    if (uErr) throw uErr;
+
+    if (uErr) {
+      console.error("[REC] update reunioes failed:", uErr);
+      throw uErr;
+    }
 
     const displayStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
@@ -400,11 +392,11 @@ export function RecordingProvider({ children }) {
     ]);
     mixedStreamRef.current = mixedStream;
 
-    startSegment();
+    startRecorder();
 
     clearInterval(segmentIntervalRef.current);
     segmentIntervalRef.current = setInterval(() => {
-      if (!stopAllRequestedRef.current) rotateSegment();
+      if (!stopAllRequestedRef.current) forceChunk();
     }, SEGMENT_MS);
 
     startTimeRef.current = Date.now();
@@ -419,27 +411,27 @@ export function RecordingProvider({ children }) {
     const stopPromise = createStopPromise();
 
     try {
+      console.log("[REC] stopRecording...");
+
       setIsRecording(false);
       stopTimerFn();
       clearInterval(segmentIntervalRef.current);
 
-      const rec = recorderRef.current;
+      // força um último chunk
+      forceChunk();
+      await sleep(500);
 
+      const rec = recorderRef.current;
       try {
-        if (rec && rec.state === "recording") {
-          try {
-            rec.requestData();
-          } catch {}
-          rec.stop();
-        }
+        if (rec && rec.state === "recording") rec.stop();
       } catch (e) {
-        console.warn("rec.stop falhou, seguindo para finalize:", e);
+        console.warn("[REC] rec.stop falhou:", e);
       }
 
       await finalizeRecording();
       await stopPromise;
     } catch (e) {
-      console.error("stopRecording error:", e);
+      console.error("[REC] stopRecording error:", e);
       rejectStopPromise(e);
       try {
         await finalizeRecording();
@@ -463,8 +455,8 @@ export function RecordingProvider({ children }) {
     try {
       setIsProcessing(true);
 
-      // tempo pro browser disparar onstop e enfileirar último chunk
-      await sleep(1500);
+      // dá tempo pro último chunk entrar
+      await sleep(1200);
 
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
@@ -491,16 +483,41 @@ export function RecordingProvider({ children }) {
         { retries: 3, baseDelayMs: 700 }
       );
 
-      // ✅ SEM DRIVE (não enfileira drive_upload_queue)
-
-      // ✅ opcional: mantém job de compile/merge no Supabase
+      // ✅ Drive DESLIGADO (não enfileira drive_upload_queue)
+      // Se quiser compile também desligado, eu removo daqui.
       try {
-        await enqueueCompileJob(reuniaoId);
+        const { data: r, error: e1 } = await supabase
+          .from("reunioes")
+          .select("id, gravacao_bucket, gravacao_prefix")
+          .eq("id", reuniaoId)
+          .single();
+        if (e1) throw e1;
+
+        const prefix = String(r?.gravacao_prefix || "").trim();
+        if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
+          throw new Error(
+            `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
+          );
+        }
+
+        const { error: e2 } = await supabase.from("recording_compile_queue").insert([
+          {
+            reuniao_id: reuniaoId,
+            status: "PENDENTE",
+            storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
+            storage_prefix: prefix,
+            tentativas: 0,
+            last_error: null,
+          },
+        ]);
+        if (e2) throw e2;
+
+        console.log("[REC] compile job enqueued OK");
       } catch (e) {
-        console.warn("[CompileJob] falhou (fail-open):", e?.message || e);
+        console.warn("[REC] compile enqueue falhou (fail-open):", e?.message || e);
       }
     } catch (e) {
-      console.error("finalizeRecording error:", e);
+      console.error("[REC] finalizeRecording error:", e);
       await finalizeFailClosed(reuniaoId, e?.message || e);
     } finally {
       setIsProcessing(false);
@@ -511,7 +528,6 @@ export function RecordingProvider({ children }) {
       partNumberRef.current = 0;
       startTimeRef.current = null;
       stopAllRequestedRef.current = false;
-      rotatingRef.current = false;
 
       uploadQueueRef.current = [];
       uploadsInFlightRef.current.clear();
