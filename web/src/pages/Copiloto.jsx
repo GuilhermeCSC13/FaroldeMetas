@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
   Film,
   File as FileIcon,
+  Check,
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -132,6 +133,10 @@ export default function Copiloto() {
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
+  // ✅ Responsável digitável (autocomplete)
+  const [responsavelQuery, setResponsavelQuery] = useState("");
+  const [respOpen, setRespOpen] = useState(false);
+
   // Modal Ação (Central)
   const [acaoSelecionada, setAcaoSelecionada] = useState(null);
 
@@ -193,6 +198,11 @@ export default function Copiloto() {
 
     setTab("acoes");
     setAcaoTab("reuniao");
+
+    // ✅ ao trocar reunião, limpa a criação
+    setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+    setResponsavelQuery("");
+    setNovasEvidenciasAcao([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada?.id]);
 
@@ -513,6 +523,7 @@ export default function Copiloto() {
     const acaoId = inserted?.id;
     if (!acaoId) return alert("Erro: ação criada sem ID.");
 
+    // ✅ múltiplas evidências (já era, mas agora com UI melhor)
     const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
 
     if (!urls.length) {
@@ -527,7 +538,10 @@ export default function Copiloto() {
       evidencia_url: urls[0] || null,
     };
 
-    const { error: e2 } = await supabase.from("acoes").update(payloadUpdate).eq("id", acaoId);
+    const { error: e2 } = await supabase
+      .from("acoes")
+      .update(payloadUpdate)
+      .eq("id", acaoId);
 
     if (e2) {
       console.error("salvarAcao update evidencias:", e2);
@@ -537,13 +551,55 @@ export default function Copiloto() {
       );
     }
 
+    // reset
     setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+    setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
 
     setTab("acoes");
     setAcaoTab("reuniao");
 
     await fetchAcoes(selecionada);
+  };
+
+  /* =========================
+     Responsável autocomplete
+  ========================= */
+  const responsaveisFiltrados = useMemo(() => {
+    const q = String(responsavelQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    return (listaResponsaveis || [])
+      .filter((u) => buildNomeSobrenome(u).toLowerCase().includes(q))
+      .slice(0, 10);
+  }, [responsavelQuery, listaResponsaveis]);
+
+  const selecionarResponsavel = (u) => {
+    const nome = buildNomeSobrenome(u);
+    setNovaAcao((p) => ({ ...p, responsavelId: String(u.id || "") }));
+    setResponsavelQuery(nome);
+    setRespOpen(false);
+  };
+
+  /* =========================
+     Evidências: adicionar + remover (múltiplas)
+     - seu código antes sobrescrevia. Agora: ADD.
+  ========================= */
+  const onAddEvidencias = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setNovasEvidenciasAcao((prev) => [...(prev || []), ...files]);
+  };
+
+  const removerEvidencia = (id) => {
+    setNovasEvidenciasAcao((prev) => {
+      const arr = prev || [];
+      const idx = arr.findIndex(
+        (f, i) => `${i}-${f.name}-${f.size}` === id
+      );
+      if (idx < 0) return arr;
+      const next = [...arr.slice(0, idx), ...arr.slice(idx + 1)];
+      return next;
+    });
   };
 
   /* =========================
@@ -825,7 +881,9 @@ export default function Copiloto() {
                       <>
                         <button
                           onClick={() => {
-                            setAtaManual(String(selecionada.ata_manual || "").trim());
+                            setAtaManual(
+                              String(selecionada.ata_manual || "").trim()
+                            );
                             setEditAtaManual(false);
                           }}
                           className="text-[12px] font-extrabold bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl flex items-center gap-2"
@@ -902,35 +960,80 @@ export default function Copiloto() {
                   />
 
                   <div className="flex gap-2 mt-2">
-                    <select
-                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
-                      value={novaAcao.responsavelId}
-                      onChange={(e) =>
-                        setNovaAcao((p) => ({
-                          ...p,
-                          responsavelId: e.target.value,
-                        }))
-                      }
-                      disabled={loadingResponsaveis}
-                    >
-                      <option value="">
-                        {loadingResponsaveis
-                          ? "Carregando responsáveis..."
-                          : "Selecione o responsável"}
-                      </option>
-                      {listaResponsaveis.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {buildNomeSobrenome(u)}
-                        </option>
-                      ))}
-                    </select>
+                    {/* ✅ RESPONSÁVEL DIGITÁVEL */}
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
+                        placeholder={
+                          loadingResponsaveis
+                            ? "Carregando responsáveis..."
+                            : "Digite o responsável..."
+                        }
+                        value={responsavelQuery}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setResponsavelQuery(v);
+                          setRespOpen(true);
+                          // se alterou manualmente, limpa id até selecionar
+                          setNovaAcao((p) => ({ ...p, responsavelId: "" }));
+                        }}
+                        onFocus={() => setRespOpen(true)}
+                        onBlur={() => setTimeout(() => setRespOpen(false), 150)}
+                        disabled={loadingResponsaveis}
+                      />
 
+                      {respOpen && responsaveisFiltrados.length > 0 && (
+                        <div className="absolute z-30 mt-2 w-full bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden">
+                          {responsaveisFiltrados.map((u) => {
+                            const nome = buildNomeSobrenome(u);
+                            const active =
+                              String(u.id) === String(novaAcao.responsavelId);
+                            return (
+                              <button
+                                key={u.id}
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => selecionarResponsavel(u)}
+                                className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm flex items-center justify-between"
+                              >
+                                <span className="font-bold text-slate-900">
+                                  {nome}
+                                </span>
+                                {active ? (
+                                  <span className="text-emerald-700 font-extrabold text-xs inline-flex items-center gap-1">
+                                    <Check size={14} /> Vinculado
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="mt-1 text-[11px]">
+                        {novaAcao.responsavelId ? (
+                          <span className="text-emerald-700 font-extrabold">
+                            Vinculado ✓
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">
+                            Selecione um nome da lista para vincular.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* vencimento */}
                     <input
                       type="date"
                       className="w-[170px] bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
                       value={novaAcao.vencimento}
                       onChange={(e) =>
-                        setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))
+                        setNovaAcao((p) => ({
+                          ...p,
+                          vencimento: e.target.value,
+                        }))
                       }
                     />
                   </div>
@@ -939,16 +1042,14 @@ export default function Copiloto() {
                     <label className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 cursor-pointer">
                       <span className="px-3 py-2 rounded-xl border border-blue-200 bg-white hover:bg-blue-50 inline-flex items-center gap-2">
                         <UploadCloud size={16} />
-                        Anexar evidências (obrigatório)
+                        Anexar evidências (pode ser mais de uma)
                       </span>
                       <input
                         type="file"
                         multiple
                         accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
                         className="hidden"
-                        onChange={(e) =>
-                          setNovasEvidenciasAcao(Array.from(e.target.files || []))
-                        }
+                        onChange={(e) => onAddEvidencias(e.target.files)}
                       />
                     </label>
 
@@ -959,7 +1060,7 @@ export default function Copiloto() {
                     </div>
                   </div>
 
-                  {/* ✅ Miniaturas pequenas */}
+                  {/* ✅ Miniaturas pequenas + remover */}
                   {previews.length > 0 && (
                     <div className="mt-3">
                       <div className="text-[11px] font-extrabold text-slate-500 uppercase mb-2">
@@ -967,7 +1068,11 @@ export default function Copiloto() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {previews.map((p) => (
-                          <MiniaturaArquivo key={p.id} preview={p} />
+                          <MiniaturaArquivo
+                            key={p.id}
+                            preview={p}
+                            onRemove={() => removerEvidencia(p.id)}
+                          />
                         ))}
                       </div>
                     </div>
@@ -1121,18 +1226,30 @@ function Pill({ active, onClick, children }) {
   );
 }
 
-function MiniaturaArquivo({ preview }) {
+function MiniaturaArquivo({ preview, onRemove }) {
   const { kind, url, name } = preview;
 
   const box =
-    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center";
+    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center relative";
   const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1";
+
+  const RemoveBtn = () => (
+    <button
+      type="button"
+      onClick={onRemove}
+      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center justify-center text-[12px] font-black"
+      title="Remover"
+    >
+      ×
+    </button>
+  );
 
   if (kind === "image") {
     return (
       <div className="flex flex-col items-center">
         <div className={box} title={name}>
           <img src={url} alt={name} className="w-full h-full object-cover" />
+          <RemoveBtn />
         </div>
         <div className={caption}>{name}</div>
       </div>
@@ -1143,40 +1260,49 @@ function MiniaturaArquivo({ preview }) {
     return (
       <div className="flex flex-col items-center">
         <div className={box} title={name}>
-          {/* mini preview simples */}
           <video
             src={url}
             className="w-full h-full object-cover"
             muted
             playsInline
           />
+          <RemoveBtn />
         </div>
         <div className={caption}>{name}</div>
       </div>
     );
   }
 
-  // PDFs e docs: ícone + label curta
   const Icon =
-    kind === "pdf" ? FileText : kind === "doc" ? FileIcon : kind === "xls" ? FileIcon : kind === "ppt" ? FileIcon : FileIcon;
+    kind === "pdf"
+      ? FileText
+      : kind === "doc"
+      ? FileIcon
+      : kind === "xls"
+      ? FileIcon
+      : kind === "ppt"
+      ? FileIcon
+      : FileIcon;
+
+  const label =
+    kind === "pdf"
+      ? { t: "PDF", cls: "text-red-600" }
+      : kind === "doc"
+      ? { t: "DOC", cls: "text-blue-700" }
+      : kind === "xls"
+      ? { t: "XLS", cls: "text-emerald-700" }
+      : kind === "ppt"
+      ? { t: "PPT", cls: "text-orange-700" }
+      : { t: "ARQ", cls: "text-slate-700" };
 
   return (
     <div className="flex flex-col items-center">
       <div className={box} title={name}>
         <div className="flex flex-col items-center justify-center">
-          {kind === "pdf" ? (
-            <div className="text-[10px] font-black text-red-600">PDF</div>
-          ) : kind === "doc" ? (
-            <div className="text-[10px] font-black text-blue-700">DOC</div>
-          ) : kind === "xls" ? (
-            <div className="text-[10px] font-black text-emerald-700">XLS</div>
-          ) : kind === "ppt" ? (
-            <div className="text-[10px] font-black text-orange-700">PPT</div>
-          ) : (
-            <div className="text-[10px] font-black text-slate-700">ARQ</div>
-          )}
+          <div className={`text-[10px] font-black ${label.cls}`}>{label.t}</div>
           <Icon size={18} className="text-slate-500 mt-1" />
         </div>
+        <RemoveBtn />
       </div>
       <div className={caption}>{name}</div>
     </div>
@@ -1215,7 +1341,8 @@ function AcaoCard({ acao, onClick }) {
             {acao?.data_vencimento ? (
               <span className="text-slate-500">
                 {" "}
-                • Venc.: {new Date(acao.data_vencimento).toLocaleDateString("pt-BR")}
+                • Venc.:{" "}
+                {new Date(acao.data_vencimento).toLocaleDateString("pt-BR")}
               </span>
             ) : null}
             {acao?.data_conclusao ? (
