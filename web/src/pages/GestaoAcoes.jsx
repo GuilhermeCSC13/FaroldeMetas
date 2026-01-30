@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { CheckCircle, ExternalLink, Search } from 'lucide-react';
+import { CheckCircle, ExternalLink, Search, Trash2 } from 'lucide-react'; // Adicionei Trash2
 import ModalDetalhesAcao from '../components/tatico/ModalDetalhesAcao';
 
 const GestaoAcoes = () => {
@@ -14,7 +14,7 @@ const GestaoAcoes = () => {
   
   // Filtros
   const [filtroTexto, setFiltroTexto] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Pendente, Vencida, Concluída
+  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Pendente, Vencida, Concluída, Excluída
   const [filtroResponsavel, setFiltroResponsavel] = useState('Todos'); 
   const [filtroOrigem, setFiltroOrigem] = useState('Todas');
 
@@ -30,6 +30,8 @@ const GestaoAcoes = () => {
   const getStatusAcao = (acao) => {
     if (!acao) return 'Pendente';
 
+    // ✅ Prioridade para Excluída
+    if (acao.status === 'Excluída') return 'Excluída';
     if (acao.status === 'Concluída') return 'Concluída';
 
     const hoje = new Date();
@@ -132,15 +134,17 @@ const GestaoAcoes = () => {
     let pendente = 0;
     let vencida = 0;
     let concluida = 0;
+    let excluida = 0; // ✅ Contador para excluídas
 
     acoesFiltradas.forEach(a => {
       const s = getStatusAcao(a);
       if (s === 'Concluída') concluida++;
       else if (s === 'Vencida') vencida++;
+      else if (s === 'Excluída') excluida++;
       else pendente++;
     });
 
-    return { pendente, vencida, concluida };
+    return { pendente, vencida, concluida, excluida };
   }, [acoesFiltradas]);
 
   const abrirModalDetalhes = (acao) => {
@@ -171,7 +175,7 @@ const GestaoAcoes = () => {
         </div>
 
         {/* Cards Resumo */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
             <div className="text-xs text-yellow-700 font-bold uppercase">Pendente</div>
             <div className="text-2xl font-bold text-yellow-900">
@@ -188,6 +192,13 @@ const GestaoAcoes = () => {
             <div className="text-xs text-green-700 font-bold uppercase">Concluída</div>
             <div className="text-2xl font-bold text-green-900">
               {cardsResumo.concluida}
+            </div>
+          </div>
+          {/* ✅ Card Excluída */}
+          <div className="bg-gray-100 border border-gray-300 p-4 rounded-lg">
+            <div className="text-xs text-gray-600 font-bold uppercase">Excluída</div>
+            <div className="text-2xl font-bold text-gray-800">
+              {cardsResumo.excluida}
             </div>
           </div>
         </div>
@@ -222,6 +233,7 @@ const GestaoAcoes = () => {
               <option value="Pendente">Pendente</option>
               <option value="Vencida">Vencida</option>
               <option value="Concluída">Concluída</option>
+              <option value="Excluída">Excluída</option> {/* ✅ Opção Excluída */}
             </select>
           </div>
 
@@ -287,6 +299,7 @@ const GestaoAcoes = () => {
                 ) : (
                   acoesFiltradas.map(acao => {
                     const statusCalculado = getStatusAcao(acao);
+                    const isExcluida = statusCalculado === 'Excluída';
 
                     const evidenciasAcao = Array.isArray(acao.fotos_acao)
                       ? acao.fotos_acao
@@ -307,7 +320,7 @@ const GestaoAcoes = () => {
                     return (
                       <tr
                         key={acao.id}
-                        className="hover:bg-blue-50/30 transition-colors group cursor-pointer"
+                        className={`hover:bg-blue-50/30 transition-colors group cursor-pointer ${isExcluida ? 'opacity-50 bg-gray-50 grayscale' : ''}`}
                         onClick={() => abrirModalDetalhes(acao)}
                       >
                         <td className="p-4">
@@ -317,13 +330,15 @@ const GestaoAcoes = () => {
                                 ? 'bg-green-50 text-green-700 border-green-200'
                                 : statusCalculado === 'Vencida'
                                   ? 'bg-red-50 text-red-700 border-red-200'
-                                  : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                  : statusCalculado === 'Excluída' // ✅ Estilo Excluída
+                                    ? 'bg-gray-100 text-gray-600 border-gray-300'
+                                    : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                             }`}
                           >
                             {statusCalculado}
                           </span>
                         </td>
-                        <td className="p-4 font-medium text-gray-800">
+                        <td className={`p-4 font-medium text-gray-800 ${isExcluida ? 'line-through decoration-slate-400' : ''}`}>
                           {acao.descricao}
                         </td>
                         <td className="p-4">
@@ -356,7 +371,7 @@ const GestaoAcoes = () => {
                           )}
                         </td>
                         <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                          {statusCalculado !== 'Concluída' && (
+                          {statusCalculado !== 'Concluída' && statusCalculado !== 'Excluída' && (
                             <button
                               onClick={() => abrirModalDetalhes(acao)}
                               className="p-1.5 rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
@@ -364,6 +379,9 @@ const GestaoAcoes = () => {
                             >
                               <CheckCircle size={20} />
                             </button>
+                          )}
+                          {statusCalculado === 'Excluída' && (
+                             <Trash2 size={16} className="text-gray-300 mx-auto" />
                           )}
                         </td>
                       </tr>
