@@ -119,22 +119,24 @@ export default function Copiloto() {
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
   /**
-   * ✅ IMPORTANTE (seu banco):
-   * - acoes.responsavel_id é TEXT (confirmado)
-   * Então aqui vamos salvar:
-   * - responsavel_id: login (ou id convertido em string como fallback)
-   * - responsavel_ref: id inteiro (string) para referência
+   * ✅ Criação de Ação
+   * - descricao: Nome da ação
+   * - observacao: Detalhes da ação
    */
   const [novaAcao, setNovaAcao] = useState({
-    descricao: "",
+    descricao: "", // Nome curto
+    observacao: "", // Detalhe longo
     responsavelId: "", // TEXT -> login (preferencial)
     vencimento: "",
   });
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
 
-  // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores) (id inteiro / login)
+  // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
+
+  // ✅ Usuário Logado (para Quem Criou)
+  const [currentUser, setCurrentUser] = useState(null);
 
   // ✅ Responsável digitável (autocomplete)
   const [responsavelQuery, setResponsavelQuery] = useState("");
@@ -154,18 +156,23 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Lifecycle
+      Lifecycle
   ========================= */
   useEffect(() => {
     isMountedRef.current = true;
 
     fetchReunioes();
 
-    // ✅ carregar responsáveis: INOVE -> usuarios_aprovadores
+    // 1. Carregar usuário logado e lista de responsáveis
     (async () => {
       try {
         safeSet(() => setLoadingResponsaveis(true));
 
+        // Pega user da sessão
+        const { data: { user } } = await supabase.auth.getUser();
+        let userLogado = null;
+
+        // Carrega todos aprovadores
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select(
@@ -176,11 +183,19 @@ export default function Copiloto() {
 
         if (error) {
           console.error("carregarResponsaveis (usuarios_aprovadores):", error);
-          safeSet(() => setListaResponsaveis([]));
-          return;
-        }
+        } else {
+          safeSet(() => setListaResponsaveis(data || []));
 
-        safeSet(() => setListaResponsaveis(data || []));
+          // Tenta identificar o usuário logado na lista da Inove
+          if (user?.email) {
+            userLogado = (data || []).find(
+              (u) =>
+                String(u.email || "").toLowerCase() ===
+                String(user.email).toLowerCase()
+            );
+          }
+          safeSet(() => setCurrentUser(userLogado));
+        }
       } finally {
         safeSet(() => setLoadingResponsaveis(false));
       }
@@ -206,8 +221,8 @@ export default function Copiloto() {
     setTab("acoes");
     setAcaoTab("reuniao");
 
-    // ✅ ao trocar reunião, limpa a criação
-    setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+    // ✅ Reset criação
+    setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
     setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
     setRespOpen(false);
@@ -215,8 +230,7 @@ export default function Copiloto() {
   }, [selecionada?.id]);
 
   /* =========================
-     Fetch Reuniões (do dia)
-     ✅ manter "selecionada" atualizada com o objeto mais novo
+      Fetch Reuniões (do dia)
   ========================= */
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -234,7 +248,6 @@ export default function Copiloto() {
     const rows = data || [];
     safeSet(() => setReunioes(rows));
 
-    // ✅ se existe selecionada, troca pelo row atualizado
     if (selecionada?.id) {
       const atualizada = rows.find((r) => r.id === selecionada.id) || null;
       if (atualizada) safeSet(() => setSelecionada(atualizada));
@@ -248,7 +261,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Atas
+      Atas
   ========================= */
   const carregarAtas = async (r) => {
     safeSet(() => {
@@ -291,8 +304,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Gravação
-     ✅ bloquear iniciar se reunião já está Realizada
+      Gravação
   ========================= */
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
@@ -337,8 +349,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Reabrir (senha ADM)
-     ✅ validar no SUPABASE INOVE (usuarios_aprovadores)
+      Reabrir (senha ADM)
   ========================= */
   const validarSenhaAdm = async () => {
     if (!selecionada?.id) return;
@@ -377,9 +388,8 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Upload Evidências
-     - bucket: evidencias
-========================= */
+      Upload Evidências
+  ========================= */
   const uploadEvidencias = async (acaoId, files) => {
     const urls = [];
 
@@ -412,9 +422,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     AÇÕES
-     ✅ Pendências do tipo considerar "Aberta" e "Pendente"
-     ✅ Concluídas desde a última considerar "Concluída/Concluida"
+      AÇÕES
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
@@ -432,7 +440,7 @@ export default function Copiloto() {
 
       const tipoId = r.tipo_reuniao_id;
 
-      // 🔥 PENDÊNCIAS DO TIPO (backlog)
+      // Backlog
       let pendTipo = [];
       if (tipoId) {
         const { data: pend, error: e2 } = await supabase
@@ -448,7 +456,7 @@ export default function Copiloto() {
         pendTipo = pend || [];
       }
 
-      // 🔥 CONCLUÍDAS DESDE A ÚLTIMA REUNIÃO
+      // Concluídas recente
       let concluidasDesde = [];
       if (tipoId && r.data_hora) {
         const { data: ultima, error: e3 } = await supabase
@@ -499,24 +507,26 @@ export default function Copiloto() {
   };
 
   /**
-   * ✅ Criar ação exige: responsável + vencimento + evidência
-   * ✅ E NÃO pode mandar colunas que não existem (ex.: responsavel_login)
+   * ✅ Salvar Ação Atualizado
+   * - Inclui Observação
+   * - Inclui Quem Criou (Login)
    */
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
 
-    const descricao = String(novaAcao.descricao || "").trim();
-    const responsavelId = String(novaAcao.responsavelId || "").trim(); // TEXT (login)
+    const descricao = String(novaAcao.descricao || "").trim(); // NOME
+    const observacao = String(novaAcao.observacao || "").trim(); // DESCRIÇÃO
+    const responsavelId = String(novaAcao.responsavelId || "").trim();
     const vencimento = String(novaAcao.vencimento || "").trim();
 
-    if (!descricao) return alert("Informe a descrição.");
+    if (!descricao) return alert("Informe o Nome da Ação (Descrição).");
     if (!responsavelId) return alert("Selecione o responsável.");
     if (!vencimento) return alert("Informe o vencimento.");
     if ((novasEvidenciasAcao || []).length === 0) {
       return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
     }
 
-    // responsável selecionado (usuarios_aprovadores)
+    // responsável selecionado
     const respRow =
       (listaResponsaveis || []).find(
         (u) => String(u.login || "") === responsavelId
@@ -525,28 +535,33 @@ export default function Copiloto() {
       null;
 
     const responsavelNome = buildNomeSobrenome(respRow);
-    const responsavelRef = respRow?.id != null ? String(respRow.id) : null;
 
-    // ✅ payload 100% compatível com suas colunas (csv)
+    // ✅ Dados de Quem Criou (currentUser)
+    const criadoPorId = currentUser?.id || null;
+    const criadoPorNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
+
     const payloadCriacao = {
-      descricao,
+      descricao,      // Nome
+      observacao,     // Detalhes
       status: "Aberta",
       reuniao_id: selecionada.id,
       tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
-    
-      // 🚫 NÃO gravar texto em UUID
+      
       responsavel_id: null,
-    
-      // ✅ quem é o responsável (INOVE)
+      
       responsavel_aprovador_id: respRow?.id ?? null,
       responsavel_nome: responsavelNome,
-    
+
+      // ✅ Quem criou
+      criado_por_aprovador_id: criadoPorId,
+      criado_por_nome: criadoPorNome,
+      
       data_vencimento: vencimento,
       data_abertura: todayISODate(),
-    
+      
       created_at: nowIso(),
       data_criacao: nowIso(),
-    
+      
       fotos_acao: [],
       fotos: [],
       evidencia_url: null,
@@ -570,13 +585,13 @@ export default function Copiloto() {
 
     if (!urls.length) {
       return alert(
-        "A ação foi criada, mas falhou o upload das evidências. Tente anexar novamente no detalhe."
+        "Ação criada, mas falhou o upload. Tente anexar novamente no detalhe."
       );
     }
 
     const payloadUpdate = {
       fotos_acao: urls,
-      fotos: urls, // compatibilidade
+      fotos: urls,
       evidencia_url: urls[0] || null,
     };
 
@@ -587,14 +602,11 @@ export default function Copiloto() {
 
     if (e2) {
       console.error("salvarAcao update evidencias:", e2);
-      return alert(
-        "Ação criada, mas não consegui gravar as evidências: " +
-          (e2.message || e2)
-      );
+      return alert("Ação criada, mas erro ao gravar evidências: " + e2.message);
     }
 
     // reset
-    setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+    setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
     setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
     setRespOpen(false);
@@ -606,8 +618,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Responsável autocomplete
-     - usa nome_completo / nome / login
+      Responsável autocomplete
   ========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
@@ -629,7 +640,6 @@ export default function Copiloto() {
     const login = String(u?.login || "").trim();
     const fallback = String(u?.id != null ? u.id : "").trim();
 
-    // preferencial: login (porque responsavel_id é TEXT)
     const idText = login || fallback;
 
     setNovaAcao((p) => ({ ...p, responsavelId: idText }));
@@ -637,9 +647,6 @@ export default function Copiloto() {
     setRespOpen(false);
   };
 
-  /* =========================
-     Evidências: adicionar + remover (múltiplas)
-  ========================= */
   const onAddEvidencias = (fileList) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
@@ -655,9 +662,6 @@ export default function Copiloto() {
     });
   };
 
-  /* =========================
-     Previews de evidências (miniaturas)
-  ========================= */
   const previews = useMemo(() => {
     return (novasEvidenciasAcao || []).map((f, idx) => {
       const kind = fileKind(f);
@@ -682,7 +686,7 @@ export default function Copiloto() {
   }, [previews]);
 
   /* =========================
-     UI computed
+      UI computed
   ========================= */
   const reunioesFiltradas = useMemo(() => {
     const q = (busca || "").toLowerCase();
@@ -1023,24 +1027,42 @@ export default function Copiloto() {
                   <div>
                     <div className="text-sm font-black">Criar nova ação</div>
                     <div className="text-xs text-slate-500">
-                      Responsável + vencimento + evidência são obrigatórios.
+                      Criado por: <strong>{currentUser ? buildNomeSobrenome(currentUser) : "..."}</strong>
                     </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  
+                  {/* Nome da Ação (Descrição) */}
                   <div className="lg:col-span-2">
                     <label className="text-xs font-extrabold text-slate-600">
-                      Descrição
+                      Nome da Ação (Descrição Curta)
                     </label>
-                    <textarea
+                    <input
+                      type="text"
                       value={novaAcao.descricao}
                       onChange={(e) =>
                         setNovaAcao((p) => ({ ...p, descricao: e.target.value }))
                       }
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
+                      placeholder="Ex: Ajustar o relatório financeiro"
+                    />
+                  </div>
+
+                  {/* Observação (Descrição Longa) */}
+                  <div className="lg:col-span-2">
+                    <label className="text-xs font-extrabold text-slate-600">
+                      Observação (Detalhes da Ação)
+                    </label>
+                    <textarea
+                      value={novaAcao.observacao}
+                      onChange={(e) =>
+                        setNovaAcao((p) => ({ ...p, observacao: e.target.value }))
+                      }
+                      className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       rows={3}
-                      placeholder="Descreva a ação..."
+                      placeholder="Descreva detalhadamente o que precisa ser feito..."
                     />
                   </div>
 
@@ -1154,6 +1176,7 @@ export default function Copiloto() {
                     onClick={() => {
                       setNovaAcao({
                         descricao: "",
+                        observacao: "",
                         responsavelId: "",
                         vencimento: "",
                       });
