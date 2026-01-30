@@ -826,6 +826,359 @@ export default function Copiloto() {
         </div>
       </div>
 
+      {/* COLUNA DIREITA */}
+      
+    <div className="mt-1 text-xl font-black tracking-tight truncate">
+          {selecionada?.titulo || "Selecione uma reunião à esquerda"}
+        </div>
+
+        <div className="mt-1 text-xs text-slate-500">
+          {selecionada?.data_hora ? toBR(selecionada.data_hora) : "-"}
+        </div>
+
+        {selecionada?.id && (
+          <div className="mt-2 flex items-center gap-2">
+            <span
+              className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${statusBadgeClass(
+                statusLabel(selecionada)
+              )}`}
+            >
+              {statusLabel(selecionada)}
+            </span>
+
+            {isRecording && (
+              <span className="text-[10px] px-2 py-1 rounded-lg font-extrabold bg-blue-600/10 border border-blue-200 text-blue-800">
+                EM GRAVAÇÃO
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Reabrir (ADM) */}
+      <div className="flex items-center gap-2">
+        {selecionada?.id &&
+          String(selecionada?.status || "").trim() === "Realizada" && (
+            <button
+              onClick={() => setShowUnlock(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
+              type="button"
+              title="Reabrir reunião (exige senha do Administrador)"
+            >
+              <Lock size={16} />
+              Reabrir (ADM)
+            </button>
+          )}
+
+        {selecionada?.id && (
+          <button
+            onClick={() => {
+              fetchReunioes();
+              fetchAcoes(selecionada);
+              carregarAtas(selecionada);
+            }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-black text-xs hover:bg-slate-50"
+            type="button"
+            title="Atualizar"
+          >
+            <RefreshCw size={16} />
+            Atualizar
+          </button>
+        )}
+      </div>
+    </div>
+  </div>
+
+  {/* Tabs principais */}
+  <div className="flex flex-wrap gap-2 mb-4">
+    <TabButton
+      active={tab === "acoes"}
+      onClick={() => setTab("acoes")}
+      icon={<ClipboardList size={16} />}
+    >
+      Ações
+    </TabButton>
+
+    <TabButton
+      active={tab === "ata_principal"}
+      onClick={() => setTab("ata_principal")}
+      icon={<FileText size={16} />}
+    >
+      Ata Principal
+    </TabButton>
+
+    <TabButton
+      active={tab === "ata_manual"}
+      onClick={() => setTab("ata_manual")}
+      icon={<StickyNote size={16} />}
+    >
+      Ata Manual
+    </TabButton>
+  </div>
+
+  {/* Conteúdo */}
+  {!selecionada?.id ? (
+    <div className="bg-white border border-slate-200 rounded-2xl p-8 text-sm text-slate-600">
+      Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
+    </div>
+  ) : tab === "acoes" ? (
+    <div className="space-y-4">
+      {/* Subtabs ações */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="flex flex-wrap gap-2">
+          <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
+            Da reunião ({(acoesDaReuniao || []).length})
+          </Pill>
+          <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
+            Pendências do tipo ({(acoesPendentesTipo || []).length})
+          </Pill>
+          <Pill
+            active={acaoTab === "desde_ultima"}
+            onClick={() => setAcaoTab("desde_ultima")}
+          >
+            Concluídas desde a última ({(acoesConcluidasDesdeUltima || []).length})
+          </Pill>
+        </div>
+      </div>
+
+      {/* Lista ações */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="font-black text-sm">
+            {acaoTab === "reuniao"
+              ? "Ações da reunião"
+              : acaoTab === "backlog"
+              ? "Pendências do tipo"
+              : "Concluídas desde a última"}
+          </div>
+          {loadingAcoes && (
+            <div className="text-xs font-extrabold text-blue-700 animate-pulse">
+              CARREGANDO...
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          {(listaAtiva || []).length > 0 ? (
+            (listaAtiva || []).map((a) => (
+              <AcaoCard
+                key={a.id}
+                acao={a}
+                onClick={() => setAcaoSelecionada(a)}
+              />
+            ))
+          ) : (
+            <div className="text-sm text-slate-500">
+              Nenhuma ação encontrada nesta aba.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Criar ação */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-9 h-9 rounded-2xl bg-blue-600/10 border border-blue-200 text-blue-800 flex items-center justify-center">
+            <Plus size={18} />
+          </div>
+          <div>
+            <div className="text-sm font-black">Criar nova ação</div>
+            <div className="text-xs text-slate-500">
+              Responsável + vencimento + evidência são obrigatórios.
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="lg:col-span-2">
+            <label className="text-xs font-extrabold text-slate-600">Descrição</label>
+            <textarea
+              value={novaAcao.descricao}
+              onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
+              className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
+              rows={3}
+              placeholder="Descreva a ação..."
+            />
+          </div>
+
+          {/* Responsável (autocomplete) */}
+          <div className="relative">
+            <label className="text-xs font-extrabold text-slate-600">Responsável</label>
+            <input
+              value={responsavelQuery}
+              onChange={(e) => {
+                setResponsavelQuery(e.target.value);
+                setRespOpen(true);
+              }}
+              onFocus={() => setRespOpen(true)}
+              className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
+              placeholder={loadingResponsaveis ? "Carregando..." : "Digite o nome..."}
+              disabled={loadingResponsaveis}
+            />
+
+            {respOpen && responsaveisFiltrados.length > 0 && (
+              <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                {responsaveisFiltrados.map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => selecionarResponsavel(u)}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
+                  >
+                    <div className="font-semibold">{buildNomeSobrenome(u)}</div>
+                    {u?.email ? (
+                      <div className="text-xs text-slate-500">{u.email}</div>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Vencimento */}
+          <div>
+            <label className="text-xs font-extrabold text-slate-600">Vencimento</label>
+            <input
+              type="date"
+              value={novaAcao.vencimento}
+              onChange={(e) => setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))}
+              className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
+            />
+          </div>
+
+          {/* Evidências */}
+          <div className="lg:col-span-2">
+            <label className="text-xs font-extrabold text-slate-600">Evidências</label>
+
+            <div className="mt-2 flex items-center gap-3">
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer text-sm font-black">
+                <UploadCloud size={16} />
+                Anexar arquivos
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => onAddEvidencias(e.target.files)}
+                />
+              </label>
+
+              <div className="text-xs text-slate-500">
+                {(novasEvidenciasAcao || []).length} arquivo(s)
+              </div>
+            </div>
+
+            {previews.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-3">
+                {previews.map((p) => (
+                  <MiniaturaArquivo
+                    key={p.id}
+                    preview={p}
+                    onRemove={() => removerEvidencia(p.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={salvarAcao}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm shadow-sm"
+          >
+            <Save size={16} />
+            Salvar ação
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+              setResponsavelQuery("");
+              setNovasEvidenciasAcao([]);
+              setRespOpen(false);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-sm"
+          >
+            <X size={16} />
+            Limpar
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : tab === "ata_principal" ? (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <FileText size={18} className="text-slate-600" />
+        <div className="font-black">Ata Principal (somente leitura)</div>
+      </div>
+
+      <div className="text-sm text-slate-700 whitespace-pre-wrap">
+        {ataPrincipal || "Sem ata principal configurada para este tipo de reunião."}
+      </div>
+    </div>
+  ) : (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <StickyNote size={18} className="text-slate-600" />
+          <div className="font-black">Ata Manual</div>
+        </div>
+
+        <div className="flex gap-2">
+          {!editAtaManual ? (
+            <button
+              type="button"
+              onClick={() => setEditAtaManual(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
+            >
+              Editar
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={salvarAtaManual}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs"
+              >
+                <Check size={16} />
+                Salvar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAtaManual(String(selecionada?.ata_manual || "").trim());
+                  setEditAtaManual(false);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
+              >
+                <X size={16} />
+                Cancelar
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {editAtaManual ? (
+        <textarea
+          value={ataManual}
+          onChange={(e) => setAtaManual(e.target.value)}
+          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
+          rows={14}
+          placeholder="Escreva a ata manual..."
+        />
+      ) : (
+        <div className="text-sm text-slate-700 whitespace-pre-wrap">
+          {ataManual || "Nenhuma ata manual ainda."}
+        </div>
+      )}
+    </div>
+  )}
+</div>
+
+
       {/* Modal detalhes ação (Central) */}
       {acaoSelecionada && (
         <ModalDetalhesAcao
