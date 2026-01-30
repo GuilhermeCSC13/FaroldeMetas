@@ -1,7 +1,19 @@
 // src/components/tatico/ModalDetalhesAcao.jsx
 import React, { useEffect, useState } from "react";
 import { CheckCircle, X, Trash2, UploadCloud, RotateCw } from "lucide-react";
-import { supabase } from "../../supabaseClient";
+import { supabase, supabaseInove } from "../../supabaseClient";
+
+// ✅ mesmo padrão do Copiloto: Nome Sobrenome (preferencial)
+function buildNomeSobrenome(u) {
+  const nome = String(u?.nome || "").trim();
+  const sobrenome = String(u?.sobrenome || "").trim();
+  const nomeCompleto = String(u?.nome_completo || "").trim();
+
+  if (nome && sobrenome) return `${nome} ${sobrenome}`;
+  if (nomeCompleto) return nomeCompleto;
+  if (nome) return nome;
+  return "-";
+}
 
 const ModalDetalhesAcao = ({
   aberto,
@@ -27,7 +39,9 @@ const ModalDetalhesAcao = ({
   const [novosArquivosAcao, setNovosArquivosAcao] = useState([]);
   const [novosArquivosConclusao, setNovosArquivosConclusao] = useState([]);
 
-  // Responsável (via tabela usuarios_sistema)
+  // ✅ Responsável (MESMO parâmetro do Copiloto)
+  // - Fonte: supabaseInove -> usuarios_aprovadores
+  // - Campos: id, nome, sobrenome, nome_completo
   const [responsavel, setResponsavel] = useState("");
   const [responsavelId, setResponsavelId] = useState(null);
   const [listaUsuarios, setListaUsuarios] = useState([]);
@@ -63,7 +77,13 @@ const ModalDetalhesAcao = ({
     setNovosArquivosAcao([]);
     setNovosArquivosConclusao([]);
 
-    setResponsavel(acao.responsavel || "");
+    // ✅ mantém compatibilidade: tenta ler responsável por id e/ou nome
+    setResponsavel(
+      acao.responsavel_nome ||
+        acao.responsavel ||
+        acao.responsavelName ||
+        ""
+    );
     setResponsavelId(acao.responsavel_id || null);
 
     if (acao.data_vencimento) {
@@ -73,35 +93,44 @@ const ModalDetalhesAcao = ({
       setVencimento("");
     }
 
-    // Carrega usuários ativos para o select de responsável
+    // ✅ Carrega usuários ativos (SUPABASE INOVE / usuarios_aprovadores)
     const carregarUsuarios = async () => {
       try {
         setLoadingUsuarios(true);
-        const { data, error } = await supabase
-          .from("usuarios_sistema")
-          .select("id, nome, email, ativo")
+
+        const { data, error } = await supabaseInove
+          .from("usuarios_aprovadores")
+          .select("id, nome, sobrenome, nome_completo, ativo")
           .eq("ativo", true)
           .order("nome", { ascending: true });
 
         if (error) {
-          console.error("Erro ao buscar usuários:", error);
+          console.error("Erro ao buscar usuários (INOVE):", error);
           setListaUsuarios([]);
           return;
         }
 
         setListaUsuarios(data || []);
 
-        // Se não tiver responsavel_id mas tiver responsavel (nome),
-        // tenta casar pelo nome para pré-selecionar.
-        if (!acao.responsavel_id && acao.responsavel && data?.length) {
-          const encontrado = data.find(
-            (u) =>
-              u.nome &&
-              u.nome.toLowerCase() === acao.responsavel.toLowerCase()
-          );
-          if (encontrado) {
+        // Se não tiver responsavel_id mas tiver texto do responsável,
+        // tenta casar pelo Nome Sobrenome / nome_completo.
+        const respTexto = String(
+          acao.responsavel_nome || acao.responsavel || ""
+        ).trim();
+
+        if (!acao.responsavel_id && respTexto && (data || []).length) {
+          const respNorm = respTexto.toLowerCase();
+          const encontrado = (data || []).find((u) => {
+            const full = buildNomeSobrenome(u).toLowerCase();
+            const nomeCompleto = String(u?.nome_completo || "")
+              .trim()
+              .toLowerCase();
+            return full === respNorm || (nomeCompleto && nomeCompleto === respNorm);
+          });
+
+          if (encontrado?.id) {
             setResponsavelId(encontrado.id);
-            setResponsavel(encontrado.nome);
+            setResponsavel(buildNomeSobrenome(encontrado));
           }
         }
       } finally {
@@ -119,7 +148,7 @@ const ModalDetalhesAcao = ({
         /[^a-zA-Z0-9.]/g,
         ""
       )}`;
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from("evidencias")
         .upload(fileName, file);
 
@@ -127,7 +156,7 @@ const ModalDetalhesAcao = ({
         const { data: urlData } = supabase.storage
           .from("evidencias")
           .getPublicUrl(fileName);
-        urls.push(urlData.publicUrl);
+        if (urlData?.publicUrl) urls.push(urlData.publicUrl);
       } else {
         console.error("Erro upload evidência:", error);
       }
@@ -151,13 +180,23 @@ const ModalDetalhesAcao = ({
           ? await uploadArquivos(novosArquivosConclusao)
           : [];
 
+      // ✅ mesmo padrão do Copiloto: grava responsavel_id + nomes
+      const u = (listaUsuarios || []).find(
+        (x) => String(x.id) === String(responsavelId)
+      );
+      const nomeResp = responsavelId ? buildNomeSobrenome(u) : (responsavel || "");
+
       const payload = {
         observacao: obsAcao,
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
         fotos_conclusao: [...fotosConclusao, ...novasUrlsConclusao],
-        responsavel: responsavel || null,
-        responsavel_id: responsavelId || null, // usa a tabela de usuários
+
+        // ✅ mesmos campos usados no Copiloto
+        responsavel_id: responsavelId || null,
+        responsavel: nomeResp || null,
+        responsavel_nome: nomeResp || null,
+
         data_vencimento: vencimento || null,
       };
 
@@ -166,11 +205,7 @@ const ModalDetalhesAcao = ({
         payload.fotos = payload.fotos_acao;
       }
 
-      const { error } = await supabase
-        .from("acoes")
-        .update(payload)
-        .eq("id", acao.id);
-
+      const { error } = await supabase.from("acoes").update(payload).eq("id", acao.id);
       if (error) throw error;
 
       setFotosAcao(payload.fotos_acao);
@@ -178,9 +213,12 @@ const ModalDetalhesAcao = ({
       setNovosArquivosAcao([]);
       setNovosArquivosConclusao([]);
 
+      // mantém label em tela
+      setResponsavel(nomeResp || "");
+
       if (typeof onAfterSave === "function") onAfterSave(acao.id);
     } catch (err) {
-      alert("Erro ao salvar alterações da ação: " + err.message);
+      alert("Erro ao salvar alterações da ação: " + (err?.message || err));
     } finally {
       setSaving(false);
     }
@@ -203,17 +241,13 @@ const ModalDetalhesAcao = ({
 
     setDeleting(true);
     try {
-      const { error } = await supabase
-        .from("acoes")
-        .delete()
-        .eq("id", acao.id);
-
+      const { error } = await supabase.from("acoes").delete().eq("id", acao.id);
       if (error) throw error;
 
       if (typeof onAfterDelete === "function") onAfterDelete(acao.id);
       onClose();
     } catch (err) {
-      alert("Erro ao excluir ação: " + err.message);
+      alert("Erro ao excluir ação: " + (err?.message || err));
     } finally {
       setDeleting(false);
     }
@@ -243,7 +277,7 @@ const ModalDetalhesAcao = ({
       setStatusLocal("Aberta");
       if (typeof onAfterSave === "function") onAfterSave(acao.id);
     } catch (err) {
-      alert("Erro ao reabrir ação: " + err.message);
+      alert("Erro ao reabrir ação: " + (err?.message || err));
     } finally {
       setReabrindo(false);
     }
@@ -255,7 +289,7 @@ const ModalDetalhesAcao = ({
   const podeConcluirLocal =
     statusLocal !== "Concluída" &&
     resultado.trim().length > 0 &&
-    (fotosConclusao.length + novosArquivosConclusao.length) > 0;
+    fotosConclusao.length + novosArquivosConclusao.length > 0;
 
   const handleFinalizarClick = async () => {
     if (!podeConcluirLocal) {
@@ -265,10 +299,10 @@ const ModalDetalhesAcao = ({
       return;
     }
 
-    await handleSalvar(); // garante persistência dos campos
+    await handleSalvar();
 
     if (typeof onConcluir === "function") {
-      await onConcluir(); // parent marca como Concluída e recarrega lista
+      await onConcluir();
     }
 
     setStatusLocal("Concluída");
@@ -285,12 +319,15 @@ const ModalDetalhesAcao = ({
 
   const inputsDesabilitados = statusLocal === "Concluída";
 
-  // helper para mudança de responsável
+  // ✅ mudança de responsável (usuarios_aprovadores)
   const handleChangeResponsavel = (id) => {
-    const novoId = id || null;
+    const novoId = id ? String(id) : null;
     setResponsavelId(novoId);
-    const usuario = listaUsuarios.find((u) => u.id === novoId);
-    setResponsavel(usuario ? usuario.nome : "");
+
+    const usuario = (listaUsuarios || []).find(
+      (u) => String(u.id) === String(novoId)
+    );
+    setResponsavel(usuario ? buildNomeSobrenome(usuario) : "");
   };
 
   return (
@@ -356,13 +393,12 @@ const ModalDetalhesAcao = ({
                   >
                     <option value="">
                       {loadingUsuarios
-                        ? "Carregando usuários..."
+                        ? "Carregando responsáveis..."
                         : "Selecione um responsável"}
                     </option>
                     {listaUsuarios.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.nome}
-                        {u.email ? ` (${u.email})` : ""}
+                        {buildNomeSobrenome(u)}
                       </option>
                     ))}
                   </select>
@@ -434,9 +470,7 @@ const ModalDetalhesAcao = ({
                         accept="image/*"
                         className="hidden"
                         onChange={(e) =>
-                          setNovosArquivosAcao(
-                            Array.from(e.target.files || [])
-                          )
+                          setNovosArquivosAcao(Array.from(e.target.files || []))
                         }
                       />
                     </label>
@@ -449,12 +483,11 @@ const ModalDetalhesAcao = ({
                   </>
                 )}
 
-                {fotosAcao.length === 0 &&
-                  novosArquivosAcao.length === 0 && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Nenhuma evidência anexada à ação.
-                    </p>
-                  )}
+                {fotosAcao.length === 0 && novosArquivosAcao.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Nenhuma evidência anexada à ação.
+                  </p>
+                )}
               </div>
             </div>
           </div>
