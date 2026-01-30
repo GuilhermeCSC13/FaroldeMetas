@@ -12,7 +12,7 @@ import { supabase } from "../supabaseClient";
 const RecordingContext = createContext(null);
 
 const STORAGE_BUCKET = "gravacoes";
-const SEGMENT_MS = 5 * 60 * 1000;
+const SEGMENT_MS = 5 * 60 * 1000; // 5 minutos por segmento
 const MIME_TYPE_PRIMARY = "video/webm;codecs=vp8,opus";
 const MIME_TYPE_FALLBACK = "video/webm";
 
@@ -136,15 +136,29 @@ export function RecordingProvider({ children }) {
     }
   };
 
+  // ✅ CORREÇÃO 1: Worker robusto com try/catch dentro do loop
   const runUploadWorker = async () => {
     if (uploadWorkerRunningRef.current) return;
     uploadWorkerRunningRef.current = true;
 
     try {
       while (uploadQueueRef.current.length > 0) {
-        const item = uploadQueueRef.current.shift();
-        if (!item) continue;
-        await uploadPart(item.blob, item.partNumber);
+        // Pega o item sem remover (peek)
+        const item = uploadQueueRef.current[0];
+        if (!item) {
+          uploadQueueRef.current.shift();
+          continue;
+        }
+
+        try {
+          await uploadPart(item.blob, item.partNumber);
+          // Sucesso: remove da fila
+          uploadQueueRef.current.shift();
+        } catch (err) {
+          console.error(`Falha crítica upload part ${item.partNumber}:`, err);
+          // Erro fatal: Remove da fila para não travar o fluxo das próximas partes
+          uploadQueueRef.current.shift();
+        }
       }
     } finally {
       uploadWorkerRunningRef.current = false;
@@ -249,6 +263,7 @@ export function RecordingProvider({ children }) {
     } catch {}
   };
 
+  // ✅ CORREÇÃO 2: Timeslice de 1000ms
   const startSegment = () => {
     const rec = createRecorder();
     recorderRef.current = rec;
@@ -260,13 +275,12 @@ export function RecordingProvider({ children }) {
       chunks.push(e.data);
     };
 
-    // ✅ onstop agora só fecha o blob e manda pra fila.
-    // ❌ NÃO finaliza aqui (não confiar no onstop)
     rec.onstop = async () => {
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
         const partNumber = ++partNumberRef.current;
 
+        // Com start(1000), a chance de size 0 é mínima
         if (blob.size > 0) enqueueUpload(blob, partNumber);
 
         if (!stopAllRequestedRef.current) {
@@ -277,7 +291,8 @@ export function RecordingProvider({ children }) {
       }
     };
 
-    rec.start();
+    // Garante que o evento ondataavailable dispare a cada 1s
+    rec.start(1000);
   };
 
   const rotateSegment = async () => {
