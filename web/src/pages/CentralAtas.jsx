@@ -41,7 +41,7 @@ export default function CentralAtas() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [jobLoading, setJobLoading] = useState(false); // ✅ Estado para o botão de forçar
+  const [jobLoading, setJobLoading] = useState(false);
 
   // --- MODAL DE AÇÃO (INTEGRADO) ---
   const [acaoParaModal, setAcaoParaModal] = useState(null);
@@ -80,50 +80,70 @@ export default function CentralAtas() {
   const handleForceReprocess = async () => {
     if (!selectedAta?.id) return;
     
-    // Confirmação para evitar cliques acidentais
-    if (!window.confirm("Deseja solicitar a atualização do vídeo e da ata (reprocessamento)? Isso pode levar alguns minutos.")) return;
+    // Confirmação
+    if (!window.confirm("Deseja forçar a atualização do vídeo e da ata?\n\nIsso colocará a reunião na fila de processamento novamente.")) return;
 
     setJobLoading(true);
     try {
       const jobType = "BACKFILL_COMPILE_ATA";
 
-      // Tenta inserir um novo job na fila
-      const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
-        {
-          reuniao_id: selectedAta.id,
-          job_type: jobType,
-          status: "PENDENTE",
-          next_run_at: new Date().toISOString(),
-        },
-      ]);
+      // 1. Atualiza IMEDIATAMENTE o status na tabela 'reunioes' para travar a UI e persistir o loading
+      const { error: updateReuniaoErr } = await supabase
+        .from("reunioes")
+        .update({
+          gravacao_status: 'PENDENTE',
+          ata_ia_status: 'PENDENTE',
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", selectedAta.id);
 
-      if (insertErr) {
-        // Se der erro de chave duplicada (já existe um job), forçamos update para PENDENTE
-        if (String(insertErr.message || "").toLowerCase().includes("duplicate key") || insertErr.code === "23505") {
-          const { error: upErr } = await supabase
-            .from("reuniao_processing_queue")
-            .update({
-              status: "PENDENTE",
-              last_error: null,
-              result: null,
-              next_run_at: new Date().toISOString(),
-            })
-            .eq("reuniao_id", selectedAta.id)
-            .eq("job_type", jobType);
+      if (updateReuniaoErr) throw updateReuniaoErr;
 
-          if (upErr) throw upErr;
-        } else {
-          throw insertErr;
-        }
+      // 2. Insere ou Atualiza o Job na Fila
+      // Verifica se já existe job pendente para não duplicar desnecessariamente
+      const { data: existingJob } = await supabase
+        .from("reuniao_processing_queue")
+        .select("id")
+        .eq("reuniao_id", selectedAta.id)
+        .eq("job_type", jobType)
+        .single();
+
+      if (existingJob) {
+        // Se já existe, reseta ele para rodar agora
+        const { error: upErr } = await supabase
+          .from("reuniao_processing_queue")
+          .update({
+            status: "PENDENTE",
+            last_error: null,
+            result: null,
+            next_run_at: new Date().toISOString(),
+          })
+          .eq("id", existingJob.id);
+        if (upErr) throw upErr;
+      } else {
+        // Se não existe, cria novo
+        const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
+          {
+            reuniao_id: selectedAta.id,
+            job_type: jobType,
+            status: "PENDENTE",
+            next_run_at: new Date().toISOString(),
+          },
+        ]);
+        if (insertErr) throw insertErr;
       }
 
-      // Atualiza o status local para refletir que vai processar
-      setSelectedAta(prev => ({ ...prev, gravacao_status: 'PENDENTE', ata_ia_status: 'PENDENTE' }));
+      // 3. Atualiza interface localmente
+      const novaAta = { ...selectedAta, gravacao_status: 'PENDENTE', ata_ia_status: 'PENDENTE' };
+      setSelectedAta(novaAta);
       
-      // Inicia o polling imediatamente
-      checkAutoRefresh({ ...selectedAta, gravacao_status: 'PENDENTE' });
+      // Atualiza também na lista da esquerda
+      setAtas(prev => prev.map(a => a.id === novaAta.id ? { ...a, ...novaAta } : a));
       
-      alert("Solicitação enviada! O sistema está atualizando o vídeo e a ata.");
+      // 4. Inicia o polling para assistir o progresso
+      checkAutoRefresh(novaAta);
+      
+      alert("Solicitação enviada! O sistema processará em breve.");
     } catch (e) {
       console.error("Erro ao solicitar reprocessamento:", e);
       alert("Erro ao solicitar atualização: " + (e?.message || e));
@@ -147,14 +167,15 @@ export default function CentralAtas() {
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
+    // Verifica se algum dos status indica processamento
     const precisaAtualizar = 
-      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE") ||
+      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO") ||
       (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
         refreshSelectedAta(ata.id);
-      }, 5000); // 5 segundos
+      }, 4000); // 4 segundos para resposta rápida
     }
   };
 
@@ -168,18 +189,30 @@ export default function CentralAtas() {
         .single();
 
       if (!error && data) {
-        setSelectedAta(prev => (prev?.id === data.id ? { ...prev, ...data } : data));
+        // Atualiza estado apenas se mudou algo crítico ou se finalizou
+        setSelectedAta(prev => {
+           // Se mudou algo, retorna o novo objeto, senão mantém o prev
+           if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
+           return prev;
+        });
+
+        // Atualiza lista lateral
         setAtas(prev => prev.map(r => r.id === data.id ? { ...r, ...data } : r));
         
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
         const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
+        
         const aindaProcessando = 
-            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE") ||
+            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO") ||
             (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
             
         if (!aindaProcessando) {
              stopPolling();
+             // Se terminou, recarrega as URLs de mídia (vídeo novo)
              hydrateMediaUrls(data);
+             // Recarrega detalhes (caso a IA tenha gerado ações novas)
+             carregarDetalhes(data);
+             if (data.pauta) setEditedPauta(data.pauta);
         }
       }
     } catch (e) {
@@ -192,10 +225,16 @@ export default function CentralAtas() {
   // =========================
   const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
     if (!bucket || !filePath) return null;
-    const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
-    if (signed?.signedUrl) return signed.signedUrl;
+    // Tenta obter URL pública primeiro (mais rápido se o bucket for public)
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
-    return pub?.publicUrl || null;
+    if (pub?.publicUrl) {
+        // Verifica se é acessível (opcional, mas bom para garantir)
+        return pub.publicUrl;
+    }
+    
+    // Fallback para assinada
+    const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
+    return signed?.signedUrl || null;
   };
 
   const hydrateMediaUrls = async (ata) => {
@@ -468,7 +507,7 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                         title="Se o vídeo ou a ata não geraram, clique aqui para tentar novamente."
                       >
                         {jobLoading || isProcessingSomething ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-                        {isProcessingSomething ? "Atualizando..." : "Atualizar Vídeo e ATA"}
+                        {isProcessingSomething ? "Processando..." : "Atualizar Vídeo e ATA"}
                       </button>
                     </div>
 
