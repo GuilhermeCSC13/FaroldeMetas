@@ -18,8 +18,6 @@ import {
   File as FileIcon,
   Check,
   Loader2,
-
-  // ✅ IMPORTS QUE ESTAVAM FALTANDO (causavam tela branca)
   Trash2,
   User,
   Clock,
@@ -57,7 +55,6 @@ function secondsToMMSS(s) {
     .padStart(2, "0");
   return `${mm}:${ss}`;
 }
-
 function buildNomeSobrenome(u) {
   if (!u) return "";
   const nomeCompleto = String(u?.nome_completo || "").trim();
@@ -69,11 +66,9 @@ function buildNomeSobrenome(u) {
   if (nome) return nome;
   return u.email || "-";
 }
-
 function sanitizeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
 }
-
 function fileKind(file) {
   const t = String(file?.type || "").toLowerCase();
   const n = String(file?.name || "").toLowerCase();
@@ -235,7 +230,12 @@ export default function Copiloto() {
     setAcaoTab("reuniao");
 
     // reset criação
-    setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
+    setNovaAcao({
+      descricao: "",
+      observacao: "",
+      responsavelId: "",
+      vencimento: "",
+    });
     setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
     setRespOpen(false);
@@ -347,11 +347,47 @@ export default function Copiloto() {
     try {
       await stopRecording();
 
+      // ✅ Marcar reunião como realizada
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
           .update({ status: "Realizada" })
           .eq("id", selecionada.id);
+      }
+
+      // ✅ PASSO CRÍTICO: ENFILEIRAR PROCESSAMENTO COM bucket/prefix
+      // - current.storageBucket / current.storagePrefix devem ser definidos pelo RecordingContext
+      // - fallback abaixo é seguro, MAS o ideal é bater 100% com o caminho real dos parts
+      if (selecionada?.id) {
+        const bucket = current?.storageBucket || "gravacoes";
+
+        // ⚠️ Ajuste esse fallback se o seu storage organiza diferente:
+        // Ex: se seus parts ficam em "gravacoes/reunioes/<id>/part_000001.webm",
+        // então prefix = `reunioes/${selecionada.id}`
+        const prefix = current?.storagePrefix || `reunioes/${selecionada.id}`;
+
+        const { error: qErr } = await supabase
+          .from("reuniao_processing_queue")
+          .insert([
+            {
+              reuniao_id: selecionada.id,
+              job_type: "BACKFILL_COMPILE_ATA",
+              status: "PENDENTE",
+              attempts: 0,
+              next_run_at: new Date().toISOString(),
+              storage_bucket: bucket,
+              storage_prefix: prefix,
+              result: {}, // ✅ evita erro NOT NULL em "result"
+            },
+          ]);
+
+        if (qErr) {
+          console.error("enqueue reuniao_processing_queue:", qErr);
+          alert(
+            "Gravação encerrada, mas falhou ao enfileirar processamento: " +
+              (qErr.message || qErr)
+          );
+        }
       }
 
       await fetchReunioes();
@@ -412,11 +448,9 @@ export default function Copiloto() {
         file.name
       )}`;
 
-      const { error } = await supabase.storage.from("evidencias").upload(
-        fileName,
-        file,
-        { upsert: false }
-      );
+      const { error } = await supabase.storage
+        .from("evidencias")
+        .upload(fileName, file, { upsert: false });
 
       if (error) {
         console.error("Erro upload evidência:", error);
@@ -549,7 +583,11 @@ export default function Copiloto() {
       let criadorFinalId = currentUser?.id || null;
       let criadorFinalNome = buildNomeSobrenome(currentUser);
 
-      if (!criadorFinalNome || criadorFinalNome === "-" || criadorFinalNome === "Usuário") {
+      if (
+        !criadorFinalNome ||
+        criadorFinalNome === "-" ||
+        criadorFinalNome === "Usuário"
+      ) {
         criadorFinalNome = currentUser?.email || "Sistema";
       }
 
@@ -560,7 +598,9 @@ export default function Copiloto() {
         if (user?.email) {
           criadorFinalNome = user.email;
           const found = (listaResponsaveis || []).find(
-            (u) => String(u.email || "").toLowerCase() === String(user.email).toLowerCase()
+            (u) =>
+              String(u.email || "").toLowerCase() ===
+              String(user.email).toLowerCase()
           );
           if (found) {
             criadorFinalId = found.id;
@@ -577,6 +617,7 @@ export default function Copiloto() {
         tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
         tipo_reuniao: nomeTipoReuniao || selecionada.tipo_reuniao || "Geral",
 
+        // responsavel_id é TEXT no seu schema -> não usar UUID aqui
         responsavel_id: null,
 
         responsavel_aprovador_id: respRow?.id ?? null,
@@ -630,7 +671,9 @@ export default function Copiloto() {
 
         if (e2) {
           console.error("salvarAcao update evidencias:", e2);
-          alert("Ação criada, mas houve erro ao vincular os arquivos: " + e2.message);
+          alert(
+            "Ação criada, mas houve erro ao vincular os arquivos: " + e2.message
+          );
         }
       }
 
@@ -662,7 +705,9 @@ export default function Copiloto() {
         const nome = buildNomeSobrenome(u).toLowerCase();
         const login = String(u?.login || "").toLowerCase();
         const email = String(u?.email || "").toLowerCase();
-        return nome.includes(q) || login.includes(q) || (email && email.includes(q));
+        return (
+          nome.includes(q) || login.includes(q) || (email && email.includes(q))
+        );
       })
       .slice(0, 10);
   }, [responsavelQuery, listaResponsaveis]);
@@ -698,7 +743,13 @@ export default function Copiloto() {
       const kind = fileKind(f);
       const needsUrl = kind === "image" || kind === "video";
       const url = needsUrl ? URL.createObjectURL(f) : null;
-      return { id: `${idx}-${f.name}-${f.size}`, file: f, name: f.name, kind, url };
+      return {
+        id: `${idx}-${f.name}-${f.size}`,
+        file: f,
+        name: f.name,
+        kind,
+        url,
+      };
     });
   }, [novasEvidenciasAcao]);
 
@@ -715,7 +766,9 @@ export default function Copiloto() {
   ========================= */
   const reunioesFiltradas = useMemo(() => {
     const q = (busca || "").toLowerCase();
-    return (reunioes || []).filter((r) => (r.titulo || "").toLowerCase().includes(q));
+    return (reunioes || []).filter((r) =>
+      (r.titulo || "").toLowerCase().includes(q)
+    );
   }, [reunioes, busca]);
 
   const statusLabel = (r) => {
@@ -798,13 +851,16 @@ export default function Copiloto() {
                       ? "bg-blue-50 border-l-4 border-l-blue-600"
                       : "border-l-4 border-l-transparent"
                   } ${isRecording ? "opacity-80 cursor-not-allowed" : ""}`}
+                  type="button"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-black text-xs truncate">
                         {r.titulo || "Sem título"}
                       </div>
-                      <div className="text-[11px] text-slate-500 mt-1">{toBR(r.data_hora)}</div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        {toBR(r.data_hora)}
+                      </div>
                     </div>
 
                     <span
@@ -820,7 +876,9 @@ export default function Copiloto() {
             })}
 
             {reunioesFiltradas.length === 0 && (
-              <div className="p-6 text-xs text-slate-500">Nenhuma reunião nesta data.</div>
+              <div className="p-6 text-xs text-slate-500">
+                Nenhuma reunião nesta data.
+              </div>
             )}
           </div>
 
@@ -847,6 +905,7 @@ export default function Copiloto() {
               <button
                 onClick={onStop}
                 className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-slate-800 transition-all"
+                type="button"
               >
                 ENCERRAR
               </button>
@@ -863,6 +922,7 @@ export default function Copiloto() {
                     ? "Reunião está REALIZADA. Use Reabrir (ADM) para gravar novamente."
                     : ""
                 }
+                type="button"
               >
                 INICIAR GRAVAÇÃO
               </button>
@@ -965,18 +1025,25 @@ export default function Copiloto() {
           {/* Conteúdo */}
           {!selecionada?.id ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-sm text-slate-600">
-              Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
+              Selecione uma reunião na coluna da esquerda para visualizar ações e
+              atas.
             </div>
           ) : tab === "acoes" ? (
             <div className="space-y-4">
               {/* Subtabs ações */}
               <div className="bg-white border border-slate-200 rounded-2xl p-4">
                 <div className="flex flex-wrap gap-2">
-                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
+                  <Pill
+                    active={acaoTab === "reuniao"}
+                    onClick={() => setAcaoTab("reuniao")}
+                  >
                     Da reunião ({(acoesDaReuniao || []).length})
                   </Pill>
 
-                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
+                  <Pill
+                    active={acaoTab === "backlog"}
+                    onClick={() => setAcaoTab("backlog")}
+                  >
                     Pendências do tipo ({(acoesPendentesTipo || []).length})
                   </Pill>
 
@@ -984,7 +1051,8 @@ export default function Copiloto() {
                     active={acaoTab === "desde_ultima"}
                     onClick={() => setAcaoTab("desde_ultima")}
                   >
-                    Concluídas desde a última ({(acoesConcluidasDesdeUltima || []).length})
+                    Concluídas desde a última (
+                    {(acoesConcluidasDesdeUltima || []).length})
                   </Pill>
                 </div>
               </div>
@@ -1009,7 +1077,11 @@ export default function Copiloto() {
                 <div className="space-y-3">
                   {(listaAtiva || []).length > 0 ? (
                     (listaAtiva || []).map((a) => (
-                      <AcaoCard key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
+                      <AcaoCard
+                        key={a.id}
+                        acao={a}
+                        onClick={() => setAcaoSelecionada(a)}
+                      />
                     ))
                   ) : (
                     <div className="text-sm text-slate-500">
@@ -1029,7 +1101,9 @@ export default function Copiloto() {
                     <div className="text-sm font-black">Criar nova ação</div>
                     <div className="text-xs text-slate-500">
                       Criado por:{" "}
-                      <strong>{currentUser ? buildNomeSobrenome(currentUser) : "..."}</strong>
+                      <strong>
+                        {currentUser ? buildNomeSobrenome(currentUser) : "..."}
+                      </strong>
                     </div>
                   </div>
                 </div>
@@ -1057,7 +1131,10 @@ export default function Copiloto() {
                     <textarea
                       value={novaAcao.observacao}
                       onChange={(e) =>
-                        setNovaAcao((p) => ({ ...p, observacao: e.target.value }))
+                        setNovaAcao((p) => ({
+                          ...p,
+                          observacao: e.target.value,
+                        }))
                       }
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       rows={3}
@@ -1077,7 +1154,11 @@ export default function Copiloto() {
                       }}
                       onFocus={() => setRespOpen(true)}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                      placeholder={loadingResponsaveis ? "Carregando..." : "Digite o nome..."}
+                      placeholder={
+                        loadingResponsaveis
+                          ? "Carregando..."
+                          : "Digite o nome..."
+                      }
                       disabled={loadingResponsaveis}
                     />
 
@@ -1090,7 +1171,9 @@ export default function Copiloto() {
                             onClick={() => selecionarResponsavel(u)}
                             className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
                           >
-                            <div className="font-semibold">{buildNomeSobrenome(u)}</div>
+                            <div className="font-semibold">
+                              {buildNomeSobrenome(u)}
+                            </div>
                             <div className="text-xs text-slate-500">
                               {u?.login ? `Login: ${u.login}` : null}
                               {u?.email ? ` • ${u.email}` : null}
@@ -1109,7 +1192,10 @@ export default function Copiloto() {
                       type="date"
                       value={novaAcao.vencimento}
                       onChange={(e) =>
-                        setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))
+                        setNovaAcao((p) => ({
+                          ...p,
+                          vencimento: e.target.value,
+                        }))
                       }
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                     />
@@ -1195,7 +1281,8 @@ export default function Copiloto() {
               </div>
 
               <div className="text-sm text-slate-700 whitespace-pre-wrap">
-                {ataPrincipal || "Sem ata principal configurada para este tipo de reunião."}
+                {ataPrincipal ||
+                  "Sem ata principal configurada para este tipo de reunião."}
               </div>
             </div>
           ) : (
@@ -1297,12 +1384,14 @@ export default function Copiloto() {
               <button
                 onClick={validarSenhaAdm}
                 className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
+                type="button"
               >
                 Liberar
               </button>
               <button
                 onClick={() => setShowUnlock(false)}
                 className="border px-4 py-2 rounded-xl text-xs"
+                type="button"
               >
                 Cancelar
               </button>
@@ -1444,14 +1533,20 @@ function AcaoCard({ acao, onClick }) {
           {excluded ? (
             <Trash2 size={14} className="text-gray-400" />
           ) : (
-            <div className={`w-2.5 h-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-blue-500"}`} />
+            <div
+              className={`w-2.5 h-2.5 rounded-full ${
+                done ? "bg-emerald-500" : "bg-blue-500"
+              }`}
+            />
           )}
         </div>
 
         <div className="flex-1">
           <div
             className={`text-sm font-semibold ${
-              done || excluded ? "line-through text-slate-400" : "text-slate-900"
+              done || excluded
+                ? "line-through text-slate-400"
+                : "text-slate-900"
             }`}
           >
             {acao?.descricao || "-"}
