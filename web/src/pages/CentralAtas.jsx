@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
-import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao"; // ✅ Importado
+import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 import {
   Calendar,
   User,
@@ -17,11 +17,11 @@ import {
   PlayCircle,
   Headphones,
   ExternalLink,
-  MessageSquare,
   Cpu,
   Loader2,
   Clock,
-  ImageIcon
+  ImageIcon,
+  RefreshCw // ✅ Ícone para o botão
 } from "lucide-react";
 
 export default function CentralAtas() {
@@ -41,6 +41,7 @@ export default function CentralAtas() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [jobLoading, setJobLoading] = useState(false); // ✅ Estado para o botão de forçar
 
   // --- MODAL DE AÇÃO (INTEGRADO) ---
   const [acaoParaModal, setAcaoParaModal] = useState(null);
@@ -62,7 +63,7 @@ export default function CentralAtas() {
 
       hydrateMediaUrls(selectedAta);
       
-      // ✅ Inicia monitoramento automático se necessário
+      // Inicia monitoramento automático se necessário
       checkAutoRefresh(selectedAta);
     } else {
       setMediaUrls({ video: null, audio: null });
@@ -72,11 +73,67 @@ export default function CentralAtas() {
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAta?.id]); 
-  // Nota: dependência apenas no ID para não resetar poll a cada update pequeno, 
-  // mas o checkAutoRefresh cuida de parar se concluir.
 
   // =========================
-  // ✅ Polling Automático (Substitui botões manuais)
+  // ✅ Lógica de Reprocessamento (Botão "Atualizar Vídeo e ATA")
+  // =========================
+  const handleForceReprocess = async () => {
+    if (!selectedAta?.id) return;
+    
+    // Confirmação para evitar cliques acidentais
+    if (!window.confirm("Deseja solicitar a atualização do vídeo e da ata (reprocessamento)? Isso pode levar alguns minutos.")) return;
+
+    setJobLoading(true);
+    try {
+      const jobType = "BACKFILL_COMPILE_ATA";
+
+      // Tenta inserir um novo job na fila
+      const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
+        {
+          reuniao_id: selectedAta.id,
+          job_type: jobType,
+          status: "PENDENTE",
+          next_run_at: new Date().toISOString(),
+        },
+      ]);
+
+      if (insertErr) {
+        // Se der erro de chave duplicada (já existe um job), forçamos update para PENDENTE
+        if (String(insertErr.message || "").toLowerCase().includes("duplicate key") || insertErr.code === "23505") {
+          const { error: upErr } = await supabase
+            .from("reuniao_processing_queue")
+            .update({
+              status: "PENDENTE",
+              last_error: null,
+              result: null,
+              next_run_at: new Date().toISOString(),
+            })
+            .eq("reuniao_id", selectedAta.id)
+            .eq("job_type", jobType);
+
+          if (upErr) throw upErr;
+        } else {
+          throw insertErr;
+        }
+      }
+
+      // Atualiza o status local para refletir que vai processar
+      setSelectedAta(prev => ({ ...prev, gravacao_status: 'PENDENTE', ata_ia_status: 'PENDENTE' }));
+      
+      // Inicia o polling imediatamente
+      checkAutoRefresh({ ...selectedAta, gravacao_status: 'PENDENTE' });
+      
+      alert("Solicitação enviada! O sistema está atualizando o vídeo e a ata.");
+    } catch (e) {
+      console.error("Erro ao solicitar reprocessamento:", e);
+      alert("Erro ao solicitar atualização: " + (e?.message || e));
+    } finally {
+      setJobLoading(false);
+    }
+  };
+
+  // =========================
+  // ✅ Polling Automático
   // =========================
   const stopPolling = () => {
     if (pollingRef.current) {
@@ -90,7 +147,6 @@ export default function CentralAtas() {
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
-    // Se algum estiver processando ou pendente, inicia polling
     const precisaAtualizar = 
       (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE") ||
       (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
@@ -112,11 +168,9 @@ export default function CentralAtas() {
         .single();
 
       if (!error && data) {
-        // Atualiza estado local mantendo seleção
         setSelectedAta(prev => (prev?.id === data.id ? { ...prev, ...data } : data));
         setAtas(prev => prev.map(r => r.id === data.id ? { ...r, ...data } : r));
         
-        // Verifica se ainda precisa continuar polling
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
         const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
         const aindaProcessando = 
@@ -125,7 +179,7 @@ export default function CentralAtas() {
             
         if (!aindaProcessando) {
              stopPolling();
-             hydrateMediaUrls(data); // atualiza video se ficou pronto
+             hydrateMediaUrls(data);
         }
       }
     } catch (e) {
@@ -134,7 +188,7 @@ export default function CentralAtas() {
   };
 
   // =========================
-  // ✅ helpers: signed urls
+  // Helpers & Dados
   // =========================
   const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
     if (!bucket || !filePath) return null;
@@ -157,9 +211,6 @@ export default function CentralAtas() {
     }
   };
 
-  // =========================
-  // ✅ Dados principais
-  // =========================
   const fetchAtas = async () => {
     const { data, error } = await supabase
       .from("reunioes")
@@ -176,7 +227,6 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    // 1) Ações desta reunião
     const { data: criadas } = await supabase
       .from("acoes")
       .select("*")
@@ -184,7 +234,6 @@ export default function CentralAtas() {
       .order("data_criacao", { ascending: false });
     setAcoesCriadas(criadas || []);
 
-    // 2) Pendências Anteriores (mesmo TÍTULO)
     try {
       const tituloBase = (ata.titulo || "").trim();
       if (!tituloBase) {
@@ -219,16 +268,14 @@ export default function CentralAtas() {
   };
 
   // =========================
-  // ✅ Lógica Nova Ação -> Modal
+  // Ações de UI
   // =========================
   const handleNovaAcao = async () => {
       if (!selectedAta?.id) return;
-      
-      // Cria um rascunho
       const { data, error } = await supabase.from('acoes').insert([{
           reuniao_id: selectedAta.id,
           status: 'Aberta',
-          descricao: 'Nova Ação', // placeholder
+          descricao: 'Nova Ação',
           data_criacao: new Date().toISOString()
       }]).select().single();
 
@@ -236,14 +283,9 @@ export default function CentralAtas() {
           alert("Erro ao iniciar ação: " + error.message);
           return;
       }
-
-      // Abre o modal com o rascunho
       setAcaoParaModal(data);
   };
 
-  // =========================
-  // --- OUTRAS FUNÇÕES ---
-  // =========================
   const handleSaveAta = async () => {
     const { error } = await supabase.from("reunioes").update({ pauta: editedPauta, observacoes }).eq("id", selectedAta.id);
     if (!error) {
@@ -322,19 +364,19 @@ Preencha cada seção somente com o que estiver claramente no áudio.
     }
   };
 
-  // ✅ Busca por Título, Data ou Tipo
   const atasFiltradas = useMemo(() => {
     const termo = busca.toLowerCase();
     return atas.filter((a) => {
         const titulo = (a.titulo || "").toLowerCase();
         const tipo = (a.tipo_reuniao || "").toLowerCase();
         const data = a.data_hora ? new Date(a.data_hora).toLocaleDateString("pt-BR") : "";
-        
         return titulo.includes(termo) || tipo.includes(termo) || data.includes(termo);
     });
   }, [atas, busca]);
 
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
+  const gravacaoStatusNorm = String(selectedAta?.gravacao_status || "").toUpperCase();
+  
   const badgeClass = (tone) =>
     ({
       green: "bg-green-100 text-green-700 border-green-200",
@@ -342,6 +384,10 @@ Preencha cada seção somente com o que estiver claramente no áudio.
       red: "bg-red-100 text-red-700 border-red-200",
       gray: "bg-slate-100 text-slate-700 border-slate-200",
     }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
+
+  const isProcessingSomething = 
+    (iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") ||
+    (gravacaoStatusNorm === "PROCESSANDO" || gravacaoStatusNorm === "PENDENTE");
 
   return (
     <Layout>
@@ -393,9 +439,9 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                       <CheckCircle size={14} /> Ata Oficial
                     </span>
 
-                    {/* STATUS IA AUTOMÁTICO */}
-                    {selectedAta.ata_ia_status && (
-                      <div className="mb-2">
+                    {/* STATUS IA */}
+                    <div className="mb-2 flex items-center gap-2 flex-wrap">
+                      {selectedAta.ata_ia_status && (
                         <span
                           className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${
                             iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
@@ -410,11 +456,21 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                           {(iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") && <Loader2 size={10} className="animate-spin" />}
                           IA: {selectedAta.ata_ia_status}
                         </span>
-                        {iaStatusNorm === "ERRO" && selectedAta.ata_ia_erro && (
-                          <p className="text-xs text-red-600 mt-2">{selectedAta.ata_ia_erro}</p>
-                        )}
-                      </div>
-                    )}
+                      )}
+                      
+                      {/* BOTÃO FORÇAR / ATUALIZAR VIDEOS E ATA */}
+                      <button
+                        onClick={handleForceReprocess}
+                        disabled={jobLoading || isProcessingSomething}
+                        className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit hover:opacity-80 transition-opacity ${
+                            isProcessingSomething ? 'bg-blue-50 text-blue-400 border-blue-100 cursor-not-allowed' : 'bg-slate-50 text-slate-600 border-slate-200 cursor-pointer'
+                        }`}
+                        title="Se o vídeo ou a ata não geraram, clique aqui para tentar novamente."
+                      >
+                        {jobLoading || isProcessingSomething ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                        {isProcessingSomething ? "Atualizando..." : "Atualizar Vídeo e ATA"}
+                      </button>
+                    </div>
 
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
@@ -481,7 +537,7 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                     </div>
                   ) : (
                     <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
-                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") 
+                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") || String(selectedAta.gravacao_status || "").toUpperCase().includes("PENDENTE") 
                         ? <><Loader2 size={14} className="animate-spin text-blue-500" /> Processando vídeo...</>
                         : "Vídeo não disponível ainda."
                       }
