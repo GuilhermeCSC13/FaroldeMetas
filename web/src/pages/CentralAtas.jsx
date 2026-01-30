@@ -1,30 +1,27 @@
 // src/pages/CentralAtas.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
+import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao"; // ✅ Importado
 import {
   Calendar,
   User,
   Search,
   CheckCircle,
-  Clock,
   Layers,
   Save,
   Edit3,
   Trash2,
   Plus,
-  X,
-  Image as ImageIcon,
-  Loader2,
-  Cpu,
   PlayCircle,
   Headphones,
-  Camera,
   ExternalLink,
   MessageSquare,
-  RefreshCw,
-  AlertTriangle,
+  Cpu,
+  Loader2,
+  Clock,
+  ImageIcon
 } from "lucide-react";
 
 export default function CentralAtas() {
@@ -45,23 +42,11 @@ export default function CentralAtas() {
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // --- MODAL DE AÇÃO ---
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [actionForm, setActionForm] = useState({
-    id: null,
-    descricao: "",
-    responsavel: "",
-    data_vencimento: "",
-    observacao: "",
-    resultado: "",
-    fotos: [],
-  });
-  const [newFiles, setNewFiles] = useState([]);
+  // --- MODAL DE AÇÃO (INTEGRADO) ---
+  const [acaoParaModal, setAcaoParaModal] = useState(null);
 
-  // --- PROCESSAMENTO/JOBS (fila) ---
-  const [jobLoading, setJobLoading] = useState(false);
-  const [lastJob, setLastJob] = useState(null);
+  // --- POLLING REF ---
+  const pollingRef = useRef(null);
 
   useEffect(() => {
     fetchAtas();
@@ -76,25 +61,85 @@ export default function CentralAtas() {
       setIsEditing(false);
 
       hydrateMediaUrls(selectedAta);
-      fetchLastJob(selectedAta.id);
+      
+      // ✅ Inicia monitoramento automático se necessário
+      checkAutoRefresh(selectedAta);
     } else {
       setMediaUrls({ video: null, audio: null });
-      setLastJob(null);
+      stopPolling();
     }
+
+    return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAta]);
+  }, [selectedAta?.id]); 
+  // Nota: dependência apenas no ID para não resetar poll a cada update pequeno, 
+  // mas o checkAutoRefresh cuida de parar se concluir.
+
+  // =========================
+  // ✅ Polling Automático (Substitui botões manuais)
+  // =========================
+  const stopPolling = () => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  };
+
+  const checkAutoRefresh = (ata) => {
+    stopPolling();
+    const stGravacao = String(ata.gravacao_status || "").toUpperCase();
+    const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
+
+    // Se algum estiver processando ou pendente, inicia polling
+    const precisaAtualizar = 
+      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE") ||
+      (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
+
+    if (precisaAtualizar) {
+      pollingRef.current = setInterval(() => {
+        refreshSelectedAta(ata.id);
+      }, 5000); // 5 segundos
+    }
+  };
+
+  const refreshSelectedAta = async (id) => {
+    if (!id) return;
+    try {
+      const { data, error } = await supabase
+        .from("reunioes")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (!error && data) {
+        // Atualiza estado local mantendo seleção
+        setSelectedAta(prev => (prev?.id === data.id ? { ...prev, ...data } : data));
+        setAtas(prev => prev.map(r => r.id === data.id ? { ...r, ...data } : r));
+        
+        // Verifica se ainda precisa continuar polling
+        const stGravacao = String(data.gravacao_status || "").toUpperCase();
+        const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
+        const aindaProcessando = 
+            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE") ||
+            (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
+            
+        if (!aindaProcessando) {
+             stopPolling();
+             hydrateMediaUrls(data); // atualiza video se ficou pronto
+        }
+      }
+    } catch (e) {
+      console.error("Erro polling:", e);
+    }
+  };
 
   // =========================
   // ✅ helpers: signed urls
   // =========================
-  const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 30) => {
+  const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
     if (!bucket || !filePath) return null;
-
-    // tenta signed url
-    const { data: signed, error: e1 } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
-    if (!e1 && signed?.signedUrl) return signed.signedUrl;
-
-    // fallback: public url
+    const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
+    if (signed?.signedUrl) return signed.signedUrl;
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
     return pub?.publicUrl || null;
   };
@@ -102,16 +147,13 @@ export default function CentralAtas() {
   const hydrateMediaUrls = async (ata) => {
     try {
       const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
-
       const audioUrl = await getSignedOrPublicUrl(
         ata.gravacao_audio_bucket || ata.gravacao_bucket,
         ata.gravacao_audio_path
       );
-
       setMediaUrls({ video: videoUrl, audio: audioUrl });
     } catch (e) {
-      console.error("Erro ao gerar URLs do storage:", e);
-      setMediaUrls({ video: null, audio: null });
+      console.error("Erro URLs:", e);
     }
   };
 
@@ -127,35 +169,29 @@ export default function CentralAtas() {
 
     if (error) {
       console.error(error);
-      setAtas([]);
       return;
     }
-
     setAtas(data || []);
     if (data && data.length > 0 && !selectedAta) setSelectedAta(data[0]);
   };
 
-  // ✅ (IMPORTANTE) Removido qualquer uso de tipo_reuniao (coluna não existe)
   const carregarDetalhes = async (ata) => {
     // 1) Ações desta reunião
-    const { data: criadas, error: e1 } = await supabase
+    const { data: criadas } = await supabase
       .from("acoes")
       .select("*")
       .eq("reuniao_id", ata.id)
       .order("data_criacao", { ascending: false });
-
-    if (e1) console.error(e1);
     setAcoesCriadas(criadas || []);
 
-    // 2) Pendências Anteriores (mesmo TITULO)
+    // 2) Pendências Anteriores (mesmo TÍTULO)
     try {
       const tituloBase = (ata.titulo || "").trim();
       if (!tituloBase) {
         setAcoesAnteriores([]);
         return;
       }
-
-      const { data: reunioesAnt, error: e2 } = await supabase
+      const { data: reunioesAnt } = await supabase
         .from("reunioes")
         .select("id")
         .eq("titulo", tituloBase)
@@ -164,229 +200,45 @@ export default function CentralAtas() {
         .order("data_hora", { ascending: false })
         .limit(20);
 
-      if (e2) {
-        console.error(e2);
-        setAcoesAnteriores([]);
-        return;
-      }
-
       const listaIds = (reunioesAnt || []).map((r) => r.id);
-
       if (!listaIds.length) {
         setAcoesAnteriores([]);
         return;
       }
 
-      const { data: anteriores, error: e3 } = await supabase
+      const { data: anteriores } = await supabase
         .from("acoes")
         .select("*")
         .in("reuniao_id", listaIds)
         .eq("status", "Aberta");
 
-      if (e3) console.error(e3);
       setAcoesAnteriores(anteriores || []);
     } catch (err) {
-      console.error("Erro ao carregar pendências anteriores:", err);
       setAcoesAnteriores([]);
     }
   };
 
   // =========================
-  // ✅ Processamento / Jobs
+  // ✅ Lógica Nova Ação -> Modal
   // =========================
-  const fetchLastJob = async (reuniaoId) => {
-    if (!reuniaoId) return;
-    setJobLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("reuniao_processing_queue")
-        .select("id, reuniao_id, job_type, status, last_error, result, updated_at, created_at")
-        .eq("reuniao_id", reuniaoId)
-        .order("updated_at", { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-      setLastJob(data?.[0] || null);
-    } catch (e) {
-      console.error("Erro ao buscar último job:", e);
-      setLastJob(null);
-    } finally {
-      setJobLoading(false);
-    }
-  };
-
-  const refreshSelectedAta = async () => {
-    if (!selectedAta?.id) return;
-    setJobLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("reunioes")
-        .select(
-          // ❌ sem tipo_reuniao aqui
-          "id,titulo,data_hora,responsavel,observacoes,pauta,status,gravacao_status,ata_ia_status,ata_ia_erro,gravacao_bucket,gravacao_path,gravacao_audio_bucket,gravacao_audio_path"
-        )
-        .eq("id", selectedAta.id)
-        .single();
-
-      if (error) throw error;
-
-      setSelectedAta(data);
-      setAtas((prev) => prev.map((r) => (r.id === data.id ? { ...r, ...data } : r)));
-
-      await hydrateMediaUrls(data);
-      await fetchLastJob(data.id);
-      await carregarDetalhes(data);
-    } catch (e) {
-      console.error("Erro ao atualizar status:", e);
-      alert("Erro ao atualizar status: " + (e?.message || e));
-    } finally {
-      setJobLoading(false);
-    }
-  };
-
-  const forceReprocess = async () => {
-    if (!selectedAta?.id) return;
-    if (!window.confirm("Forçar reprocessamento? (vai criar/reativar job na fila)")) return;
-
-    setJobLoading(true);
-    try {
-      // tenta inserir job; se já existir (unique), transforma em PENDENTE
-      const jobType = "BACKFILL_COMPILE_ATA";
-
-      const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
-        {
+  const handleNovaAcao = async () => {
+      if (!selectedAta?.id) return;
+      
+      // Cria um rascunho
+      const { data, error } = await supabase.from('acoes').insert([{
           reuniao_id: selectedAta.id,
-          job_type: jobType,
-          status: "PENDENTE",
-          next_run_at: new Date().toISOString(),
-        },
-      ]);
+          status: 'Aberta',
+          descricao: 'Nova Ação', // placeholder
+          data_criacao: new Date().toISOString()
+      }]).select().single();
 
-      if (insertErr) {
-        // duplicate key uq_rpq_active_job -> reativar
-        if (String(insertErr.message || "").toLowerCase().includes("duplicate key") || insertErr.code === "23505") {
-          const { error: upErr } = await supabase
-            .from("reuniao_processing_queue")
-            .update({
-              status: "PENDENTE",
-              last_error: null,
-              locked_at: null,
-              locked_by: null,
-              next_run_at: new Date().toISOString(),
-              result: null,
-            })
-            .eq("reuniao_id", selectedAta.id)
-            .eq("job_type", jobType);
-
-          if (upErr) throw upErr;
-        } else {
-          throw insertErr;
-        }
+      if (error) {
+          alert("Erro ao iniciar ação: " + error.message);
+          return;
       }
 
-      await fetchLastJob(selectedAta.id);
-      alert("Reprocessamento agendado (job PENDENTE).");
-    } catch (e) {
-      console.error("Erro ao forçar reprocessamento:", e);
-      alert("Erro ao forçar reprocessamento: " + (e?.message || e));
-    } finally {
-      setJobLoading(false);
-    }
-  };
-
-  // =========================
-  // --- FUNÇÕES DO MODAL ---
-  // =========================
-  const openNewActionModal = () => {
-    setActionForm({
-      id: null,
-      descricao: "",
-      responsavel: "",
-      data_vencimento: "",
-      observacao: "",
-      resultado: "",
-      fotos: [],
-    });
-    setNewFiles([]);
-    setIsModalOpen(true);
-  };
-
-  const openEditActionModal = (acao) => {
-    setActionForm({
-      id: acao.id,
-      descricao: acao.descricao,
-      responsavel: acao.responsavel,
-      data_vencimento: acao.data_vencimento || "",
-      observacao: acao.observacao || "",
-      resultado: acao.resultado || "",
-      fotos: acao.fotos || [],
-    });
-    setNewFiles([]);
-    setIsModalOpen(true);
-  };
-
-  const handleFileSelect = (e) => {
-    if (e.target.files) setNewFiles([...newFiles, ...Array.from(e.target.files)]);
-  };
-
-  const handleSaveAction = async () => {
-    if (!actionForm.descricao) return alert("A descrição é obrigatória.");
-    setModalLoading(true);
-
-    try {
-      // Upload de fotos
-      let uploadedUrls = [];
-      if (newFiles.length > 0) {
-        for (const file of newFiles) {
-          const fileName = `evidencia-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, "")}`;
-          const { error } = await supabase.storage.from("evidencias").upload(fileName, file);
-          if (!error) {
-            const { data } = supabase.storage.from("evidencias").getPublicUrl(fileName);
-            uploadedUrls.push(data.publicUrl);
-          }
-        }
-      }
-
-      const finalFotos = [...(actionForm.fotos || []), ...uploadedUrls];
-
-      const payload = {
-        descricao: actionForm.descricao,
-        responsavel: actionForm.responsavel || "Geral",
-        data_vencimento: actionForm.data_vencimento || null,
-        observacao: actionForm.observacao,
-        resultado: actionForm.resultado,
-        fotos: finalFotos,
-        reuniao_id: selectedAta.id,
-      };
-
-      if (actionForm.id) {
-        const { error } = await supabase.from("acoes").update(payload).eq("id", actionForm.id);
-        if (error) throw error;
-      } else {
-        payload.status = "Aberta";
-        payload.data_criacao = new Date().toISOString();
-        const { error } = await supabase.from("acoes").insert([payload]);
-        if (error) throw error;
-      }
-
-      await carregarDetalhes(selectedAta);
-      setIsModalOpen(false);
-    } catch (error) {
-      alert("Erro ao salvar ação: " + error.message);
-    } finally {
-      setModalLoading(false);
-    }
-  };
-
-  const toggleStatusAcao = async (acao, e) => {
-    e.stopPropagation();
-    const novoStatus = acao.status === "Aberta" ? "Concluída" : "Aberta";
-
-    const updateList = (lista) => lista.map((a) => (a.id === acao.id ? { ...a, status: novoStatus } : a));
-    setAcoesCriadas(updateList(acoesCriadas));
-    setAcoesAnteriores(updateList(acoesAnteriores));
-
-    await supabase.from("acoes").update({ status: novoStatus }).eq("id", acao.id);
+      // Abre o modal com o rascunho
+      setAcaoParaModal(data);
   };
 
   // =========================
@@ -421,25 +273,14 @@ export default function CentralAtas() {
         try {
           const base64data = reader.result.split(",")[1];
           const model = getGeminiFlash();
-
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
           const prompt = `
 Você é secretária de reunião e deve gerar a ATA em Markdown usando SOMENTE o conteúdo real do áudio enviado.
-
-REGRAS IMPORTANTES:
-- NÃO invente nomes de pessoas, projetos, datas, decisões ou ações.
-- Se algum trecho não ficar claro no áudio, escreva "[inaudível]" em vez de completar.
-- Não crie exemplos genéricos nem textos de modelo prontos.
-- Use apenas informações que realmente aparecem no áudio.
-
-Contexto da reunião (metadados do sistema):
-Título: "${titulo}"
-Data (sistema): ${dataBR}
+Contexto: "${titulo}" - ${dataBR}.
 
 Gere a ata NO MÁXIMO com a seguinte estrutura:
-
 # ${titulo}
 **Data:** ${dataBR}
 
@@ -447,13 +288,12 @@ Gere a ata NO MÁXIMO com a seguinte estrutura:
 (Resumo fiel do que foi discutido)
 
 ## 2. Decisões
-- Decisão 1
-- Decisão 2
+- Decisão 1...
 
 ## 3. Ações
-- Ação — Responsável — Prazo (se houver)
+- Ação — Responsável — Prazo
 
-Preencha cada seção somente com o que estiver claramente no áudio. Se não houver informação suficiente para alguma seção, escreva "Sem registros claros no áudio." nessa seção.
+Preencha cada seção somente com o que estiver claramente no áudio.
           `.trim();
 
           const result = await model.generateContent([prompt, { inlineData: { data: base64data, mimeType: "audio/webm" } }]);
@@ -461,17 +301,15 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
 
           setEditedPauta(texto);
           setIsEditing(true);
-          alert("Resumo gerado pela IA. Revise e clique em SALVAR para gravar na ata.");
+          alert("Resumo gerado. Revise e Salve.");
         } catch (err) {
-          console.error(err);
-          alert("Erro ao processar a resposta da IA.");
+          alert("Erro na IA: " + err.message);
         } finally {
           setIsGenerating(false);
         }
       };
     } catch (e) {
-      console.error(e);
-      alert("Erro ao acessar o áudio para a IA.");
+      alert("Erro áudio: " + e.message);
       setIsGenerating(false);
     }
   };
@@ -484,28 +322,26 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
     }
   };
 
-  const atasFiltradas = useMemo(
-    () => atas.filter((a) => (a.titulo || "").toLowerCase().includes(busca.toLowerCase())),
-    [atas, busca]
-  );
+  // ✅ Busca por Título, Data ou Tipo
+  const atasFiltradas = useMemo(() => {
+    const termo = busca.toLowerCase();
+    return atas.filter((a) => {
+        const titulo = (a.titulo || "").toLowerCase();
+        const tipo = (a.tipo_reuniao || "").toLowerCase();
+        const data = a.data_hora ? new Date(a.data_hora).toLocaleDateString("pt-BR") : "";
+        
+        return titulo.includes(termo) || tipo.includes(termo) || data.includes(termo);
+    });
+  }, [atas, busca]);
 
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
-
-  const gravacaoStatusNorm = String(selectedAta?.gravacao_status || "").toUpperCase();
-  const jobStatusNorm = String(lastJob?.status || "").toUpperCase();
-
   const badgeClass = (tone) =>
     ({
       green: "bg-green-100 text-green-700 border-green-200",
       blue: "bg-blue-100 text-blue-700 border-blue-200",
       red: "bg-red-100 text-red-700 border-red-200",
-      amber: "bg-amber-100 text-amber-800 border-amber-200",
       gray: "bg-slate-100 text-slate-700 border-slate-200",
     }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
-
-  const pill = (label, tone = "gray") => (
-    <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border ${badgeClass(tone)}`}>{label}</span>
-  );
 
   return (
     <Layout>
@@ -520,7 +356,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
               <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
               <input
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2"
-                placeholder="Buscar..."
+                placeholder="Título, Data ou Tipo..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
               />
@@ -538,6 +374,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                 <h3 className={`font-bold text-sm ${selectedAta?.id === ata.id ? "text-blue-800" : "text-slate-700"}`}>{ata.titulo}</h3>
                 <span className="text-xs text-slate-500 flex items-center gap-1">
                   <Calendar size={12} /> {ata.data_hora ? new Date(ata.data_hora).toLocaleDateString() : "-"}
+                  {ata.tipo_reuniao && <span className="text-[10px] bg-slate-100 px-1 rounded ml-1">{ata.tipo_reuniao}</span>}
                 </span>
               </button>
             ))}
@@ -556,20 +393,21 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       <CheckCircle size={14} /> Ata Oficial
                     </span>
 
-                    {/* STATUS IA */}
+                    {/* STATUS IA AUTOMÁTICO */}
                     {selectedAta.ata_ia_status && (
                       <div className="mb-2">
                         <span
-                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${
                             iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
-                              ? "bg-green-100 text-green-700"
-                              : iaStatusNorm === "PROCESSANDO"
-                              ? "bg-blue-100 text-blue-700"
+                              ? badgeClass("green")
+                              : iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE"
+                              ? badgeClass("blue")
                               : iaStatusNorm === "ERRO"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-700"
+                              ? badgeClass("red")
+                              : badgeClass("gray")
                           }`}
                         >
+                          {(iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") && <Loader2 size={10} className="animate-spin" />}
                           IA: {selectedAta.ata_ia_status}
                         </span>
                         {iaStatusNorm === "ERRO" && selectedAta.ata_ia_erro && (
@@ -619,89 +457,6 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                   </div>
                 </div>
 
-                {/* PAINEL PROCESSAMENTO */}
-                <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2 text-xs font-black text-slate-600 uppercase">
-                      <RefreshCw size={14} /> Processamento
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {pill(`Gravação: ${selectedAta.gravacao_status || "SEM STATUS"}`, gravacaoStatusNorm === "PRONTO_PROCESSAR" ? "blue" : gravacaoStatusNorm === "CONCLUIDO" ? "green" : gravacaoStatusNorm === "ERRO" ? "red" : "gray")}
-                      {pill(`Job: ${lastJob?.status || "SEM JOB"}`, jobStatusNorm === "CONCLUIDO" ? "green" : jobStatusNorm === "PROCESSANDO" ? "blue" : jobStatusNorm === "ERRO" ? "red" : "gray")}
-
-                      <button
-                        onClick={refreshSelectedAta}
-                        disabled={jobLoading}
-                        className="text-xs bg-white border border-slate-200 hover:bg-slate-100 px-3 py-2 rounded-xl font-black flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {jobLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                        Atualizar status
-                      </button>
-
-                      <button
-                        onClick={forceReprocess}
-                        disabled={jobLoading}
-                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl font-black flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {jobLoading ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
-                        Forçar reprocessar
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                      <div className="text-xs font-black text-slate-500 uppercase mb-2">Storage (reuniões)</div>
-                      <div className="text-xs text-slate-700 space-y-1">
-                        <div>
-                          <span className="font-bold">Bucket:</span> {selectedAta.gravacao_bucket || "-"}
-                        </div>
-                        <div>
-                          <span className="font-bold">Vídeo path:</span> {selectedAta.gravacao_path || "-"}
-                        </div>
-                        <div>
-                          <span className="font-bold">Áudio bucket:</span> {selectedAta.gravacao_audio_bucket || "-"}
-                        </div>
-                        <div>
-                          <span className="font-bold">Áudio path:</span> {selectedAta.gravacao_audio_path || "-"}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                      <div className="text-xs font-black text-slate-500 uppercase mb-2 flex items-center gap-2">
-                        Último Job {jobLoading && <Loader2 size={14} className="animate-spin" />}
-                      </div>
-
-                      {lastJob ? (
-                        <>
-                          <div className="text-xs text-slate-700 space-y-1">
-                            <div>
-                              <span className="font-bold">Status:</span> {lastJob.status}
-                            </div>
-                            <div>
-                              <span className="font-bold">Atualizado:</span>{" "}
-                              {lastJob.updated_at ? new Date(lastJob.updated_at).toLocaleString("pt-BR") : "-"}
-                            </div>
-                          </div>
-
-                          {lastJob.status === "ERRO" && (
-                            <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
-                              <div className="font-black flex items-center gap-2 mb-1">
-                                <AlertTriangle size={14} /> Erro
-                              </div>
-                              <div className="whitespace-pre-wrap break-words">{lastJob.last_error || "Sem detalhe."}</div>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="text-xs text-slate-500">Sem job encontrado para esta reunião.</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
                 {/* VÍDEO COMPILADO */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
@@ -714,7 +469,6 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                         <source src={mediaUrls.video} type="video/webm" />
                         Seu navegador não conseguiu reproduzir este vídeo.
                       </video>
-
                       <a
                         href={mediaUrls.video}
                         target="_blank"
@@ -726,8 +480,11 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       </a>
                     </div>
                   ) : (
-                    <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                      Vídeo não disponível ainda (sem gravacao_path). Rode o backfill/worker para compilar.
+                    <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
+                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") 
+                        ? <><Loader2 size={14} className="animate-spin text-blue-500" /> Processando vídeo...</>
+                        : "Vídeo não disponível ainda."
+                      }
                     </div>
                   )}
                 </div>
@@ -784,7 +541,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                       <div className="w-2 h-2 bg-green-500 rounded-full"></div> Ações Definidas
                     </h3>
                     <button
-                      onClick={openNewActionModal}
+                      onClick={handleNovaAcao}
                       className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-md transition-all active:scale-95"
                     >
                       <Plus size={14} /> Nova Ação
@@ -795,7 +552,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     {acoesCriadas.map((acao) => (
                       <div
                         key={acao.id}
-                        onClick={() => openEditActionModal(acao)}
+                        onClick={() => setAcaoParaModal(acao)}
                         className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all group ${
                           acao.status === "Concluída"
                             ? "bg-slate-50 opacity-60"
@@ -803,12 +560,7 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                          <input
-                            type="checkbox"
-                            checked={acao.status === "Concluída"}
-                            onChange={(e) => toggleStatusAcao(acao, e)}
-                            className="mt-1 cursor-pointer w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                          />
+                            <div className={`mt-1.5 w-2 h-2 rounded-full ${acao.status === "Concluída" ? "bg-green-500" : "bg-blue-500"}`} />
                           <div className="flex-1">
                             <p
                               className={`text-sm font-medium ${
@@ -831,11 +583,6 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                                   <ImageIcon size={10} /> {acao.fotos.length}
                                 </span>
                               )}
-                              {acao.observacao && (
-                                <span className="text-[10px] text-amber-500 flex items-center gap-1">
-                                  <MessageSquare size={10} /> Obs
-                                </span>
-                              )}
                             </div>
                           </div>
                         </div>
@@ -856,16 +603,11 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
                     {acoesAnteriores.map((acao) => (
                       <div
                         key={acao.id}
-                        onClick={() => openEditActionModal(acao)}
+                        onClick={() => setAcaoParaModal(acao)}
                         className="p-3 bg-amber-50/30 border border-amber-100 rounded-lg cursor-pointer hover:bg-amber-50 transition-colors"
                       >
                         <div className="flex items-start gap-3">
-                          <input
-                            type="checkbox"
-                            checked={acao.status === "Concluída"}
-                            onChange={(e) => toggleStatusAcao(acao, e)}
-                            className="mt-1"
-                          />
+                          <div className={`mt-1.5 w-2 h-2 rounded-full bg-amber-500`} />
                           <div>
                             <p className="text-sm font-medium text-slate-800">{acao.descricao}</p>
                             <p className="text-[10px] text-amber-600 mt-1">
@@ -904,122 +646,20 @@ Preencha cada seção somente com o que estiver claramente no áudio. Se não ho
           )}
         </div>
 
-        {/* MODAL AÇÃO */}
-        {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
-              <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-                <h3 className="font-bold text-lg text-slate-800">{actionForm.id ? "Detalhes da Ação" : "Nova Ação"}</h3>
-                <button onClick={() => setIsModalOpen(false)} className="p-1 hover:bg-slate-200 rounded-full">
-                  <X size={20} className="text-slate-500" />
-                </button>
-              </div>
-
-              <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">O que precisa ser feito?</label>
-                  <textarea
-                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
-                    value={actionForm.descricao}
-                    onChange={(e) => setActionForm({ ...actionForm, descricao: e.target.value })}
-                    placeholder="Descreva a tarefa..."
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Responsável</label>
-                    <input
-                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500"
-                      value={actionForm.responsavel}
-                      onChange={(e) => setActionForm({ ...actionForm, responsavel: e.target.value })}
-                      placeholder="Nome"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Vencimento</label>
-                    <input
-                      type="date"
-                      className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500"
-                      value={actionForm.data_vencimento}
-                      onChange={(e) => setActionForm({ ...actionForm, data_vencimento: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Observações / Comentários</label>
-                  <textarea
-                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-20 resize-none bg-slate-50"
-                    value={actionForm.observacao}
-                    onChange={(e) => setActionForm({ ...actionForm, observacao: e.target.value })}
-                    placeholder="Detalhes extras..."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                    O que foi feito e evidências do que foi realizado
-                  </label>
-                  <textarea
-                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none bg-slate-50"
-                    value={actionForm.resultado}
-                    onChange={(e) => setActionForm({ ...actionForm, resultado: e.target.value })}
-                    placeholder="Descreva o que foi executado, resultados e referências às evidências..."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Evidências (Fotos)</label>
-
-                  {actionForm.fotos.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      {actionForm.fotos.map((url, i) => (
-                        <a
-                          key={i}
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block relative aspect-square rounded-lg overflow-hidden border border-slate-200 group"
-                        >
-                          <img src={url} className="w-full h-full object-cover" alt="evidencia" />
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                            <ExternalLink className="text-white opacity-0 group-hover:opacity-100 drop-shadow-md" size={16} />
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  )}
-
-                  <label className="border-2 border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 transition-colors text-slate-400 hover:text-blue-500">
-                    <Camera size={24} className="mb-1" />
-                    <span className="text-xs font-bold">Adicionar Foto</span>
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileSelect} />
-                  </label>
-                  {newFiles.length > 0 && (
-                    <p className="text-xs text-green-600 mt-1 font-bold">{newFiles.length} novos arquivos selecionados.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg text-sm"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleSaveAction}
-                  disabled={modalLoading}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-sm flex items-center gap-2 shadow-lg disabled:opacity-50"
-                >
-                  {modalLoading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-                  {actionForm.id ? "Salvar Alterações" : "Criar Ação"}
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* MODAL DE AÇÃO INTEGRADO */}
+        {acaoParaModal && (
+          <ModalDetalhesAcao
+            aberto={!!acaoParaModal}
+            acao={acaoParaModal}
+            status={acaoParaModal.status}
+            onClose={() => setAcaoParaModal(null)}
+            onAfterSave={() => carregarDetalhes(selectedAta)}
+            onAfterDelete={() => carregarDetalhes(selectedAta)}
+            onConcluir={async () => {
+                await supabase.from("acoes").update({ status: "Concluída", data_conclusao: new Date().toISOString() }).eq("id", acaoParaModal.id);
+                carregarDetalhes(selectedAta);
+            }}
+          />
         )}
       </div>
     </Layout>
