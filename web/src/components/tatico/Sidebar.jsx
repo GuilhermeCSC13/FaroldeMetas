@@ -10,7 +10,7 @@ import {
   FaCalendarAlt,
   FaTasks,
   FaMicrophone,
-  FaTags, // ✅ NOVO
+  FaTags, // ✅ Tipos de reunião
 } from "react-icons/fa";
 
 const setores = [
@@ -158,7 +158,7 @@ export default function Sidebar() {
             <span>Agenda Tática</span>
           </NavLink>
 
-          {/* ✅ NOVO: Tipos de Reunião (logo abaixo de Agenda Tática) */}
+          {/* Tipos de Reunião */}
           <NavLink
             to="/tipos-reuniao"
             className={({ isActive }) =>
@@ -183,18 +183,8 @@ export default function Sidebar() {
             <span>Banco de Atas</span>
           </NavLink>
 
-          {/* NOVA ABA: Projetos */}
-          <NavLink
-            to="/projetos"
-            className={({ isActive }) =>
-              `${linkBaseClasses} ${
-                isActive ? linkActiveClasses : linkInactiveClasses
-              }`
-            }
-          >
-            <FaTasks className="text-sm" />
-            <span>Projetos</span>
-          </NavLink>
+          {/* ❌ REMOVIDO: Projetos */}
+          {/* <NavLink to="/projetos" ...>...</NavLink> */}
 
           <NavLink
             to="/gestao-acoes"
@@ -223,8 +213,20 @@ export default function Sidebar() {
       </nav>
 
       {/* Rodapé */}
-      <div className="px-4 py-3 border-t border-blue-500/40 text-[10px] text-blue-200/60 text-center">
-        Farol Tático v1.2 · 2026
+      <div className="px-3 py-3 border-t border-blue-500/40">
+        {/* ✅ NOVO: Voltar para INOVE (sem nova aba e sem empilhar histórico) */}
+        <button
+          type="button"
+          onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
+          className="w-full bg-white text-blue-900 px-4 py-2 rounded-lg font-bold hover:bg-blue-50 transition-all shadow-sm text-sm"
+          title="Voltar para o INOVE"
+        >
+          Voltar para o INOVE
+        </button>
+
+        <div className="mt-2 text-[10px] text-blue-200/60 text-center">
+          Farol Tático v1.2 · 2026
+        </div>
       </div>
     </aside>
   );
