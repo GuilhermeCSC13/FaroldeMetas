@@ -110,7 +110,7 @@ export default function Copiloto() {
   // reuniões
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
-  const [nomeTipoReuniao, setNomeTipoReuniao] = useState(""); // ✅ Estado para guardar o nome do tipo
+  const [nomeTipoReuniao, setNomeTipoReuniao] = useState(""); 
 
   // tabs direita
   const [tab, setTab] = useState("acoes"); 
@@ -353,9 +353,14 @@ export default function Copiloto() {
 
       // 2. Identificar CRIADOR (Lógica Blindada)
       let criadorFinalId = currentUser?.id || null;
-      let criadorFinalNome = buildNomeSobrenome(currentUser) || "Sistema";
+      let criadorFinalNome = buildNomeSobrenome(currentUser); // Pode vir "Usuário" se fallback
 
-      // Se o currentUser não estiver completo (ex: recarregou página), busca novamente
+      // Se não tiver nome, tenta email. Se nem email, "Sistema"
+      if (!criadorFinalNome || criadorFinalNome === "-") {
+         criadorFinalNome = currentUser?.email || "Sistema";
+      }
+
+      // Se o currentUser estiver nulo (recarregou página), busca novamente
       if (!criadorFinalId) {
         const { data: { user } } = await supabase.auth.getUser();
         if (user?.email) {
@@ -387,7 +392,7 @@ export default function Copiloto() {
         observacao,
         status: "Aberta",
         reuniao_id: selecionada.id,
-        // ✅ Usa o nome do tipo carregado do banco, ou fallback para o objeto da reunião
+        // ✅ Salva o tipo da reunião (texto) além do ID
         tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
         tipo_reuniao: nomeTipoReuniao || selecionada.tipo_reuniao || selecionada.tipo || "Geral",
         
@@ -717,12 +722,12 @@ export default function Copiloto() {
   );
 }
 
-// ✅ Componente AcaoCard BLINDADO e com Status Excluída Visual
+// ✅ Componente AcaoCard BLINDADO contra tela branca e com status EXCLUÍDA
 function AcaoCard({ acao, onClick }) {
   // Safe Access para evitar erros de render
   const st = String(acao?.status || "").toLowerCase();
   const done = st === "concluída" || st === "concluida";
-  const excluded = st === "excluída" || st === "excluida"; // ✅ Detecta Excluída
+  const excluded = st === "excluída" || st === "excluida"; // ✅ Verifica excluída
   const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
   const vencimentoSafe = formatDateSafe(acao?.data_vencimento);
   const conclusaoSafe = formatDateSafe(acao?.data_conclusao);
@@ -732,7 +737,7 @@ function AcaoCard({ acao, onClick }) {
       onClick={onClick}
       className={`w-full text-left p-4 rounded-2xl border shadow-sm transition-colors ${
         excluded
-          ? "bg-gray-50 border-gray-200 opacity-60 grayscale" // Estilo visual "apagado"
+          ? "bg-gray-50 border-gray-200 opacity-60 grayscale" // Estilo visual para excluída
           : "bg-white border-slate-200 hover:bg-slate-50"
       }`}
       type="button"
