@@ -533,19 +533,20 @@ export default function Copiloto() {
       status: "Aberta",
       reuniao_id: selecionada.id,
       tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
-
-      // colunas existentes:
-      responsavel_id: responsavelId, // TEXT
-      responsavel_ref: responsavelRef, // (se existir como TEXT; se no seu banco for outro tipo, pode remover)
-      responsavel: responsavelNome,
+    
+      // 🚫 NÃO gravar texto em UUID
+      responsavel_id: null,
+    
+      // ✅ quem é o responsável (INOVE)
+      responsavel_aprovador_id: respRow?.id ?? null,
       responsavel_nome: responsavelNome,
-
+    
       data_vencimento: vencimento,
       data_abertura: todayISODate(),
-
+    
       created_at: nowIso(),
       data_criacao: nowIso(),
-
+    
       fotos_acao: [],
       fotos: [],
       evidencia_url: null,
