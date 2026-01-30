@@ -1042,7 +1042,7 @@ export default function Copiloto() {
                     <label className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 cursor-pointer">
                       <span className="px-3 py-2 rounded-xl border border-blue-200 bg-white hover:bg-blue-50 inline-flex items-center gap-2">
                         <UploadCloud size={16} />
-                        Anexar evidências (pode ser mais de uma)
+                        Anexar evidências
                       </span>
                       <input
                         type="file"
