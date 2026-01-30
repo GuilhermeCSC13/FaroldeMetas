@@ -777,14 +777,26 @@ export default function Copiloto() {
       </div>
 
       {/* Modal detalhes ação (Central) */}
+
       {acaoSelecionada && (
         <ModalDetalhesAcao
+          aberto={!!acaoSelecionada}
           acao={acaoSelecionada}
+          status={acaoSelecionada?.status}
           onClose={() => setAcaoSelecionada(null)}
-          onSaved={() => fetchAcoes(selecionada)}
+          onAfterSave={() => fetchAcoes(selecionada)}
+          onAfterDelete={() => fetchAcoes(selecionada)}
+          onConcluir={async () => {
+            // marca como concluída no banco + data_conclusao
+            await supabase
+              .from("acoes")
+              .update({ status: "Concluída", data_conclusao: new Date().toISOString() })
+              .eq("id", acaoSelecionada.id);
+      
+            await fetchAcoes(selecionada);
+          }}
         />
       )}
-
       {/* Reabrir ADM */}
       {showUnlock && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
