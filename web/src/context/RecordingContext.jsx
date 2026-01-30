@@ -165,7 +165,10 @@ export function RecordingProvider({ children }) {
   };
 
   const waitQueueDrain = async () => {
-    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0)
+    if (
+      uploadQueueRef.current.length === 0 &&
+      uploadsInFlightRef.current.size === 0
+    )
       return;
 
     if (!queueDrainPromiseRef.current) {
@@ -188,26 +191,30 @@ export function RecordingProvider({ children }) {
 
     const uploadPromise = (async () => {
       await withRetry(async () => {
-        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
-          contentType: "video/webm",
-          cacheControl: "3600",
-          upsert: false,
-        });
+        const { error: upErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, blob, {
+            contentType: "video/webm",
+            cacheControl: "3600",
+            upsert: false,
+          });
         if (upErr) throw upErr;
       });
 
       await withRetry(async () => {
-        const { error: insErr } = await supabase.from("reuniao_gravacao_partes").insert([
-          {
-            reuniao_id: reuniaoId,
-            session_id: sessionId,
-            part_number: partNumber,
-            storage_bucket: STORAGE_BUCKET,
-            storage_path: path,
-            bytes: blob.size,
-            status: "UPLOADED",
-          },
-        ]);
+        const { error: insErr } = await supabase
+          .from("reuniao_gravacao_partes")
+          .insert([
+            {
+              reuniao_id: reuniaoId,
+              session_id: sessionId,
+              part_number: partNumber,
+              storage_bucket: STORAGE_BUCKET,
+              storage_path: path,
+              bytes: blob.size,
+              status: "UPLOADED",
+            },
+          ]);
         if (insErr) throw insErr;
       });
     })();
@@ -318,7 +325,10 @@ export function RecordingProvider({ children }) {
     ]);
     if (e2) throw e2;
 
-    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
+    const { error: e3 } = await supabase
+      .from("reunioes")
+      .update({ updated_at: nowIso() })
+      .eq("id", reuniaoId);
     if (e3) throw e3;
   };
 
@@ -349,7 +359,10 @@ export function RecordingProvider({ children }) {
     ]);
     if (e2) throw e2;
 
-    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
+    const { error: e3 } = await supabase
+      .from("reunioes")
+      .update({ updated_at: nowIso() })
+      .eq("id", reuniaoId);
     if (e3) throw e3;
   };
 
@@ -364,7 +377,8 @@ export function RecordingProvider({ children }) {
     setTimer(0);
 
     const sessionUuid =
-      crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      crypto?.randomUUID?.() ||
+      `${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const sessionId = `sess_${sessionUuid}`;
 
     sessionIdRef.current = sessionId;
@@ -529,8 +543,41 @@ export function RecordingProvider({ children }) {
         throw new Error("Update não aplicou: gravacao_status permaneceu GRAVANDO.");
       }
 
-      await enqueueDriveJob(reuniaoId);
-      await enqueueCompileJob(reuniaoId);
+      // ✅ BEST-EFFORT (CRÍTICO): NÃO derruba a gravação se Drive/Compile falhar
+      let driveErrMsg = null;
+      let compileErrMsg = null;
+
+      try {
+        await enqueueDriveJob(reuniaoId);
+      } catch (e) {
+        driveErrMsg = e?.message || String(e);
+        console.error("enqueueDriveJob falhou (best-effort):", e);
+      }
+
+      try {
+        await enqueueCompileJob(reuniaoId);
+      } catch (e) {
+        compileErrMsg = e?.message || String(e);
+        console.error("enqueueCompileJob falhou (best-effort):", e);
+      }
+
+      // (opcional) registra aviso sem marcar ERRO
+      if (driveErrMsg || compileErrMsg) {
+        try {
+          await supabase
+            .from("reunioes")
+            .update({
+              gravacao_erro: [
+                driveErrMsg ? `DriveQueue: ${driveErrMsg}` : null,
+                compileErrMsg ? `CompileQueue: ${compileErrMsg}` : null,
+              ]
+                .filter(Boolean)
+                .join(" | "),
+              updated_at: nowIso(),
+            })
+            .eq("id", reuniaoId);
+        } catch {}
+      }
     } catch (e) {
       console.error("finalizeRecording error:", e);
       await finalizeFailClosed(reuniaoId, e?.message || e);
@@ -581,7 +628,11 @@ export function RecordingProvider({ children }) {
     [isRecording, isProcessing, timer, current]
   );
 
-  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
+  return (
+    <RecordingContext.Provider value={value}>
+      {children}
+    </RecordingContext.Provider>
+  );
 }
 
 export function useRecording() {
