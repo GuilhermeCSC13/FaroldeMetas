@@ -14,6 +14,10 @@ import {
   Save,
   X,
   RefreshCw,
+  UploadCloud,
+  Image as ImageIcon,
+  Film,
+  File as FileIcon,
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -52,6 +56,7 @@ function buildNomeSobrenome(u) {
   const sobrenome = String(u?.sobrenome || "").trim();
   const nomeCompleto = String(u?.nome_completo || "").trim();
 
+  // ✅ preferir Nome Sobrenome (como você pediu)
   if (nome && sobrenome) return `${nome} ${sobrenome}`;
   if (nomeCompleto) return nomeCompleto;
   if (nome) return nome;
@@ -60,6 +65,19 @@ function buildNomeSobrenome(u) {
 
 function sanitizeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
+}
+
+function fileKind(file) {
+  const t = String(file?.type || "").toLowerCase();
+  const n = String(file?.name || "").toLowerCase();
+
+  if (t.startsWith("image/")) return "image";
+  if (t.startsWith("video/")) return "video";
+  if (t === "application/pdf" || n.endsWith(".pdf")) return "pdf";
+  if (n.endsWith(".doc") || n.endsWith(".docx")) return "doc";
+  if (n.endsWith(".xls") || n.endsWith(".xlsx")) return "xls";
+  if (n.endsWith(".ppt") || n.endsWith(".pptx")) return "ppt";
+  return "file";
 }
 
 /* =========================
@@ -102,15 +120,15 @@ export default function Copiloto() {
   );
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
-  // ✅ Criar ação (agora com responsavel_id, vencimento e evidência obrigatória)
+  // ✅ Criar ação (responsavel_id, vencimento e evidência obrigatória)
   const [novaAcao, setNovaAcao] = useState({
     descricao: "",
     responsavelId: "",
     vencimento: "",
   });
-  const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // arquivos (foto/video/doc)
+  const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
 
-  // ✅ Responsáveis (usuarios_aprovadores)
+  // ✅ Responsáveis (usuarios_aprovadores no supabaseInove)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
@@ -134,7 +152,7 @@ export default function Copiloto() {
     isMountedRef.current = true;
     fetchReunioes();
 
-    // ✅ carregar responsáveis uma vez
+    // ✅ carregar responsáveis uma vez (do SUPABASE INOVE)
     (async () => {
       try {
         setLoadingResponsaveis(true);
@@ -170,11 +188,9 @@ export default function Copiloto() {
   useEffect(() => {
     if (!selecionada?.id) return;
 
-    // carregar atas e ações quando troca a reunião
     carregarAtas(selecionada);
     fetchAcoes(selecionada);
 
-    // padrão: ações da reunião
     setTab("acoes");
     setAcaoTab("reuniao");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,12 +214,10 @@ export default function Copiloto() {
 
     safeSet(() => setReunioes(data || []));
 
-    // se está gravando, “prende” na reunião atual
     if (isRecording && current?.reuniaoId) {
       const found = (data || []).find((r) => r.id === current.reuniaoId);
       if (found) safeSet(() => setSelecionada(found));
     } else {
-      // se a selecionada sumiu (troca de dia), limpa
       if (selecionada?.id) {
         const still = (data || []).some((r) => r.id === selecionada.id);
         if (!still) safeSet(() => setSelecionada(null));
@@ -213,8 +227,6 @@ export default function Copiloto() {
 
   /* =========================
      Atas
-     - Principal: tipos_reuniao.ata_principal (RO)
-     - Manual: reunioes.ata_manual (editável)
   ========================= */
   const carregarAtas = async (r) => {
     safeSet(() => {
@@ -257,7 +269,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Gravação (rodapé)
+     Gravação
   ========================= */
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
@@ -280,7 +292,6 @@ export default function Copiloto() {
     try {
       await stopRecording();
 
-      // ✅ encerrou => reunião realizada
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
@@ -298,6 +309,7 @@ export default function Copiloto() {
 
   /* =========================
      Reabrir (senha ADM)
+     ✅ validar no SUPABASE INOVE (usuarios_aprovadores)
   ========================= */
   const validarSenhaAdm = async () => {
     if (!selecionada?.id) return;
@@ -305,7 +317,7 @@ export default function Copiloto() {
     const senha = String(senhaAdm || "").trim();
     if (!senha) return alert("Informe a senha.");
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseInove
       .from("usuarios_aprovadores")
       .select("id, nivel, ativo")
       .eq("senha", senha)
@@ -336,7 +348,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Upload Evidências (mesma lógica do Modal)
+     Upload Evidências
   ========================= */
   const uploadEvidencias = async (acaoId, files) => {
     const urls = [];
@@ -366,10 +378,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     AÇÕES (todas as melhorias)
-     1) da reunião
-     2) backlog pendente do tipo (por tipo_reuniao_id)
-     3) concluídas desde última reunião do tipo
+     AÇÕES
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
@@ -377,7 +386,6 @@ export default function Copiloto() {
     safeSet(() => setLoadingAcoes(true));
 
     try {
-      // 1) Ações da reunião
       const { data: daReuniao, error: e1 } = await supabase
         .from("acoes")
         .select("*")
@@ -386,9 +394,6 @@ export default function Copiloto() {
 
       if (e1) throw e1;
 
-      // 2) Backlog pendente do tipo (tipo_reuniao_id obrigatório)
-      // - status Aberta
-      // - excluir as da própria reunião
       const tipoId = r.tipo_reuniao_id;
 
       let pendTipo = [];
@@ -406,10 +411,8 @@ export default function Copiloto() {
         pendTipo = pend || [];
       }
 
-      // 3) Concluídas desde a última reunião do tipo
       let concluidasDesde = [];
       if (tipoId && r.data_hora) {
-        // pegar a última reunião ANTERIOR do mesmo tipo
         const { data: ultima, error: e3 } = await supabase
           .from("reunioes")
           .select("id, data_hora")
@@ -422,7 +425,6 @@ export default function Copiloto() {
         if (e3) throw e3;
 
         if (ultima?.data_hora) {
-          // ações concluídas depois da última reunião (data_conclusao)
           const { data: concl, error: e4 } = await supabase
             .from("acoes")
             .select("*")
@@ -457,7 +459,7 @@ export default function Copiloto() {
     }
   };
 
-  // ✅ Criar ação agora exige: responsável + vencimento + evidência (foto/video/doc)
+  // ✅ Criar ação agora exige: responsável + vencimento + evidência
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
 
@@ -477,7 +479,6 @@ export default function Copiloto() {
     );
     const responsavelNome = buildNomeSobrenome(user);
 
-    // 1) cria ação primeiro
     const payloadCriacao = {
       descricao,
       status: "Aberta",
@@ -487,16 +488,14 @@ export default function Copiloto() {
       // vincular responsável (usuarios_aprovadores)
       responsavel_id: responsavelId,
       responsavel: responsavelNome, // compatibilidade
-      responsavel_nome: responsavelNome, // coluna existente no seu schema
+      responsavel_nome: responsavelNome, // se existir no schema
 
       // vencimento
       data_vencimento: vencimento,
 
-      // timestamps
       created_at: nowIso(),
       data_criacao: nowIso(),
 
-      // evidências (vai preencher no passo 2)
       fotos_acao: [],
     };
 
@@ -514,7 +513,6 @@ export default function Copiloto() {
     const acaoId = inserted?.id;
     if (!acaoId) return alert("Erro: ação criada sem ID.");
 
-    // 2) upload evidências
     const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
 
     if (!urls.length) {
@@ -523,17 +521,13 @@ export default function Copiloto() {
       );
     }
 
-    // 3) atualizar ação com evidências
     const payloadUpdate = {
       fotos_acao: urls,
-      fotos: urls, // compatibilidade tabela antiga
+      fotos: urls, // compatibilidade
       evidencia_url: urls[0] || null,
     };
 
-    const { error: e2 } = await supabase
-      .from("acoes")
-      .update(payloadUpdate)
-      .eq("id", acaoId);
+    const { error: e2 } = await supabase.from("acoes").update(payloadUpdate).eq("id", acaoId);
 
     if (e2) {
       console.error("salvarAcao update evidencias:", e2);
@@ -543,7 +537,6 @@ export default function Copiloto() {
       );
     }
 
-    // 4) reset UI + refresh
     setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
     setNovasEvidenciasAcao([]);
 
@@ -552,6 +545,34 @@ export default function Copiloto() {
 
     await fetchAcoes(selecionada);
   };
+
+  /* =========================
+     Previews de evidências (miniaturas)
+  ========================= */
+  const previews = useMemo(() => {
+    const list = (novasEvidenciasAcao || []).map((f, idx) => {
+      const kind = fileKind(f);
+      const needsUrl = kind === "image" || kind === "video";
+      const url = needsUrl ? URL.createObjectURL(f) : null;
+      return {
+        id: `${idx}-${f.name}-${f.size}`,
+        file: f,
+        name: f.name,
+        kind,
+        url,
+      };
+    });
+    return list;
+  }, [novasEvidenciasAcao]);
+
+  useEffect(() => {
+    // cleanup objectURL
+    return () => {
+      (previews || []).forEach((p) => {
+        if (p?.url) URL.revokeObjectURL(p.url);
+      });
+    };
+  }, [previews]);
 
   /* =========================
      UI computed
@@ -590,11 +611,9 @@ export default function Copiloto() {
 
   return (
     <Layout>
-      {/* ✅ TELA CLARA */}
       <div className="h-screen bg-[#f6f8fc] text-slate-900 flex overflow-hidden">
         {/* COLUNA ESQUERDA */}
         <div className="w-[420px] min-w-[380px] max-w-[460px] flex flex-col p-5 border-r border-slate-200 bg-white">
-          {/* header */}
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm">
               <Bot size={20} />
@@ -609,7 +628,6 @@ export default function Copiloto() {
             </div>
           </div>
 
-          {/* filtros */}
           <div className="flex gap-2 mb-3">
             <div className="relative flex-1">
               <Calendar
@@ -639,7 +657,6 @@ export default function Copiloto() {
             </div>
           </div>
 
-          {/* lista reuniões */}
           <div className="flex-1 bg-white border border-slate-200 rounded-2xl overflow-y-auto">
             {reunioesFiltradas.map((r) => {
               const lbl = statusLabel(r);
@@ -683,7 +700,6 @@ export default function Copiloto() {
             )}
           </div>
 
-          {/* CONTROLES (rodapé) */}
           <div className="mt-4 bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
             <div>
               <div className="text-[10px] text-slate-500 font-extrabold uppercase">
@@ -724,7 +740,6 @@ export default function Copiloto() {
 
         {/* COLUNA DIREITA */}
         <div className="flex-1 p-6 overflow-y-auto">
-          {/* header reunião selecionada */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -748,7 +763,6 @@ export default function Copiloto() {
               </div>
 
               <div className="flex gap-2">
-                {/* tabs */}
                 <TabButton
                   active={tab === "acoes"}
                   onClick={() => setTab("acoes")}
@@ -771,7 +785,6 @@ export default function Copiloto() {
                   Ata Manual
                 </TabButton>
 
-                {/* reabrir ADM */}
                 {selecionada?.status === "Realizada" && !isRecording ? (
                   <button
                     onClick={() => setShowUnlock(true)}
@@ -786,7 +799,6 @@ export default function Copiloto() {
             </div>
           </div>
 
-          {/* conteúdo */}
           <div className="mt-4">
             {!selecionada ? (
               <div className="text-slate-600 text-sm">Selecione uma reunião.</div>
@@ -852,7 +864,6 @@ export default function Copiloto() {
                 )}
               </div>
             ) : (
-              // tab === acoes
               <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                   <div>
@@ -875,7 +886,7 @@ export default function Copiloto() {
                   </button>
                 </div>
 
-                {/* ✅ Criar ação (responsável + vencimento + evidência obrigatória) */}
+                {/* ✅ Criar ação */}
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4">
                   <div className="text-[11px] font-extrabold text-slate-600 uppercase mb-2">
                     Criar nova ação
@@ -924,9 +935,10 @@ export default function Copiloto() {
                     />
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="mt-3 flex items-start justify-between gap-3">
                     <label className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 cursor-pointer">
-                      <span className="px-3 py-2 rounded-xl border border-blue-200 bg-white hover:bg-blue-50">
+                      <span className="px-3 py-2 rounded-xl border border-blue-200 bg-white hover:bg-blue-50 inline-flex items-center gap-2">
+                        <UploadCloud size={16} />
                         Anexar evidências (obrigatório)
                       </span>
                       <input
@@ -935,9 +947,7 @@ export default function Copiloto() {
                         accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
                         className="hidden"
                         onChange={(e) =>
-                          setNovasEvidenciasAcao(
-                            Array.from(e.target.files || [])
-                          )
+                          setNovasEvidenciasAcao(Array.from(e.target.files || []))
                         }
                       />
                     </label>
@@ -948,6 +958,20 @@ export default function Copiloto() {
                         : "Nenhum arquivo selecionado"}
                     </div>
                   </div>
+
+                  {/* ✅ Miniaturas pequenas */}
+                  {previews.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[11px] font-extrabold text-slate-500 uppercase mb-2">
+                        Prévia das evidências
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {previews.map((p) => (
+                          <MiniaturaArquivo key={p.id} preview={p} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex justify-end mt-3">
                     <button
@@ -970,7 +994,6 @@ export default function Copiloto() {
                   </div>
                 </div>
 
-                {/* Sub-tabs ações */}
                 <div className="flex gap-2 mb-3">
                   <Pill
                     active={acaoTab === "reuniao"}
@@ -992,7 +1015,6 @@ export default function Copiloto() {
                   </Pill>
                 </div>
 
-                {/* Lista */}
                 {loadingAcoes ? (
                   <div className="text-slate-600 text-sm">Carregando ações...</div>
                 ) : (listaAtiva || []).length === 0 ? (
@@ -1000,11 +1022,7 @@ export default function Copiloto() {
                 ) : (
                   <div className="space-y-2">
                     {(listaAtiva || []).map((a) => (
-                      <AcaoCard
-                        key={a.id}
-                        acao={a}
-                        onClick={() => setAcaoSelecionada(a)}
-                      />
+                      <AcaoCard key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
                     ))}
                   </div>
                 )}
@@ -1059,6 +1077,9 @@ export default function Copiloto() {
                 Cancelar
               </button>
             </div>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
+            </div>
           </div>
         </div>
       )}
@@ -1100,15 +1121,74 @@ function Pill({ active, onClick, children }) {
   );
 }
 
+function MiniaturaArquivo({ preview }) {
+  const { kind, url, name } = preview;
+
+  const box =
+    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center";
+  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1";
+
+  if (kind === "image") {
+    return (
+      <div className="flex flex-col items-center">
+        <div className={box} title={name}>
+          <img src={url} alt={name} className="w-full h-full object-cover" />
+        </div>
+        <div className={caption}>{name}</div>
+      </div>
+    );
+  }
+
+  if (kind === "video") {
+    return (
+      <div className="flex flex-col items-center">
+        <div className={box} title={name}>
+          {/* mini preview simples */}
+          <video
+            src={url}
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+          />
+        </div>
+        <div className={caption}>{name}</div>
+      </div>
+    );
+  }
+
+  // PDFs e docs: ícone + label curta
+  const Icon =
+    kind === "pdf" ? FileText : kind === "doc" ? FileIcon : kind === "xls" ? FileIcon : kind === "ppt" ? FileIcon : FileIcon;
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className={box} title={name}>
+        <div className="flex flex-col items-center justify-center">
+          {kind === "pdf" ? (
+            <div className="text-[10px] font-black text-red-600">PDF</div>
+          ) : kind === "doc" ? (
+            <div className="text-[10px] font-black text-blue-700">DOC</div>
+          ) : kind === "xls" ? (
+            <div className="text-[10px] font-black text-emerald-700">XLS</div>
+          ) : kind === "ppt" ? (
+            <div className="text-[10px] font-black text-orange-700">PPT</div>
+          ) : (
+            <div className="text-[10px] font-black text-slate-700">ARQ</div>
+          )}
+          <Icon size={18} className="text-slate-500 mt-1" />
+        </div>
+      </div>
+      <div className={caption}>{name}</div>
+    </div>
+  );
+}
+
 function AcaoCard({ acao, onClick }) {
   const done =
     String(acao?.status || "").toLowerCase() === "concluída" ||
     String(acao?.status || "").toLowerCase() === "concluida";
 
-  const resp =
-    acao?.responsavel_nome ||
-    acao?.responsavel ||
-    "Geral";
+  const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
 
   return (
     <button
@@ -1132,6 +1212,12 @@ function AcaoCard({ acao, onClick }) {
 
           <div className="text-[12px] text-slate-600 mt-1">
             <span className="font-semibold">Responsável:</span> {resp}
+            {acao?.data_vencimento ? (
+              <span className="text-slate-500">
+                {" "}
+                • Venc.: {new Date(acao.data_vencimento).toLocaleDateString("pt-BR")}
+              </span>
+            ) : null}
             {acao?.data_conclusao ? (
               <span className="text-slate-500">
                 {" "}
