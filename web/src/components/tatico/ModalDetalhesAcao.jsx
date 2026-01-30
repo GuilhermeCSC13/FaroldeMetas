@@ -1,6 +1,6 @@
 // src/components/tatico/ModalDetalhesAcao.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle, X, Trash2, UploadCloud, RotateCw, FileText, File as FileIcon, User, Calendar } from "lucide-react";
+import { CheckCircle, X, Trash2, UploadCloud, RotateCw, FileText, File as FileIcon, User, Calendar, Lock, AlertTriangle } from "lucide-react";
 import { supabase, supabaseInove } from "../../supabaseClient";
 
 /* =========================
@@ -21,7 +21,6 @@ function sanitizeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
 }
 
-// ✅ Validação de UUID para evitar erro "20"
 function isValidUUID(uuid) {
   if (!uuid || typeof uuid !== 'string') return false;
   const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -88,8 +87,13 @@ const ModalDetalhesAcao = ({
   const [vencimento, setVencimento] = useState("");
 
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [reabrindo, setReabrindo] = useState(false);
+
+  // Estados para Exclusão (Login/Senha)
+  const [showDeleteAuth, setShowDeleteAuth] = useState(false);
+  const [delLogin, setDelLogin] = useState("");
+  const [delSenha, setDelSenha] = useState("");
+  const [deleting, setDeleting] = useState(false); // Validando e Excluindo
 
   // ---------------------------------------------------------------------------
   // INIT / LOAD
@@ -98,16 +102,16 @@ const ModalDetalhesAcao = ({
     if (!acao || !aberto) return;
 
     setStatusLocal(status || acao.status || "Aberta");
-
     setObsAcao(acao.observacao || "");
     setResultado(acao.resultado || "");
 
-    const baseAcao = Array.isArray(acao.fotos_acao)
-      ? acao.fotos_acao
-      : Array.isArray(acao.fotos)
-      ? acao.fotos
-      : [];
+    // Reset delete states
+    setShowDeleteAuth(false);
+    setDelLogin("");
+    setDelSenha("");
+    setDeleting(false);
 
+    const baseAcao = Array.isArray(acao.fotos_acao) ? acao.fotos_acao : Array.isArray(acao.fotos) ? acao.fotos : [];
     const baseConclusao = Array.isArray(acao.fotos_conclusao) ? acao.fotos_conclusao : [];
 
     setFotosAcao(baseAcao);
@@ -115,15 +119,9 @@ const ModalDetalhesAcao = ({
     setNovosArquivosAcao([]);
     setNovosArquivosConclusao([]);
 
-    const respTexto =
-      acao.responsavel_nome ||
-      acao.responsavel ||
-      acao.responsavelName ||
-      "";
-
+    const respTexto = acao.responsavel_nome || acao.responsavel || acao.responsavelName || "";
     setResponsavelTexto(String(respTexto || "").trim());
     
-    // ✅ Valida ID ao carregar
     const initialRespId = acao.responsavel_id;
     setResponsavelId(isValidUUID(initialRespId) ? initialRespId : null);
 
@@ -134,13 +132,12 @@ const ModalDetalhesAcao = ({
       setVencimento("");
     }
 
-    // Carregar responsáveis
     const carregarResponsaveis = async () => {
       try {
         setLoadingResponsaveis(true);
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
-          .select("id, nome, sobrenome, nome_completo, ativo")
+          .select("id, nome, sobrenome, nome_completo, ativo, login, senha")
           .eq("ativo", true)
           .order("nome", { ascending: true });
 
@@ -198,7 +195,6 @@ const ModalDetalhesAcao = ({
       setResponsavelId(null);
       return;
     }
-    // Tenta achar match exato no texto digitado
     const exact = (listaResponsaveis || []).find((u) => {
       const label = buildNomeSobrenome(u).toLowerCase();
       const nc = String(u?.nome_completo || "").trim().toLowerCase();
@@ -206,10 +202,7 @@ const ModalDetalhesAcao = ({
     });
 
     if (exact?.id) setResponsavelId(exact.id);
-    // Se não achou exato, mantemos o ID anterior SOMENTE se o texto ainda corresponder, 
-    // mas aqui simplificamos: se digitou algo novo que não bate, anula ID.
     else if (responsavelId) {
-        // Opcional: checar se o ID atual ainda bate com o texto, se não, null
         const current = (listaResponsaveis || []).find(u => u.id === responsavelId);
         const currentName = current ? buildNomeSobrenome(current).toLowerCase() : "";
         if (currentName !== txt) setResponsavelId(null);
@@ -235,7 +228,7 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // SALVAR / EXCLUIR / REABRIR
+  // SALVAR
   // ---------------------------------------------------------------------------
   const handleSalvar = async () => {
     if (!acao) return;
@@ -252,8 +245,6 @@ const ModalDetalhesAcao = ({
         (u) => String(u.id) === String(responsavelId)
       );
       const nomeResp = responsavelId ? buildNomeSobrenome(user) : String(responsavelTexto || "").trim();
-
-      // ✅ Sanitização do ID antes de salvar
       const safeResponsavelId = isValidUUID(responsavelId) ? responsavelId : null;
 
       const payload = {
@@ -287,27 +278,64 @@ const ModalDetalhesAcao = ({
     }
   };
 
-  const handleExcluir = async () => {
-    if (!acao) return;
-    const senha = window.prompt("Para excluir a ação, digite a senha de autorização:");
-    if (senha === null) return;
-    if (senha !== "excluir") return alert("Senha incorreta. A ação não será excluída.");
-    if (!window.confirm("Tem certeza que deseja excluir esta ação?")) return;
+  // ---------------------------------------------------------------------------
+  // EXCLUIR (SOFT DELETE COM VALIDAÇÃO)
+  // ---------------------------------------------------------------------------
+  const handleExcluirClick = () => {
+    // Abre a área de validação
+    setShowDeleteAuth(true);
+  };
 
+  const confirmarExclusao = async () => {
+    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
     setDeleting(true);
-    try {
-      const { error } = await supabase.from("acoes").delete().eq("id", acao.id);
-      if (error) throw error;
 
+    try {
+      // 1. Validar Usuário na tabela usuarios_aprovadores
+      const { data: usuario, error: errAuth } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, login, senha, nome_completo, ativo")
+        .eq("login", delLogin)
+        .eq("senha", delSenha) // Validação direta conforme solicitado
+        .eq("ativo", true)
+        .maybeSingle();
+
+      if (errAuth) throw errAuth;
+
+      if (!usuario) {
+        alert("Login ou Senha inválidos (ou usuário inativo).");
+        setDeleting(false);
+        return;
+      }
+
+      // 2. Realizar Soft Delete (Update status -> "Excluída")
+      const { error: errUpdate } = await supabase
+        .from("acoes")
+        .update({
+            status: "Excluída",
+            // Opcional: salvar quem excluiu se tiver colunas para isso, ex:
+            // excluido_por: usuario.nome_completo,
+            // data_exclusao: new Date().toISOString()
+        })
+        .eq("id", acao.id);
+
+      if (errUpdate) throw errUpdate;
+
+      alert("Ação marcada como Excluída com sucesso.");
       if (typeof onAfterDelete === "function") onAfterDelete(acao.id);
       onClose();
-    } catch (err) {
-      alert("Erro ao excluir ação: " + (err?.message || err));
+
+    } catch (error) {
+      console.error("Erro exclusão:", error);
+      alert("Erro ao excluir: " + error.message);
     } finally {
       setDeleting(false);
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // REABRIR
+  // ---------------------------------------------------------------------------
   const handleReabrir = async () => {
     if (!acao) return;
     if (!window.confirm("Reabrir a ação permitirá novas alterações. Deseja continuar?")) return;
@@ -354,10 +382,9 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // DADOS VISUAIS
+  // UI HELPERS
   // ---------------------------------------------------------------------------
-  const dataCriacao =
-    acao.data_criacao || acao.created_at
+  const dataCriacao = acao.data_criacao || acao.created_at
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
@@ -394,7 +421,61 @@ const ModalDetalhesAcao = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col relative overflow-hidden">
+        
+        {/* OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+        {showDeleteAuth && (
+          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                <Trash2 size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Confirmar Exclusão</h3>
+              <p className="text-sm text-slate-500 mb-6">
+                Para excluir esta ação, insira suas credenciais de aprovação.
+              </p>
+
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delLogin}
+                    onChange={e => setDelLogin(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
+                  <input 
+                    type="password" 
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delSenha}
+                    onChange={e => setDelSenha(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={() => setShowDeleteAuth(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmarExclusao}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? "Validando..." : "Confirmar Exclusão"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Cabeçalho */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <div>
@@ -649,21 +730,22 @@ const ModalDetalhesAcao = ({
               </button>
             )}
 
+            {/* BOTÃO EXCLUIR MODIFICADO */}
             <button
-              onClick={handleExcluir}
-              disabled={deleting}
+              onClick={handleExcluirClick}
+              disabled={saving || reabrindo}
               className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
             >
               <Trash2 size={16} />
-              {deleting ? "..." : "Excluir"}
+              Excluir
             </button>
 
             {statusLocal !== "Concluída" && (
               <button
                 onClick={handleFinalizarClick}
-                disabled={!podeConcluirLocal || saving || deleting}
+                disabled={!podeConcluirLocal || saving}
                 className={`px-6 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${
-                  podeConcluirLocal && !saving && !deleting
+                  podeConcluirLocal && !saving
                     ? "bg-green-600 text-white hover:bg-green-700 shadow-md transform hover:-translate-y-0.5"
                     : "bg-gray-200 text-gray-400 cursor-not-allowed"
                 }`}
