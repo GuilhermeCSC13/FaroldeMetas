@@ -12,10 +12,8 @@ import { supabase } from "../supabaseClient";
 const RecordingContext = createContext(null);
 
 const STORAGE_BUCKET = "gravacoes";
-const SEGMENT_MS = 5 * 60 * 1000; // 5 minutos por segmento
-
-// ✅ Timeslice de 1s para garantir dados
-const TIMESLICE_MS = 1000; 
+const SEGMENT_MS = 5 * 60 * 1000;
+const TIMESLICE_MS = 1000; // Gera dados a cada 1s
 
 function nowIso() {
   return new Date().toISOString();
@@ -32,7 +30,6 @@ function secondsToMMSS(s) {
   return `${mm}:${ss}`;
 }
 
-// Retry simples para garantir upload
 async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -46,7 +43,30 @@ async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
   throw lastErr;
 }
 
+// --- VISUAL LOGGER COMPONENT (Interno para Debug) ---
+const VisualLogger = ({ logs }) => {
+  if (logs.length === 0) return null;
+  return (
+    <div style={{
+      position: 'fixed', bottom: 10, left: 10, width: '400px', maxHeight: '300px',
+      overflowY: 'auto', backgroundColor: 'rgba(0,0,0,0.85)', color: '#0f0',
+      fontSize: '10px', fontFamily: 'monospace', padding: '10px', zIndex: 99999,
+      pointerEvents: 'none', borderRadius: '8px', border: '1px solid #333'
+    }}>
+      <div style={{fontWeight:'bold', borderBottom:'1px solid #555', marginBottom:5}}>DEBUG DE GRAVAÇÃO</div>
+      {logs.slice().reverse().map((l, i) => (
+        <div key={i} style={{marginBottom: 2, color: l.includes('❌') ? '#ff5555' : l.includes('✅') ? '#55ff55' : '#ccc'}}>
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export function RecordingProvider({ children }) {
+  const [logs, setLogs] = useState([]);
+  const addLog = (msg) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`].slice(-50));
+
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
@@ -68,16 +88,15 @@ export function RecordingProvider({ children }) {
   const stopAllRequestedRef = useRef(false);
   const rotatingRef = useRef(false);
 
-  // Fila de Upload
   const uploadQueueRef = useRef([]);
   const uploadWorkerRunningRef = useRef(false);
   const uploadsInFlightRef = useRef(new Set());
   const queueDrainPromiseRef = useRef(null);
 
-  // Promise do Stop
   const stopFinalizePromiseRef = useRef(null);
   const finalizeRunningRef = useRef(false);
 
+  // Helper para nome do arquivo
   const buildPartPath = (reuniaoId, sessionId, partNumber) =>
     `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
 
@@ -91,6 +110,7 @@ export function RecordingProvider({ children }) {
   const stopTimerFn = () => clearInterval(timerRef.current);
 
   const cleanupMedia = () => {
+    addLog("🧹 Limpando streams de mídia...");
     try {
       recorderRef.current = null;
       if (displayStreamRef.current) displayStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -100,7 +120,7 @@ export function RecordingProvider({ children }) {
       mixedStreamRef.current = null;
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close();
       audioCtxRef.current = null;
-    } catch {}
+    } catch(e) { addLog(`Erro cleanup: ${e.message}`); }
   };
 
   const createStopPromise = () => {
@@ -113,131 +133,112 @@ export function RecordingProvider({ children }) {
   const resolveStopPromise = () => { stopFinalizePromiseRef.current?.resolve?.(); stopFinalizePromiseRef.current = null; };
   const rejectStopPromise = (err) => { stopFinalizePromiseRef.current?.reject?.(err); stopFinalizePromiseRef.current = null; };
 
-  // Worker de Upload (Processa a fila)
+  // --- WORKER DE UPLOAD (Blindado) ---
   const runUploadWorker = async () => {
     if (uploadWorkerRunningRef.current) return;
     uploadWorkerRunningRef.current = true;
+    addLog("🚀 Worker de upload iniciado");
 
     try {
       while (uploadQueueRef.current.length > 0) {
-        const item = uploadQueueRef.current[0]; // Peek
-        if (!item) {
-          uploadQueueRef.current.shift();
-          continue;
-        }
+        const item = uploadQueueRef.current[0];
+        if (!item) { uploadQueueRef.current.shift(); continue; }
 
+        addLog(`📤 Enviando Parte ${item.partNumber} (${item.blob.size} bytes)...`);
+        
         try {
-          await uploadPart(item.blob, item.partNumber);
-          uploadQueueRef.current.shift(); // Remove após sucesso
+          // Passamos os dados EXPLÍCITOS do item, não usamos refs globais aqui
+          await uploadPart(item.blob, item.partNumber, item.reuniaoId, item.sessionId);
+          addLog(`✅ Parte ${item.partNumber} enviada!`);
+          uploadQueueRef.current.shift();
         } catch (err) {
-          console.error(`Falha crítica upload part ${item.partNumber}:`, err);
-          uploadQueueRef.current.shift(); // Remove para não travar a fila
+          addLog(`❌ Falha upload parte ${item.partNumber}: ${err.message}`);
+          uploadQueueRef.current.shift(); // Remove para não travar fila
         }
       }
     } finally {
       uploadWorkerRunningRef.current = false;
-      // Se a fila zerou e alguém está esperando (waitQueueDrain), avisa que acabou
       if (queueDrainPromiseRef.current && uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) {
         queueDrainPromiseRef.current.resolve?.();
         queueDrainPromiseRef.current = null;
       }
+      addLog("🏁 Worker pausado (fila vazia)");
     }
   };
 
-  const enqueueUpload = (blob, partNumber) => {
-    uploadQueueRef.current.push({ blob, partNumber });
+  // Enfileira com SNAPSHOT dos IDs (Isso corrige o Race Condition)
+  const enqueueUpload = (blob, partNumber, reuniaoId, sessionId) => {
+    if (!reuniaoId || !sessionId) {
+      addLog("❌ ERRO CRÍTICO: Tentativa de enqueue sem IDs!");
+      return;
+    }
+    uploadQueueRef.current.push({ blob, partNumber, reuniaoId, sessionId });
     runUploadWorker();
   };
 
   const waitQueueDrain = async () => {
     if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) return;
-    
+    addLog("⏳ Aguardando uploads pendentes...");
     if (!queueDrainPromiseRef.current) {
       let resolve;
       const p = new Promise((r) => (resolve = r));
       queueDrainPromiseRef.current = { promise: p, resolve };
     }
-    
     runUploadWorker();
     await queueDrainPromiseRef.current.promise;
+    addLog("✅ Uploads finalizados.");
   };
 
-  const uploadPart = async (blob, partNumber) => {
-    // 🔥 Proteção vital: Se não tiver ID, aborta.
-    // O bug era que 'sessionIdRef.current' estava null aqui.
-    if (!current?.reuniaoId || !sessionIdRef.current) {
-      console.warn("Upload abortado: Sem ID de sessão. (Race Condition aconteceu?)");
-      return;
-    }
-
-    const reuniaoId = current.reuniaoId;
-    const sessionId = sessionIdRef.current;
+  // Upload recebe IDs como argumento (independente do estado global)
+  const uploadPart = async (blob, partNumber, reuniaoId, sessionId) => {
     const path = buildPartPath(reuniaoId, sessionId, partNumber);
-
+    
     const uploadPromise = (async () => {
-      // 1. Upload Storage
+      // 1. Supabase Storage
       await withRetry(async () => {
-        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
-          contentType: "video/webm",
-          upsert: false,
+        const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
+          contentType: "video/webm", upsert: false,
         });
-        if (upErr) throw upErr;
+        if (error) throw error;
       });
 
-      // 2. Insert Table
+      // 2. Tabela SQL
       await withRetry(async () => {
-        const { error: insErr } = await supabase.from("reuniao_gravacao_partes").insert([
-          {
-            reuniao_id: reuniaoId,
-            session_id: sessionId,
-            part_number: partNumber,
-            storage_bucket: STORAGE_BUCKET,
-            storage_path: path,
-            bytes: blob.size,
-            status: "UPLOADED",
-          },
-        ]);
-        if (insErr) throw insErr;
+        const { error } = await supabase.from("reuniao_gravacao_partes").insert([{
+          reuniao_id: reuniaoId, session_id: sessionId, part_number: partNumber,
+          storage_bucket: STORAGE_BUCKET, storage_path: path, bytes: blob.size, status: "UPLOADED",
+        }]);
+        if (error) throw error;
       });
     })();
 
     uploadsInFlightRef.current.add(uploadPromise);
-    try {
-      await uploadPromise;
-    } finally {
-      uploadsInFlightRef.current.delete(uploadPromise);
-    }
+    try { await uploadPromise; } finally { uploadsInFlightRef.current.delete(uploadPromise); }
   };
 
   const createRecorder = () => {
     const stream = mixedStreamRef.current;
-    if (!stream) throw new Error("Stream não inicializado");
+    if (!stream) throw new Error("Stream não existe");
     
-    // Tenta codecs preferidos, mas aceita padrão do navegador
-    const mimeTypes = [
-      "video/webm;codecs=vp8,opus",
-      "video/webm;codecs=vp9,opus",
-      "video/webm"
-    ];
-    
-    let options = {};
+    const mimeTypes = ["video/webm;codecs=vp8,opus", "video/webm", ""];
+    let options = undefined;
+
     for (const type of mimeTypes) {
+      if (type === "") break; // Default
       if (MediaRecorder.isTypeSupported(type)) {
         options = { mimeType: type };
+        addLog(`🎥 Codec escolhido: ${type}`);
         break;
       }
     }
-    
     return new MediaRecorder(stream, options);
   };
 
   const finalizeFailClosed = async (reuniaoId, message) => {
+    addLog(`❌ Finalizando com erro: ${message}`);
     try {
       await supabase.from("reunioes").update({
-        gravacao_status: "ERRO",
-        gravacao_erro: String(message || "Falha desconhecida"),
-        gravacao_fim: nowIso(),
-        updated_at: nowIso(),
+        gravacao_status: "ERRO", gravacao_erro: String(message), gravacao_fim: nowIso(), updated_at: nowIso(),
       }).eq("id", reuniaoId);
     } catch {}
   };
@@ -255,26 +256,28 @@ export function RecordingProvider({ children }) {
       rec.onstop = async () => {
         try {
           const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
-          const partNumber = ++partNumberRef.current;
+          addLog(`⏹️ Segmento finalizado. Tamanho: ${blob.size} bytes`);
 
-          // Só enfileira se tiver dados
-          if (blob.size > 0) {
-            enqueueUpload(blob, partNumber);
+          // CAPTURA IDS ATUAIS PARA O ENQUEUE
+          const currentReuniaoId = current?.reuniaoId;
+          const currentSessionId = sessionIdRef.current;
+
+          if (blob.size > 0 && currentReuniaoId && currentSessionId) {
+            const part = ++partNumberRef.current;
+            enqueueUpload(blob, part, currentReuniaoId, currentSessionId);
+          } else {
+            addLog("⚠️ Blob vazio ou sem sessão ativa. Ignorando.");
           }
-          
-          // Se não foi pedido stop total, inicia próximo segmento
-          if (!stopAllRequestedRef.current) {
-            startSegment();
-          }
+
+          if (!stopAllRequestedRef.current) startSegment();
         } catch (e) {
-          console.error("Erro no onstop:", e);
+          addLog(`❌ Erro no onstop: ${e.message}`);
         }
       };
 
-      // Inicia com timeslice para garantir chunks constantes
       rec.start(TIMESLICE_MS); 
     } catch (e) {
-      console.error("Erro startSegment:", e);
+      addLog(`❌ Erro ao iniciar recorder: ${e.message}`);
     }
   };
 
@@ -284,30 +287,30 @@ export function RecordingProvider({ children }) {
     try {
       const rec = recorderRef.current;
       if (rec && rec.state === "recording") rec.stop();
-    } finally {
-      rotatingRef.current = false;
-    }
+    } finally { rotatingRef.current = false; }
   };
 
   const enqueueCompileJob = async (reuniaoId) => {
-    const prefix = `reunioes/${reuniaoId}/${sessionIdRef.current}/`;
+    // Usa ID salvo ou ref se disponível.
+    // Aqui assumimos que o ref ainda é válido ou passamos via arg se necessário
+    // mas o compile job não é tão sensível a race condition quanto o upload
+    const prefix = `reunioes/${reuniaoId}/${sessionIdRef.current || 'unknown'}/`;
     await supabase.from("recording_compile_queue").insert([{
-      reuniao_id: reuniaoId,
-      status: "PENDENTE",
-      storage_bucket: STORAGE_BUCKET,
-      storage_prefix: prefix,
-      tentativas: 0,
+      reuniao_id: reuniaoId, status: "PENDENTE", storage_bucket: STORAGE_BUCKET,
+      storage_prefix: prefix, tentativas: 0,
     }]);
   };
 
   const startRecording = async ({ reuniaoId, reuniaoTitulo }) => {
-    if (!reuniaoId) throw new Error("reuniaoId obrigatório.");
+    addLog("▶️ Iniciando gravação...");
+    if (!reuniaoId) return;
     if (isRecording) return;
 
     stopAllRequestedRef.current = false;
     rotatingRef.current = false;
     finalizeRunningRef.current = false;
     setTimer(0);
+    setLogs([]); // Limpa logs antigos
 
     const sessionId = `sess_${crypto?.randomUUID?.() || Date.now()}`;
     sessionIdRef.current = sessionId;
@@ -315,49 +318,53 @@ export function RecordingProvider({ children }) {
 
     setCurrent({ reuniaoId, reuniaoTitulo: reuniaoTitulo || `Reunião ${reuniaoId}`, sessionId, startedAtIso: nowIso() });
 
-    // Atualiza status no banco
     await supabase.from("reunioes").update({
       status: "Em Andamento", gravacao_status: "GRAVANDO", gravacao_session_id: sessionId,
       gravacao_bucket: STORAGE_BUCKET, gravacao_prefix: `reunioes/${reuniaoId}/${sessionId}/`,
       gravacao_inicio: nowIso(), updated_at: nowIso(),
     }).eq("id", reuniaoId);
 
-    // Obtém streams
-    const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    displayStreamRef.current = displayStream;
-    micStreamRef.current = micStream;
+      displayStreamRef.current = displayStream;
+      micStreamRef.current = micStream;
 
-    // Mixa áudio
-    const audioCtx = new AudioContext();
-    audioCtxRef.current = audioCtx;
-    const dest = audioCtx.createMediaStreamDestination();
-    
-    if (micStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(micStream).connect(dest);
-    if (displayStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(displayStream).connect(dest);
+      const audioCtx = new AudioContext();
+      audioCtxRef.current = audioCtx;
+      const dest = audioCtx.createMediaStreamDestination();
+      
+      if (micStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(micStream).connect(dest);
+      if (displayStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(displayStream).connect(dest);
 
-    const mixedStream = new MediaStream([...displayStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-    mixedStreamRef.current = mixedStream;
+      const mixedStream = new MediaStream([...displayStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      mixedStreamRef.current = mixedStream;
 
-    // Se usuário parar compartilhamento nativo
-    displayStream.getVideoTracks()[0].onended = () => stopRecording();
+      displayStream.getVideoTracks()[0].onended = () => {
+        addLog("🛑 Compartilhamento de tela encerrado pelo usuário.");
+        stopRecording();
+      };
 
-    startSegment();
+      startSegment();
+      
+      clearInterval(segmentIntervalRef.current);
+      segmentIntervalRef.current = setInterval(() => {
+        if (!stopAllRequestedRef.current) rotateSegment();
+      }, SEGMENT_MS);
 
-    // Loop de rotação
-    clearInterval(segmentIntervalRef.current);
-    segmentIntervalRef.current = setInterval(() => {
-      if (!stopAllRequestedRef.current) rotateSegment();
-    }, SEGMENT_MS);
-
-    startTimeRef.current = Date.now();
-    setIsRecording(true);
-    startTimerFn();
+      startTimeRef.current = Date.now();
+      setIsRecording(true);
+      startTimerFn();
+      addLog("✅ Gravação ativa.");
+    } catch (err) {
+      addLog(`❌ Erro permissões: ${err.message}`);
+      setIsRecording(false);
+    }
   };
 
-  // 🔥 O FIX DA "RACE CONDITION" ESTÁ AQUI
   const stopRecording = async () => {
+    addLog("⏹️ Solicitado Parar Gravação...");
     if (stopAllRequestedRef.current) return;
     stopAllRequestedRef.current = true;
     
@@ -369,17 +376,12 @@ export function RecordingProvider({ children }) {
       clearInterval(segmentIntervalRef.current);
       
       const rec = recorderRef.current;
-      
-      // ✅ AQUI: Forçamos a espera pelo evento 'onstop'
-      // Isso garante que o blob seja criado e entre na fila 
-      // ANTES de chamarmos finalizeRecording e limparmos o sessionId.
       if (rec && rec.state === "recording") {
+        addLog("⏳ Forçando stop final e aguardando dados...");
         await new Promise((resolve) => {
           const originalOnStop = rec.onstop;
           rec.onstop = async (e) => {
-            // Executa a lógica original (criar blob, enfileirar upload)
             if (originalOnStop) await originalOnStop(e);
-            // Só libera o 'await' depois que tudo isso acontecer
             resolve();
           };
           rec.stop();
@@ -389,7 +391,7 @@ export function RecordingProvider({ children }) {
       await finalizeRecording();
       await stopPromise;
     } catch (e) {
-      console.error("stopRecording error:", e);
+      addLog(`❌ Erro Stop: ${e.message}`);
       rejectStopPromise(e);
       await finalizeRecording();
     } finally {
@@ -405,8 +407,6 @@ export function RecordingProvider({ children }) {
 
     try {
       setIsProcessing(true);
-
-      // Agora o waitQueueDrain funciona porque o item já está na fila
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
 
@@ -414,26 +414,23 @@ export function RecordingProvider({ children }) {
         ? Math.floor((Date.now() - startTimeRef.current) / 1000)
         : timer;
 
+      addLog("📝 Atualizando banco de dados (Realizada)...");
       await withRetry(async () => {
-        await supabase.from("reunioes").update({
-          status: "Realizada",
-          duracao_segundos: duracao,
-          gravacao_fim: nowIso(),
-          gravacao_status: "PRONTO_PROCESSAR",
-          updated_at: nowIso(),
+        const { error } = await supabase.from("reunioes").update({
+          status: "Realizada", duracao_segundos: duracao, gravacao_fim: nowIso(),
+          gravacao_status: "PRONTO_PROCESSAR", updated_at: nowIso(),
         }).eq("id", reuniaoId);
+        if (error) throw error;
       });
 
       await enqueueCompileJob(reuniaoId);
+      addLog("🎉 PROCESSO FINALIZADO COM SUCESSO!");
 
     } catch (e) {
-      console.error("finalizeRecording error:", e);
       await finalizeFailClosed(reuniaoId, e?.message);
     } finally {
       setIsProcessing(false);
       cleanupMedia();
-      
-      // Só limpa as referências DEPOIS de tudo enviado
       sessionIdRef.current = null;
       partNumberRef.current = 0;
       setCurrent(null);
@@ -453,7 +450,13 @@ export function RecordingProvider({ children }) {
     isRecording, isProcessing, timer, timerLabel: secondsToMMSS(timer), current, startRecording, stopRecording
   }), [isRecording, isProcessing, timer, current]);
 
-  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
+  return (
+    <RecordingContext.Provider value={value}>
+      {children}
+      {/* Painel de Debug Visível */}
+      <VisualLogger logs={logs} />
+    </RecordingContext.Provider>
+  );
 }
 
 export function useRecording() {
