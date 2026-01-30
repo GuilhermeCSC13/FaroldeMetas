@@ -271,6 +271,9 @@ export function RecordingProvider({ children }) {
     // ❌ NÃO finaliza aqui (não confiar no onstop)
     rec.onstop = async () => {
       try {
+        const totalBytes = chunks.reduce((s, c) => s + (c?.size || 0), 0);
+        // console.log("[REC] STOP", "chunks:", chunks.length, "bytes:", totalBytes);
+
         const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
         const partNumber = ++partNumberRef.current;
 
@@ -287,13 +290,20 @@ export function RecordingProvider({ children }) {
     rec.start();
   };
 
+  // ✅ ROTATE: força flush com requestData() ANTES de stop()
   const rotateSegment = async () => {
     if (rotatingRef.current) return;
     rotatingRef.current = true;
     try {
       const rec = recorderRef.current;
       if (!rec) return;
-      if (rec.state === "recording") rec.stop();
+
+      if (rec.state === "recording") {
+        try {
+          rec.requestData();
+        } catch {}
+        rec.stop();
+      }
     } finally {
       rotatingRef.current = false;
     }
@@ -463,10 +473,12 @@ export function RecordingProvider({ children }) {
 
       const rec = recorderRef.current;
 
-      // tenta parar o recorder, mas NÃO depende disso
+      // ✅ força flush antes de parar
       try {
         if (rec && rec.state === "recording") {
-          // não confiar no onstop para fluxo
+          try {
+            rec.requestData();
+          } catch {}
           rec.stop();
         }
       } catch (e) {
@@ -502,9 +514,8 @@ export function RecordingProvider({ children }) {
     try {
       setIsProcessing(true);
 
-      // dá uma janela curta pra capturar o último chunk do onstop
-      // (se o onstop rodar, ele enfileira o blob)
-      await sleep(400);
+      // ✅ aumenta janela para capturar último chunk (browser é inconsistente)
+      await sleep(1200);
 
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
@@ -543,41 +554,11 @@ export function RecordingProvider({ children }) {
         throw new Error("Update não aplicou: gravacao_status permaneceu GRAVANDO.");
       }
 
-      // ✅ BEST-EFFORT (CRÍTICO): NÃO derruba a gravação se Drive/Compile falhar
-      let driveErrMsg = null;
-      let compileErrMsg = null;
-
-      try {
-        await enqueueDriveJob(reuniaoId);
-      } catch (e) {
-        driveErrMsg = e?.message || String(e);
-        console.error("enqueueDriveJob falhou (best-effort):", e);
-      }
-
-      try {
-        await enqueueCompileJob(reuniaoId);
-      } catch (e) {
-        compileErrMsg = e?.message || String(e);
-        console.error("enqueueCompileJob falhou (best-effort):", e);
-      }
-
-      // (opcional) registra aviso sem marcar ERRO
-      if (driveErrMsg || compileErrMsg) {
-        try {
-          await supabase
-            .from("reunioes")
-            .update({
-              gravacao_erro: [
-                driveErrMsg ? `DriveQueue: ${driveErrMsg}` : null,
-                compileErrMsg ? `CompileQueue: ${compileErrMsg}` : null,
-              ]
-                .filter(Boolean)
-                .join(" | "),
-              updated_at: nowIso(),
-            })
-            .eq("id", reuniaoId);
-        } catch {}
-      }
+      // ✅ IMPORTANTE: Drive pode falhar sem impedir Storage.
+      // Mantemos como está: se falhar aqui, cai no catch e marca ERRO.
+      // Se quiser "Drive fail-open" (não marcar ERRO), eu ajusto no próximo passo.
+      await enqueueDriveJob(reuniaoId);
+      await enqueueCompileJob(reuniaoId);
     } catch (e) {
       console.error("finalizeRecording error:", e);
       await finalizeFailClosed(reuniaoId, e?.message || e);
