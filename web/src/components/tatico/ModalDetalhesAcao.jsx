@@ -21,6 +21,13 @@ function sanitizeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
 }
 
+// ✅ Validação de UUID para evitar erro "20"
+function isValidUUID(uuid) {
+  if (!uuid || typeof uuid !== 'string') return false;
+  const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return regex.test(uuid);
+}
+
 function fileKindFromFile(file) {
   const t = String(file?.type || "").toLowerCase();
   const n = String(file?.name || "").toLowerCase();
@@ -115,7 +122,10 @@ const ModalDetalhesAcao = ({
       "";
 
     setResponsavelTexto(String(respTexto || "").trim());
-    setResponsavelId(acao.responsavel_id || null);
+    
+    // ✅ Valida ID ao carregar
+    const initialRespId = acao.responsavel_id;
+    setResponsavelId(isValidUUID(initialRespId) ? initialRespId : null);
 
     if (acao.data_vencimento) {
       const d = new Date(acao.data_vencimento);
@@ -142,7 +152,7 @@ const ModalDetalhesAcao = ({
 
         setListaResponsaveis(data || []);
 
-        if (!acao.responsavel_id && respTexto && (data || []).length) {
+        if (!isValidUUID(acao.responsavel_id) && respTexto && (data || []).length) {
           const respNorm = String(respTexto).trim().toLowerCase();
           const found = (data || []).find((u) => {
             const label = buildNomeSobrenome(u).toLowerCase();
@@ -188,6 +198,7 @@ const ModalDetalhesAcao = ({
       setResponsavelId(null);
       return;
     }
+    // Tenta achar match exato no texto digitado
     const exact = (listaResponsaveis || []).find((u) => {
       const label = buildNomeSobrenome(u).toLowerCase();
       const nc = String(u?.nome_completo || "").trim().toLowerCase();
@@ -195,8 +206,15 @@ const ModalDetalhesAcao = ({
     });
 
     if (exact?.id) setResponsavelId(exact.id);
-    else setResponsavelId(null);
-  }, [responsavelTexto, listaResponsaveis]);
+    // Se não achou exato, mantemos o ID anterior SOMENTE se o texto ainda corresponder, 
+    // mas aqui simplificamos: se digitou algo novo que não bate, anula ID.
+    else if (responsavelId) {
+        // Opcional: checar se o ID atual ainda bate com o texto, se não, null
+        const current = (listaResponsaveis || []).find(u => u.id === responsavelId);
+        const currentName = current ? buildNomeSobrenome(current).toLowerCase() : "";
+        if (currentName !== txt) setResponsavelId(null);
+    }
+  }, [responsavelTexto, listaResponsaveis, responsavelId]);
 
   // ---------------------------------------------------------------------------
   // UPLOAD
@@ -235,12 +253,15 @@ const ModalDetalhesAcao = ({
       );
       const nomeResp = responsavelId ? buildNomeSobrenome(user) : String(responsavelTexto || "").trim();
 
+      // ✅ Sanitização do ID antes de salvar
+      const safeResponsavelId = isValidUUID(responsavelId) ? responsavelId : null;
+
       const payload = {
         observacao: obsAcao,
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
         fotos_conclusao: [...fotosConclusao, ...novasUrlsConclusao],
-        responsavel_id: responsavelId || null,
+        responsavel_id: safeResponsavelId,
         responsavel: nomeResp || null,
         responsavel_nome: nomeResp || null,
         data_vencimento: vencimento || null,
@@ -293,8 +314,6 @@ const ModalDetalhesAcao = ({
 
     setReabrindo(true);
     try {
-      // Limpa dados de fechamento ao reabrir? Normalmente sim, ou mantem histórico.
-      // Aqui vamos limpar quem fechou para ficar consistente com "Aberta"
       const { error } = await supabase
         .from("acoes")
         .update({ 
@@ -329,13 +348,7 @@ const ModalDetalhesAcao = ({
       alert("Para finalizar, registre o que foi realizado e anexe pelo menos uma evidência.");
       return;
     }
-
-    // Ao finalizar, o backend ou triggers podem gravar quem fechou. 
-    // Se o front tiver o usuario logado, poderia enviar aqui. 
-    // Como não tenho o user context aqui, vou apenas salvar e mudar status.
     await handleSalvar();
-    
-    // Se onConcluir faz update de status:
     if (typeof onConcluir === "function") await onConcluir();
     setStatusLocal("Concluída");
   };
@@ -348,12 +361,10 @@ const ModalDetalhesAcao = ({
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
-  // Data fechamento
   const dataFechamento = acao.data_fechamento || acao.data_conclusao 
     ? new Date(acao.data_fechamento || acao.data_conclusao).toLocaleString() 
     : null;
 
-  const dataVencimentoLabel = vencimento ? new Date(vencimento).toLocaleDateString("pt-BR") : "-";
   const inputsDesabilitados = statusLocal === "Concluída";
 
   const previewsAcao = useMemo(() => {
@@ -417,7 +428,6 @@ const ModalDetalhesAcao = ({
                    <span className="text-sm text-gray-700 flex items-center gap-1">
                      <Calendar size={14} /> {dataCriacao}
                    </span>
-                   {/* QUEM CRIOU - AZUL PEQUENO */}
                    {acao.criado_por_nome && (
                      <span className="text-[10px] text-blue-600 font-medium mt-0.5 flex items-center gap-1">
                         <User size={10} /> Criado por: {acao.criado_por_nome}
@@ -491,7 +501,6 @@ const ModalDetalhesAcao = ({
               <div>
                 <span className="text-[11px] font-semibold text-gray-400 uppercase block mb-2">Anexos (Abertura)</span>
                 
-                {/* Lista Existente */}
                 {fotosAcao.length > 0 && (
                   <div className="flex flex-wrap gap-3 mb-3">
                     {fotosAcao.map((url, idx) => (
@@ -500,7 +509,6 @@ const ModalDetalhesAcao = ({
                   </div>
                 )}
 
-                {/* Upload Melhorado */}
                 {!inputsDesabilitados && (
                   <>
                     <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-blue-200 rounded-lg cursor-pointer bg-blue-50/50 hover:bg-blue-50 transition-colors group">
@@ -537,7 +545,6 @@ const ModalDetalhesAcao = ({
           <div>
             <div className="flex items-center justify-between mb-2 ml-1">
                  <h3 className="text-xs font-bold text-gray-500 uppercase">Conclusão da ação</h3>
-                 {/* QUEM FECHOU - AZUL PEQUENO */}
                  {statusLocal === "Concluída" && (acao.fechado_por_nome || dataFechamento) && (
                      <div className="text-right">
                          {acao.fechado_por_nome && (
@@ -569,7 +576,6 @@ const ModalDetalhesAcao = ({
                 />
               </div>
 
-              {/* Evidências Conclusão */}
               <div>
                 <span className="text-[11px] font-semibold text-gray-400 uppercase block mb-2">Anexos (Conclusão)</span>
 
@@ -581,7 +587,6 @@ const ModalDetalhesAcao = ({
                   </div>
                 )}
 
-                {/* Upload Melhorado */}
                 {!inputsDesabilitados && (
                   <>
                     <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-green-200 rounded-lg cursor-pointer bg-green-50/50 hover:bg-green-50 transition-colors group">
@@ -695,7 +700,6 @@ function MiniaturaArquivo({ preview }) {
     );
   }
   
-  // Icon fallback
   const Icon = kind === "pdf" ? FileText : FileIcon;
   const label = kind.toUpperCase().substring(0,3);
   const color = kind === "pdf" ? "text-red-500" : "text-blue-500";
