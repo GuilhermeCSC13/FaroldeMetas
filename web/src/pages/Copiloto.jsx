@@ -120,8 +120,6 @@ export default function Copiloto() {
 
   /**
    * ✅ Criação de Ação
-   * - descricao: Nome da ação
-   * - observacao: Detalhes da ação
    */
   const [novaAcao, setNovaAcao] = useState({
     descricao: "", // Nome curto
@@ -163,15 +161,14 @@ export default function Copiloto() {
 
     fetchReunioes();
 
-    // 1. Carregar usuário logado e lista de responsáveis
+    // 1. Carregar lista de responsáveis e identificar usuário logado
     (async () => {
       try {
         safeSet(() => setLoadingResponsaveis(true));
 
-        // Pega user da sessão
+        // Pega user da sessão atual
         const { data: { user } } = await supabase.auth.getUser();
-        let userLogado = null;
-
+        
         // Carrega todos aprovadores
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
@@ -186,15 +183,23 @@ export default function Copiloto() {
         } else {
           safeSet(() => setListaResponsaveis(data || []));
 
-          // Tenta identificar o usuário logado na lista da Inove
+          // Tenta identificar o usuário logado na lista
+          let userEncontrado = null;
           if (user?.email) {
-            userLogado = (data || []).find(
+            userEncontrado = (data || []).find(
               (u) =>
                 String(u.email || "").toLowerCase() ===
                 String(user.email).toLowerCase()
             );
           }
-          safeSet(() => setCurrentUser(userLogado));
+          
+          // Se encontrou, salva no state
+          if (userEncontrado) {
+             safeSet(() => setCurrentUser(userEncontrado));
+          } else if (user?.email) {
+             // Fallback: se não achar na lista, cria um obj temporário só com email
+             safeSet(() => setCurrentUser({ email: user.email, nome: "Usuário", sobrenome: user.email }));
+          }
         }
       } finally {
         safeSet(() => setLoadingResponsaveis(false));
@@ -508,8 +513,6 @@ export default function Copiloto() {
 
   /**
    * ✅ Salvar Ação Atualizado
-   * - Inclui Observação
-   * - Inclui Quem Criou (Login)
    */
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
@@ -536,9 +539,23 @@ export default function Copiloto() {
 
     const responsavelNome = buildNomeSobrenome(respRow);
 
-    // ✅ Dados de Quem Criou (currentUser)
-    const criadoPorId = currentUser?.id || null;
-    const criadoPorNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
+    // ✅ Tenta garantir quem é o usuário logado
+    let criadorFinalId = currentUser?.id || null;
+    let criadorFinalNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
+    
+    // Fallback: se currentUser estiver nulo, tenta pegar da sessão agora
+    if (!criadorFinalId) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.email) {
+            criadorFinalNome = user.email; // Pelo menos o email
+            // Tenta achar na lista de novo
+            const found = (listaResponsaveis || []).find(u => u.email === user.email);
+            if (found) {
+                criadorFinalId = found.id;
+                criadorFinalNome = buildNomeSobrenome(found);
+            }
+        }
+    }
 
     const payloadCriacao = {
       descricao,      // Nome
@@ -553,8 +570,8 @@ export default function Copiloto() {
       responsavel_nome: responsavelNome,
 
       // ✅ Quem criou
-      criado_por_aprovador_id: criadoPorId,
-      criado_por_nome: criadoPorNome,
+      criado_por_aprovador_id: criadorFinalId,
+      criado_por_nome: criadorFinalNome,
       
       data_vencimento: vencimento,
       data_abertura: todayISODate(),
