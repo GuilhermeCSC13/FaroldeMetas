@@ -999,8 +999,7 @@ export default function Copiloto() {
                   </div>
                   <div>
                     <div className="text-sm font-black">Criar nova ação</div>
-                    <div className="text-xs text-slate-500">
-                      Responsável + vencimento + evidência são obrigatórios.
+                    <div className="text-xs text-slate-500">                  
                     </div>
                   </div>
                 </div>
