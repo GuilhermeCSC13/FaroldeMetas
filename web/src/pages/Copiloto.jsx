@@ -27,7 +27,9 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 function nowIso() {
   return new Date().toISOString();
 }
-
+function todayISODate() {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
 function toBR(dt) {
   try {
     return dt ? new Date(dt).toLocaleString("pt-BR") : "-";
@@ -35,11 +37,9 @@ function toBR(dt) {
     return "-";
   }
 }
-
 function norm(s) {
   return String(s || "").trim().toUpperCase();
 }
-
 function secondsToMMSS(s) {
   const mm = Math.floor((s || 0) / 60)
     .toString()
@@ -50,17 +50,14 @@ function secondsToMMSS(s) {
   return `${mm}:${ss}`;
 }
 
-// ✅ agora baseado em usuarios_aprovadores (nome_completo / nome / apelido)
 function buildNomeSobrenome(u) {
   const nomeCompleto = String(u?.nome_completo || "").trim();
   const nome = String(u?.nome || "").trim();
   const sobrenome = String(u?.sobrenome || "").trim();
-  const apelido = String(u?.apelido || "").trim();
 
   if (nomeCompleto) return nomeCompleto;
   if (nome && sobrenome) return `${nome} ${sobrenome}`;
   if (nome) return nome;
-  if (apelido) return apelido;
   return "-";
 }
 
@@ -121,15 +118,21 @@ export default function Copiloto() {
   );
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
-  // ✅ Criar ação (responsavel_id TEXT, vencimento e evidência obrigatória)
+  /**
+   * ✅ IMPORTANTE (seu banco):
+   * - acoes.responsavel_id é TEXT (confirmado)
+   * Então aqui vamos salvar:
+   * - responsavel_id: login (ou id convertido em string como fallback)
+   * - responsavel_ref: id inteiro (string) para referência
+   */
   const [novaAcao, setNovaAcao] = useState({
     descricao: "",
-    responsavelId: "", // ✅ id (int) convertido para string e gravado em acoes.responsavel_id (TEXT)
+    responsavelId: "", // TEXT -> login (preferencial)
     vencimento: "",
   });
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
 
-  // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores)
+  // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores) (id inteiro / login)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
@@ -155,20 +158,21 @@ export default function Copiloto() {
   ========================= */
   useEffect(() => {
     isMountedRef.current = true;
+
     fetchReunioes();
 
-    // ✅ carregar responsáveis (INOVE / usuarios_aprovadores)
+    // ✅ carregar responsáveis: INOVE -> usuarios_aprovadores
     (async () => {
       try {
-        setLoadingResponsaveis(true);
+        safeSet(() => setLoadingResponsaveis(true));
 
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select(
-            "id, nome, sobrenome, nome_completo, apelido, login, email, ativo, nivel"
+            "id, nome, sobrenome, nome_completo, login, email, ativo, nivel, status_cadastro"
           )
           .eq("ativo", true)
-          .order("nome", { ascending: true });
+          .order("nome_completo", { ascending: true });
 
         if (error) {
           console.error("carregarResponsaveis (usuarios_aprovadores):", error);
@@ -212,7 +216,7 @@ export default function Copiloto() {
 
   /* =========================
      Fetch Reuniões (do dia)
-     ✅ manter "selecionada" sempre atualizada
+     ✅ manter "selecionada" atualizada com o objeto mais novo
   ========================= */
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -230,7 +234,7 @@ export default function Copiloto() {
     const rows = data || [];
     safeSet(() => setReunioes(rows));
 
-    // ✅ se existe selecionada, troca pelo "row" atualizado
+    // ✅ se existe selecionada, troca pelo row atualizado
     if (selecionada?.id) {
       const atualizada = rows.find((r) => r.id === selecionada.id) || null;
       if (atualizada) safeSet(() => setSelecionada(atualizada));
@@ -374,7 +378,8 @@ export default function Copiloto() {
 
   /* =========================
      Upload Evidências
-  ========================= */
+     - bucket: evidencias
+========================= */
   const uploadEvidencias = async (acaoId, files) => {
     const urls = [];
 
@@ -383,9 +388,13 @@ export default function Copiloto() {
         file.name
       )}`;
 
-      const { error } = await supabase.storage
-        .from("evidencias")
-        .upload(fileName, file);
+      const { error } = await supabase.storage.from("evidencias").upload(
+        fileName,
+        file,
+        {
+          upsert: false,
+        }
+      );
 
       if (error) {
         console.error("Erro upload evidência:", error);
@@ -404,8 +413,8 @@ export default function Copiloto() {
 
   /* =========================
      AÇÕES
-     ✅ Pendências do tipo: Aberta e Pendente
-     ✅ Concluídas desde a última: Concluída/Concluida
+     ✅ Pendências do tipo considerar "Aberta" e "Pendente"
+     ✅ Concluídas desde a última considerar "Concluída/Concluida"
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
@@ -489,44 +498,57 @@ export default function Copiloto() {
     }
   };
 
-  // ✅ Criar ação exige: responsável + vencimento + evidência
-  // ✅ responsavel_id é TEXT no banco principal
+  /**
+   * ✅ Criar ação exige: responsável + vencimento + evidência
+   * ✅ E NÃO pode mandar colunas que não existem (ex.: responsavel_login)
+   */
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
 
     const descricao = String(novaAcao.descricao || "").trim();
-    const responsavelId = String(novaAcao.responsavelId || "").trim(); // id do INOVE em string
+    const responsavelId = String(novaAcao.responsavelId || "").trim(); // TEXT (login)
     const vencimento = String(novaAcao.vencimento || "").trim();
 
-    if (!descricao) return;
+    if (!descricao) return alert("Informe a descrição.");
     if (!responsavelId) return alert("Selecione o responsável.");
     if (!vencimento) return alert("Informe o vencimento.");
     if ((novasEvidenciasAcao || []).length === 0) {
       return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
     }
 
-    const user = (listaResponsaveis || []).find(
-      (u) => String(u.id) === responsavelId
-    );
-    const responsavelNome = buildNomeSobrenome(user);
-    const responsavelLogin = String(user?.login || "").trim();
+    // responsável selecionado (usuarios_aprovadores)
+    const respRow =
+      (listaResponsaveis || []).find(
+        (u) => String(u.login || "") === responsavelId
+      ) ||
+      (listaResponsaveis || []).find((u) => String(u.id) === responsavelId) ||
+      null;
 
+    const responsavelNome = buildNomeSobrenome(respRow);
+    const responsavelRef = respRow?.id != null ? String(respRow.id) : null;
+
+    // ✅ payload 100% compatível com suas colunas (csv)
     const payloadCriacao = {
       descricao,
       status: "Aberta",
       reuniao_id: selecionada.id,
       tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
 
-      // ✅ TEXT
-      responsavel_id: responsavelId,
+      // colunas existentes:
+      responsavel_id: responsavelId, // TEXT
+      responsavel_ref: responsavelRef, // (se existir como TEXT; se no seu banco for outro tipo, pode remover)
       responsavel: responsavelNome,
       responsavel_nome: responsavelNome,
-      responsavel_login: responsavelLogin || null,
 
       data_vencimento: vencimento,
+      data_abertura: todayISODate(),
+
       created_at: nowIso(),
       data_criacao: nowIso(),
+
       fotos_acao: [],
+      fotos: [],
+      evidencia_url: null,
     };
 
     const { data, error } = await supabase
@@ -584,7 +606,7 @@ export default function Copiloto() {
 
   /* =========================
      Responsável autocomplete
-     ✅ filtra por nome OU login OU email
+     - usa nome_completo / nome / login
   ========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
@@ -594,12 +616,8 @@ export default function Copiloto() {
         const nome = buildNomeSobrenome(u).toLowerCase();
         const login = String(u?.login || "").toLowerCase();
         const email = String(u?.email || "").toLowerCase();
-        const apelido = String(u?.apelido || "").toLowerCase();
         return (
-          nome.includes(q) ||
-          login.includes(q) ||
-          email.includes(q) ||
-          apelido.includes(q)
+          nome.includes(q) || login.includes(q) || (email && email.includes(q))
         );
       })
       .slice(0, 10);
@@ -607,15 +625,19 @@ export default function Copiloto() {
 
   const selecionarResponsavel = (u) => {
     const nome = buildNomeSobrenome(u);
-    setNovaAcao((p) => ({ ...p, responsavelId: String(u.id || "") }));
-    setResponsavelQuery(
-      nome !== "-" ? nome : u?.login || u?.email || String(u?.id || "")
-    );
+    const login = String(u?.login || "").trim();
+    const fallback = String(u?.id != null ? u.id : "").trim();
+
+    // preferencial: login (porque responsavel_id é TEXT)
+    const idText = login || fallback;
+
+    setNovaAcao((p) => ({ ...p, responsavelId: idText }));
+    setResponsavelQuery(nome);
     setRespOpen(false);
   };
 
   /* =========================
-     Evidências: adicionar + remover
+     Evidências: adicionar + remover (múltiplas)
   ========================= */
   const onAddEvidencias = (fileList) => {
     const files = Array.from(fileList || []);
@@ -623,7 +645,6 @@ export default function Copiloto() {
     setNovasEvidenciasAcao((prev) => [...(prev || []), ...files]);
   };
 
-  // ✅ FIX: sintaxe correta
   const removerEvidencia = (id) => {
     setNovasEvidenciasAcao((prev) => {
       const arr = prev || [];
@@ -634,7 +655,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Previews de evidências
+     Previews de evidências (miniaturas)
   ========================= */
   const previews = useMemo(() => {
     return (novasEvidenciasAcao || []).map((f, idx) => {
@@ -816,11 +837,11 @@ export default function Copiloto() {
                 onClick={onStart}
                 disabled={
                   !selecionada ||
-                  String(selecionada?.status || "") === "Realizada"
+                  String(selecionada?.status || "").trim() === "Realizada"
                 }
                 className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-sm"
                 title={
-                  String(selecionada?.status || "") === "Realizada"
+                  String(selecionada?.status || "").trim() === "Realizada"
                     ? "Reunião está REALIZADA. Use Reabrir (ADM) para gravar novamente."
                     : ""
                 }
@@ -840,7 +861,6 @@ export default function Copiloto() {
                 <div className="text-xl font-black tracking-tight truncate">
                   {selecionada?.titulo || "Selecione uma reunião à esquerda"}
                 </div>
-
                 <div className="mt-1 text-xs text-slate-500">
                   {selecionada?.data_hora ? toBR(selecionada.data_hora) : "-"}
                 </div>
@@ -941,12 +961,14 @@ export default function Copiloto() {
                   >
                     Da reunião ({(acoesDaReuniao || []).length})
                   </Pill>
+
                   <Pill
                     active={acaoTab === "backlog"}
                     onClick={() => setAcaoTab("backlog")}
                   >
                     Pendências do tipo ({(acoesPendentesTipo || []).length})
                   </Pill>
+
                   <Pill
                     active={acaoTab === "desde_ultima"}
                     onClick={() => setAcaoTab("desde_ultima")}
@@ -999,7 +1021,8 @@ export default function Copiloto() {
                   </div>
                   <div>
                     <div className="text-sm font-black">Criar nova ação</div>
-                    <div className="text-xs text-slate-500">                  
+                    <div className="text-xs text-slate-500">
+                      Responsável + vencimento + evidência são obrigatórios.
                     </div>
                   </div>
                 </div>
@@ -1012,10 +1035,7 @@ export default function Copiloto() {
                     <textarea
                       value={novaAcao.descricao}
                       onChange={(e) =>
-                        setNovaAcao((p) => ({
-                          ...p,
-                          descricao: e.target.value,
-                        }))
+                        setNovaAcao((p) => ({ ...p, descricao: e.target.value }))
                       }
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       rows={3}
@@ -1037,7 +1057,9 @@ export default function Copiloto() {
                       onFocus={() => setRespOpen(true)}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       placeholder={
-                        loadingResponsaveis ? "Carregando..." : "Digite o nome..."
+                        loadingResponsaveis
+                          ? "Carregando..."
+                          : "Digite o nome..."
                       }
                       disabled={loadingResponsaveis}
                     />
@@ -1055,7 +1077,7 @@ export default function Copiloto() {
                               {buildNomeSobrenome(u)}
                             </div>
                             <div className="text-xs text-slate-500">
-                              {u?.login ? `@${u.login}` : null}
+                              {u?.login ? `Login: ${u.login}` : null}
                               {u?.email ? ` • ${u.email}` : null}
                             </div>
                           </button>
@@ -1073,10 +1095,7 @@ export default function Copiloto() {
                       type="date"
                       value={novaAcao.vencimento}
                       onChange={(e) =>
-                        setNovaAcao((p) => ({
-                          ...p,
-                          vencimento: e.target.value,
-                        }))
+                        setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))
                       }
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                     />
@@ -1132,7 +1151,11 @@ export default function Copiloto() {
                   <button
                     type="button"
                     onClick={() => {
-                      setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+                      setNovaAcao({
+                        descricao: "",
+                        responsavelId: "",
+                        vencimento: "",
+                      });
                       setResponsavelQuery("");
                       setNovasEvidenciasAcao([]);
                       setRespOpen(false);
@@ -1216,62 +1239,62 @@ export default function Copiloto() {
             </div>
           )}
         </div>
+      </div>
 
-        {/* Modal detalhes ação (Central) */}
-        {acaoSelecionada && (
-          <ModalDetalhesAcao
-            aberto={!!acaoSelecionada}
-            acao={acaoSelecionada}
-            status={acaoSelecionada?.status}
-            onClose={() => setAcaoSelecionada(null)}
-            onAfterSave={() => fetchAcoes(selecionada)}
-            onAfterDelete={() => fetchAcoes(selecionada)}
-            onConcluir={async () => {
-              await supabase
-                .from("acoes")
-                .update({
-                  status: "Concluída",
-                  data_conclusao: new Date().toISOString(),
-                })
-                .eq("id", acaoSelecionada.id);
+      {/* Modal detalhes ação (Central) */}
+      {acaoSelecionada && (
+        <ModalDetalhesAcao
+          aberto={!!acaoSelecionada}
+          acao={acaoSelecionada}
+          status={acaoSelecionada?.status}
+          onClose={() => setAcaoSelecionada(null)}
+          onAfterSave={() => fetchAcoes(selecionada)}
+          onAfterDelete={() => fetchAcoes(selecionada)}
+          onConcluir={async () => {
+            await supabase
+              .from("acoes")
+              .update({
+                status: "Concluída",
+                data_conclusao: new Date().toISOString(),
+              })
+              .eq("id", acaoSelecionada.id);
 
-              await fetchAcoes(selecionada);
-            }}
-          />
-        )}
+            await fetchAcoes(selecionada);
+          }}
+        />
+      )}
 
-        {/* Reabrir ADM */}
-        {showUnlock && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-            <div className="bg-white p-6 rounded-2xl w-[360px]">
-              <div className="font-black mb-2">Senha do Administrador</div>
-              <input
-                type="password"
-                value={senhaAdm}
-                onChange={(e) => setSenhaAdm(e.target.value)}
-                className="w-full border rounded-xl p-3"
-              />
-              <div className="flex gap-2 mt-4">
-                <button
-                  onClick={validarSenhaAdm}
-                  className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-                >
-                  Liberar
-                </button>
-                <button
-                  onClick={() => setShowUnlock(false)}
-                  className="border px-4 py-2 rounded-xl text-xs"
-                >
-                  Cancelar
-                </button>
-              </div>
-              <div className="mt-2 text-[11px] text-slate-500">
-                Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
-              </div>
+      {/* Reabrir ADM */}
+      {showUnlock && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-2xl w-[360px]">
+            <div className="font-black mb-2">Senha do Administrador</div>
+            <input
+              type="password"
+              value={senhaAdm}
+              onChange={(e) => setSenhaAdm(e.target.value)}
+              className="w-full border rounded-xl p-3"
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={validarSenhaAdm}
+                className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
+              >
+                Liberar
+              </button>
+              <button
+                onClick={() => setShowUnlock(false)}
+                className="border px-4 py-2 rounded-xl text-xs"
+              >
+                Cancelar
+              </button>
+            </div>
+            <div className="mt-2 text-[11px] text-slate-500">
+              Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </Layout>
   );
 }
@@ -1387,15 +1410,10 @@ function MiniaturaArquivo({ preview, onRemove }) {
 }
 
 function AcaoCard({ acao, onClick }) {
-  const done =
-    String(acao?.status || "").toLowerCase() === "concluída" ||
-    String(acao?.status || "").toLowerCase() === "concluida";
+  const st = String(acao?.status || "").toLowerCase();
+  const done = st === "concluída" || st === "concluida";
 
-  const resp =
-    acao?.responsavel_nome ||
-    acao?.responsavel ||
-    acao?.responsavel_login ||
-    "Geral";
+  const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
 
   return (
     <button
@@ -1428,10 +1446,7 @@ function AcaoCard({ acao, onClick }) {
               </span>
             ) : null}
             {acao?.data_conclusao ? (
-              <span className="text-slate-500">
-                {" "}
-                • Conclusão: {toBR(acao.data_conclusao)}
-              </span>
+              <span className="text-slate-500"> • Conclusão: {toBR(acao.data_conclusao)}</span>
             ) : null}
           </div>
         </div>
@@ -1439,4 +1454,3 @@ function AcaoCard({ acao, onClick }) {
     </button>
   );
 }
-
