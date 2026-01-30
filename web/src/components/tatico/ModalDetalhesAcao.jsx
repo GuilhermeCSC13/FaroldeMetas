@@ -1,9 +1,11 @@
 // src/components/tatico/ModalDetalhesAcao.jsx
-import React, { useEffect, useState } from "react";
-import { CheckCircle, X, Trash2, UploadCloud, RotateCw } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { CheckCircle, X, Trash2, UploadCloud, RotateCw, FileText, File as FileIcon } from "lucide-react";
 import { supabase, supabaseInove } from "../../supabaseClient";
 
-// ✅ mesmo padrão do Copiloto: Nome Sobrenome (preferencial)
+/* =========================
+   Helpers (IGUAL Copiloto)
+========================= */
 function buildNomeSobrenome(u) {
   const nome = String(u?.nome || "").trim();
   const sobrenome = String(u?.sobrenome || "").trim();
@@ -15,6 +17,37 @@ function buildNomeSobrenome(u) {
   return "-";
 }
 
+function sanitizeFileName(name) {
+  return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
+}
+
+function fileKindFromFile(file) {
+  const t = String(file?.type || "").toLowerCase();
+  const n = String(file?.name || "").toLowerCase();
+
+  if (t.startsWith("image/")) return "image";
+  if (t.startsWith("video/")) return "video";
+  if (t === "application/pdf" || n.endsWith(".pdf")) return "pdf";
+  if (n.endsWith(".doc") || n.endsWith(".docx")) return "doc";
+  if (n.endsWith(".xls") || n.endsWith(".xlsx")) return "xls";
+  if (n.endsWith(".ppt") || n.endsWith(".pptx")) return "ppt";
+  return "file";
+}
+
+function fileKindFromUrl(url) {
+  const u = String(url || "").toLowerCase().split("?")[0];
+  if (u.match(/\.(png|jpg|jpeg|webp|gif)$/)) return "image";
+  if (u.match(/\.(mp4|mov|webm|mkv)$/)) return "video";
+  if (u.endsWith(".pdf")) return "pdf";
+  if (u.match(/\.(doc|docx)$/)) return "doc";
+  if (u.match(/\.(xls|xlsx)$/)) return "xls";
+  if (u.match(/\.(ppt|pptx)$/)) return "ppt";
+  return "file";
+}
+
+/* =========================
+   Component
+========================= */
 const ModalDetalhesAcao = ({
   aberto,
   acao,
@@ -39,13 +72,13 @@ const ModalDetalhesAcao = ({
   const [novosArquivosAcao, setNovosArquivosAcao] = useState([]);
   const [novosArquivosConclusao, setNovosArquivosConclusao] = useState([]);
 
-  // ✅ Responsável (MESMO parâmetro do Copiloto)
+  // ✅ Responsável (IGUAL Copiloto: escrever e sugerir)
   // - Fonte: supabaseInove -> usuarios_aprovadores
-  // - Campos: id, nome, sobrenome, nome_completo
-  const [responsavel, setResponsavel] = useState("");
+  const [responsavelTexto, setResponsavelTexto] = useState("");
   const [responsavelId, setResponsavelId] = useState(null);
-  const [listaUsuarios, setListaUsuarios] = useState([]);
-  const [loadingUsuarios, setLoadingUsuarios] = useState(false);
+  const [listaResponsaveis, setListaResponsaveis] = useState([]);
+  const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
+  const [openSugestoes, setOpenSugestoes] = useState(false);
 
   const [vencimento, setVencimento] = useState("");
 
@@ -53,7 +86,9 @@ const ModalDetalhesAcao = ({
   const [deleting, setDeleting] = useState(false);
   const [reabrindo, setReabrindo] = useState(false);
 
-  // Quando abrir / mudar ação / mudar status vindo de fora
+  // ---------------------------------------------------------------------------
+  // INIT / LOAD
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!acao || !aberto) return;
 
@@ -68,22 +103,20 @@ const ModalDetalhesAcao = ({
       ? acao.fotos
       : [];
 
-    const baseConclusao = Array.isArray(acao.fotos_conclusao)
-      ? acao.fotos_conclusao
-      : [];
+    const baseConclusao = Array.isArray(acao.fotos_conclusao) ? acao.fotos_conclusao : [];
 
     setFotosAcao(baseAcao);
     setFotosConclusao(baseConclusao);
     setNovosArquivosAcao([]);
     setNovosArquivosConclusao([]);
 
-    // ✅ mantém compatibilidade: tenta ler responsável por id e/ou nome
-    setResponsavel(
+    const respTexto =
       acao.responsavel_nome ||
-        acao.responsavel ||
-        acao.responsavelName ||
-        ""
-    );
+      acao.responsavel ||
+      acao.responsavelName ||
+      "";
+
+    setResponsavelTexto(String(respTexto || "").trim());
     setResponsavelId(acao.responsavel_id || null);
 
     if (acao.data_vencimento) {
@@ -93,11 +126,10 @@ const ModalDetalhesAcao = ({
       setVencimento("");
     }
 
-    // ✅ Carrega usuários ativos (SUPABASE INOVE / usuarios_aprovadores)
-    const carregarUsuarios = async () => {
+    // ✅ carrega responsáveis do SUPABASE INOVE
+    const carregarResponsaveis = async () => {
       try {
-        setLoadingUsuarios(true);
-
+        setLoadingResponsaveis(true);
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select("id, nome, sobrenome, nome_completo, ativo")
@@ -105,86 +137,109 @@ const ModalDetalhesAcao = ({
           .order("nome", { ascending: true });
 
         if (error) {
-          console.error("Erro ao buscar usuários (INOVE):", error);
-          setListaUsuarios([]);
+          console.error("Erro ao buscar responsáveis (INOVE):", error);
+          setListaResponsaveis([]);
           return;
         }
 
-        setListaUsuarios(data || []);
+        setListaResponsaveis(data || []);
 
-        // Se não tiver responsavel_id mas tiver texto do responsável,
-        // tenta casar pelo Nome Sobrenome / nome_completo.
-        const respTexto = String(
-          acao.responsavel_nome || acao.responsavel || ""
-        ).trim();
-
+        // se não tiver id mas tiver texto, tenta casar
         if (!acao.responsavel_id && respTexto && (data || []).length) {
-          const respNorm = respTexto.toLowerCase();
-          const encontrado = (data || []).find((u) => {
-            const full = buildNomeSobrenome(u).toLowerCase();
-            const nomeCompleto = String(u?.nome_completo || "")
-              .trim()
-              .toLowerCase();
-            return full === respNorm || (nomeCompleto && nomeCompleto === respNorm);
+          const respNorm = String(respTexto).trim().toLowerCase();
+          const found = (data || []).find((u) => {
+            const label = buildNomeSobrenome(u).toLowerCase();
+            const nc = String(u?.nome_completo || "").trim().toLowerCase();
+            return label === respNorm || (nc && nc === respNorm);
           });
 
-          if (encontrado?.id) {
-            setResponsavelId(encontrado.id);
-            setResponsavel(buildNomeSobrenome(encontrado));
+          if (found?.id) {
+            setResponsavelId(found.id);
+            setResponsavelTexto(buildNomeSobrenome(found));
           }
         }
       } finally {
-        setLoadingUsuarios(false);
+        setLoadingResponsaveis(false);
       }
     };
 
-    carregarUsuarios();
+    carregarResponsaveis();
   }, [acao, aberto, status]);
 
+  // ---------------------------------------------------------------------------
+  // SUGESTÕES RESPONSÁVEL (typeahead)
+  // ---------------------------------------------------------------------------
+  const sugestoes = useMemo(() => {
+    const q = String(responsavelTexto || "").trim().toLowerCase();
+    if (!q) return (listaResponsaveis || []).slice(0, 12);
+
+    return (listaResponsaveis || [])
+      .map((u) => ({ u, label: buildNomeSobrenome(u) }))
+      .filter((x) => x.label.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [listaResponsaveis, responsavelTexto]);
+
+  const selecionarResponsavel = (u) => {
+    setResponsavelId(u?.id || null);
+    setResponsavelTexto(buildNomeSobrenome(u));
+    setOpenSugestoes(false);
+  };
+
+  // se o usuário digitar um texto que não casa com ninguém, zera o id
+  useEffect(() => {
+    const txt = String(responsavelTexto || "").trim().toLowerCase();
+    if (!txt) {
+      setResponsavelId(null);
+      return;
+    }
+
+    const exact = (listaResponsaveis || []).find((u) => {
+      const label = buildNomeSobrenome(u).toLowerCase();
+      const nc = String(u?.nome_completo || "").trim().toLowerCase();
+      return label === txt || (nc && nc === txt);
+    });
+
+    if (exact?.id) setResponsavelId(exact.id);
+    else setResponsavelId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responsavelTexto]);
+
+  // ---------------------------------------------------------------------------
+  // Upload evidências (IGUAL Copiloto: múltiplos arquivos + vários tipos)
+  // ---------------------------------------------------------------------------
   const uploadArquivos = async (files) => {
     const urls = [];
     for (const file of files) {
-      const fileName = `acao-${acao.id}-${Date.now()}-${file.name.replace(
-        /[^a-zA-Z0-9.]/g,
-        ""
-      )}`;
-      const { error } = await supabase.storage
-        .from("evidencias")
-        .upload(fileName, file);
-
-      if (!error) {
-        const { data: urlData } = supabase.storage
-          .from("evidencias")
-          .getPublicUrl(fileName);
-        if (urlData?.publicUrl) urls.push(urlData.publicUrl);
-      } else {
+      const fileName = `acao-${acao.id}-${Date.now()}-${sanitizeFileName(file.name)}`;
+      const { error } = await supabase.storage.from("evidencias").upload(fileName, file);
+      if (error) {
         console.error("Erro upload evidência:", error);
+        continue;
       }
+      const { data: urlData } = supabase.storage.from("evidencias").getPublicUrl(fileName);
+      if (urlData?.publicUrl) urls.push(urlData.publicUrl);
     }
     return urls;
   };
 
   // ---------------------------------------------------------------------------
-  // SALVAR ALTERAÇÕES
+  // SALVAR ALTERAÇÕES (grava responsável igual Copiloto)
   // ---------------------------------------------------------------------------
   const handleSalvar = async () => {
     if (!acao) return;
     setSaving(true);
     try {
       const novasUrlsAcao =
-        novosArquivosAcao.length > 0
-          ? await uploadArquivos(novosArquivosAcao)
-          : [];
+        novosArquivosAcao.length > 0 ? await uploadArquivos(novosArquivosAcao) : [];
       const novasUrlsConclusao =
         novosArquivosConclusao.length > 0
           ? await uploadArquivos(novosArquivosConclusao)
           : [];
 
-      // ✅ mesmo padrão do Copiloto: grava responsavel_id + nomes
-      const u = (listaUsuarios || []).find(
-        (x) => String(x.id) === String(responsavelId)
+      const user = (listaResponsaveis || []).find(
+        (u) => String(u.id) === String(responsavelId)
       );
-      const nomeResp = responsavelId ? buildNomeSobrenome(u) : (responsavel || "");
+      const nomeResp = responsavelId ? buildNomeSobrenome(user) : String(responsavelTexto || "").trim();
 
       const payload = {
         observacao: obsAcao,
@@ -192,7 +247,7 @@ const ModalDetalhesAcao = ({
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
         fotos_conclusao: [...fotosConclusao, ...novasUrlsConclusao],
 
-        // ✅ mesmos campos usados no Copiloto
+        // ✅ mesmos campos (Copiloto)
         responsavel_id: responsavelId || null,
         responsavel: nomeResp || null,
         responsavel_nome: nomeResp || null,
@@ -213,9 +268,6 @@ const ModalDetalhesAcao = ({
       setNovosArquivosAcao([]);
       setNovosArquivosConclusao([]);
 
-      // mantém label em tela
-      setResponsavel(nomeResp || "");
-
       if (typeof onAfterSave === "function") onAfterSave(acao.id);
     } catch (err) {
       alert("Erro ao salvar alterações da ação: " + (err?.message || err));
@@ -229,14 +281,9 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const handleExcluir = async () => {
     if (!acao) return;
-    const senha = window.prompt(
-      "Para excluir a ação, digite a senha de autorização:"
-    );
+    const senha = window.prompt("Para excluir a ação, digite a senha de autorização:");
     if (senha === null) return;
-    if (senha !== "excluir") {
-      alert("Senha incorreta. A ação não será excluída.");
-      return;
-    }
+    if (senha !== "excluir") return alert("Senha incorreta. A ação não será excluída.");
     if (!window.confirm("Tem certeza que deseja excluir esta ação?")) return;
 
     setDeleting(true);
@@ -284,7 +331,7 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // FINALIZAR (concluir)
+  // FINALIZAR
   // ---------------------------------------------------------------------------
   const podeConcluirLocal =
     statusLocal !== "Concluída" &&
@@ -293,18 +340,12 @@ const ModalDetalhesAcao = ({
 
   const handleFinalizarClick = async () => {
     if (!podeConcluirLocal) {
-      alert(
-        "Para finalizar, registre o que foi realizado e anexe pelo menos uma evidência de conclusão."
-      );
+      alert("Para finalizar, registre o que foi realizado e anexe pelo menos uma evidência de conclusão.");
       return;
     }
 
     await handleSalvar();
-
-    if (typeof onConcluir === "function") {
-      await onConcluir();
-    }
-
+    if (typeof onConcluir === "function") await onConcluir();
     setStatusLocal("Concluída");
   };
 
@@ -313,40 +354,52 @@ const ModalDetalhesAcao = ({
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
-  const dataVencimentoLabel = vencimento
-    ? new Date(vencimento).toLocaleDateString()
-    : "-";
-
+  const dataVencimentoLabel = vencimento ? new Date(vencimento).toLocaleDateString("pt-BR") : "-";
   const inputsDesabilitados = statusLocal === "Concluída";
 
-  // ✅ mudança de responsável (usuarios_aprovadores)
-  const handleChangeResponsavel = (id) => {
-    const novoId = id ? String(id) : null;
-    setResponsavelId(novoId);
+  // ---------------------------------------------------------------------------
+  // UI: previews (novos arquivos)
+  // ---------------------------------------------------------------------------
+  const previewsAcao = useMemo(() => {
+    return (novosArquivosAcao || []).map((f, idx) => {
+      const kind = fileKindFromFile(f);
+      const needsUrl = kind === "image" || kind === "video";
+      const url = needsUrl ? URL.createObjectURL(f) : null;
+      return { id: `a-${idx}-${f.name}-${f.size}`, file: f, name: f.name, kind, url };
+    });
+  }, [novosArquivosAcao]);
 
-    const usuario = (listaUsuarios || []).find(
-      (u) => String(u.id) === String(novoId)
-    );
-    setResponsavel(usuario ? buildNomeSobrenome(usuario) : "");
-  };
+  const previewsConclusao = useMemo(() => {
+    return (novosArquivosConclusao || []).map((f, idx) => {
+      const kind = fileKindFromFile(f);
+      const needsUrl = kind === "image" || kind === "video";
+      const url = needsUrl ? URL.createObjectURL(f) : null;
+      return { id: `c-${idx}-${f.name}-${f.size}`, file: f, name: f.name, kind, url };
+    });
+  }, [novosArquivosConclusao]);
 
+  useEffect(() => {
+    return () => {
+      (previewsAcao || []).forEach((p) => p?.url && URL.revokeObjectURL(p.url));
+      (previewsConclusao || []).forEach((p) => p?.url && URL.revokeObjectURL(p.url));
+    };
+  }, [previewsAcao, previewsConclusao]);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
         {/* Cabeçalho */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <div>
-            <div className="text-xs font-semibold uppercase text-gray-400">
-              Detalhes da ação
-            </div>
+            <div className="text-xs font-semibold uppercase text-gray-400">Detalhes da ação</div>
             <div className="text-sm sm:text-base font-semibold text-gray-800 truncate max-w-xl">
               {acao.descricao}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"
-          >
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500">
             <X size={18} />
           </button>
         </div>
@@ -355,58 +408,70 @@ const ModalDetalhesAcao = ({
         <div className="px-6 py-4 overflow-y-auto flex-1 space-y-6 bg-gray-50">
           {/* AÇÃO */}
           <div>
-            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
-              Ação
-            </h3>
+            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">Ação</h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
               {/* Linha informativa */}
               <div className="flex flex-wrap gap-4 text-xs sm:text-sm text-gray-600">
                 <span>
-                  <strong className="font-semibold">Status:</strong>{" "}
-                  {statusLocal}
+                  <strong className="font-semibold">Status:</strong> {statusLocal}
                 </span>
                 <span>
-                  <strong className="font-semibold">Criação:</strong>{" "}
-                  {dataCriacao}
+                  <strong className="font-semibold">Criação:</strong> {dataCriacao}
                 </span>
                 <span>
-                  <strong className="font-semibold">Vencimento:</strong>{" "}
-                  {dataVencimentoLabel}
+                  <strong className="font-semibold">Vencimento:</strong> {dataVencimentoLabel}
                 </span>
                 <span>
                   <strong className="font-semibold">Responsável:</strong>{" "}
-                  {responsavel || "-"}
+                  {responsavelTexto || "-"}
                 </span>
               </div>
 
-              {/* Edição Responsável / Vencimento */}
+              {/* Responsável (typeahead) / Vencimento */}
               <div className="mt-3 flex flex-wrap gap-4 text-xs sm:text-sm">
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                    Responsável
-                  </span>
-                  <select
-                    value={responsavelId || ""}
-                    onChange={(e) => handleChangeResponsavel(e.target.value)}
-                    disabled={inputsDesabilitados || loadingUsuarios}
-                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-64 disabled:bg-gray-100"
-                  >
-                    <option value="">
-                      {loadingUsuarios
-                        ? "Carregando responsáveis..."
-                        : "Selecione um responsável"}
-                    </option>
-                    {listaUsuarios.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {buildNomeSobrenome(u)}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col relative">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase">Responsável</span>
+
+                  <input
+                    value={responsavelTexto}
+                    onChange={(e) => {
+                      setResponsavelTexto(e.target.value);
+                      setOpenSugestoes(true);
+                    }}
+                    onFocus={() => setOpenSugestoes(true)}
+                    onBlur={() => setTimeout(() => setOpenSugestoes(false), 150)}
+                    disabled={inputsDesabilitados || loadingResponsaveis}
+                    placeholder={loadingResponsaveis ? "Carregando responsáveis..." : "Digite o nome..."}
+                    className="mt-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 w-72 disabled:bg-gray-100"
+                  />
+
+                  {/* dropdown sugestões */}
+                  {openSugestoes && !inputsDesabilitados && (sugestoes || []).length > 0 && (
+                    <div className="absolute top-[64px] left-0 w-72 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+                      {(sugestoes || []).map(({ u, label }) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onMouseDown={(ev) => ev.preventDefault()}
+                          onClick={() => selecionarResponsavel(u)}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* hint de id setado */}
+                  {!inputsDesabilitados && (
+                    <div className="mt-1 text-[11px] text-gray-400">
+                      {responsavelId ? "Responsável vinculado ✅" : "Sem vínculo (selecione pela lista)"}
+                    </div>
+                  )}
                 </div>
+
                 <div className="flex flex-col">
-                  <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                    Vencimento
-                  </span>
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase">Vencimento</span>
                   <input
                     type="date"
                     value={vencimento}
@@ -417,11 +482,9 @@ const ModalDetalhesAcao = ({
                 </div>
               </div>
 
-              {/* Observações da ação */}
+              {/* Observações */}
               <div className="mt-3">
-                <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                  Observações
-                </span>
+                <span className="text-[11px] font-semibold text-gray-400 uppercase">Observações</span>
                 <textarea
                   className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-100"
                   rows={3}
@@ -432,7 +495,7 @@ const ModalDetalhesAcao = ({
                 />
               </div>
 
-              {/* Evidências da ação */}
+              {/* Evidências da ação (existentes) */}
               <div className="mt-3">
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
                   Evidências (registro da ação)
@@ -441,24 +504,12 @@ const ModalDetalhesAcao = ({
                 {fotosAcao.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {fotosAcao.map((url, idx) => (
-                      <a
-                        key={idx}
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                        title={`Abrir evidência ${idx + 1}`}
-                      >
-                        <img
-                          src={url}
-                          alt={`Evidência ${idx + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      </a>
+                      <MiniaturaUrl key={`${url}-${idx}`} url={url} />
                     ))}
                   </div>
                 )}
 
+                {/* Anexar (IGUAL Copiloto: múltiplos tipos) */}
                 {!inputsDesabilitados && (
                   <>
                     <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
@@ -467,26 +518,31 @@ const ModalDetalhesAcao = ({
                       <input
                         type="file"
                         multiple
-                        accept="image/*"
+                        accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
                         className="hidden"
                         onChange={(e) =>
                           setNovosArquivosAcao(Array.from(e.target.files || []))
                         }
                       />
                     </label>
-                    {novosArquivosAcao.length > 0 && (
-                      <div className="mt-1 text-[11px] text-gray-500">
-                        {novosArquivosAcao.length} arquivo(s) novo(s)
-                        selecionado(s) para a ação.
+
+                    {previewsAcao.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[11px] font-semibold text-gray-400 uppercase mb-2">
+                          Prévia (novos anexos)
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {previewsAcao.map((p) => (
+                            <MiniaturaArquivo key={p.id} preview={p} />
+                          ))}
+                        </div>
                       </div>
                     )}
                   </>
                 )}
 
-                {fotosAcao.length === 0 && novosArquivosAcao.length === 0 && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Nenhuma evidência anexada à ação.
-                  </p>
+                {fotosAcao.length === 0 && previewsAcao.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">Nenhuma evidência anexada à ação.</p>
                 )}
               </div>
             </div>
@@ -494,9 +550,7 @@ const ModalDetalhesAcao = ({
 
           {/* CONCLUSÃO */}
           <div>
-            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">
-              Conclusão da ação
-            </h3>
+            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">Conclusão da ação</h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
               <div>
                 <span className="text-[11px] font-semibold text-gray-400 uppercase">
@@ -520,24 +574,12 @@ const ModalDetalhesAcao = ({
                 {fotosConclusao.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {fotosConclusao.map((url, idx) => (
-                      <a
-                        key={idx}
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex items-center justify-center bg-gray-100 hover:border-blue-400"
-                        title={`Abrir evidência de conclusão ${idx + 1}`}
-                      >
-                        <img
-                          src={url}
-                          alt={`Evidência de conclusão ${idx + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      </a>
+                      <MiniaturaUrl key={`${url}-${idx}`} url={url} />
                     ))}
                   </div>
                 )}
 
+                {/* Anexar (IGUAL Copiloto: múltiplos tipos) */}
                 {!inputsDesabilitados && (
                   <>
                     <label className="mt-2 inline-flex items-center gap-2 text-xs text-blue-700 cursor-pointer">
@@ -546,30 +588,32 @@ const ModalDetalhesAcao = ({
                       <input
                         type="file"
                         multiple
-                        accept="image/*"
+                        accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
                         className="hidden"
                         onChange={(e) =>
-                          setNovosArquivosConclusao(
-                            Array.from(e.target.files || [])
-                          )
+                          setNovosArquivosConclusao(Array.from(e.target.files || []))
                         }
                       />
                     </label>
-                    {novosArquivosConclusao.length > 0 && (
-                      <div className="mt-1 text-[11px] text-gray-500">
-                        {novosArquivosConclusao.length} arquivo(s) novo(s)
-                        selecionado(s) para a conclusão.
+
+                    {previewsConclusao.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[11px] font-semibold text-gray-400 uppercase mb-2">
+                          Prévia (novos anexos)
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {previewsConclusao.map((p) => (
+                            <MiniaturaArquivo key={p.id} preview={p} />
+                          ))}
+                        </div>
                       </div>
                     )}
                   </>
                 )}
 
-                {fotosConclusao.length === 0 &&
-                  novosArquivosConclusao.length === 0 && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Nenhuma evidência vinculada à conclusão.
-                    </p>
-                  )}
+                {fotosConclusao.length === 0 && previewsConclusao.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">Nenhuma evidência vinculada à conclusão.</p>
+                )}
               </div>
             </div>
           </div>
@@ -579,8 +623,7 @@ const ModalDetalhesAcao = ({
         <div className="px-6 py-3 border-t border-gray-200 bg-white flex items-center justify-between gap-4">
           <div className="flex flex-col text-[11px] text-gray-500">
             <span>
-              Para finalizar, é obrigatório informar a conclusão e anexar
-              evidências de conclusão.
+              Para finalizar, é obrigatório informar a conclusão e anexar evidências de conclusão.
             </span>
             <button
               onClick={handleSalvar}
@@ -592,7 +635,6 @@ const ModalDetalhesAcao = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Botão REABRIR quando concluída */}
             {statusLocal === "Concluída" && (
               <button
                 onClick={handleReabrir}
@@ -639,3 +681,148 @@ const ModalDetalhesAcao = ({
 };
 
 export default ModalDetalhesAcao;
+
+/* =========================
+   Miniaturas (IGUAL Copiloto)
+========================= */
+function MiniaturaArquivo({ preview }) {
+  const { kind, url, name } = preview;
+
+  const box =
+    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center";
+  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1";
+
+  if (kind === "image") {
+    return (
+      <div className="flex flex-col items-center" title={name}>
+        <div className={box}>
+          <img src={url} alt={name} className="w-full h-full object-cover" />
+        </div>
+        <div className={caption}>{name}</div>
+      </div>
+    );
+  }
+
+  if (kind === "video") {
+    return (
+      <div className="flex flex-col items-center" title={name}>
+        <div className={box}>
+          <video src={url} className="w-full h-full object-cover" muted playsInline />
+        </div>
+        <div className={caption}>{name}</div>
+      </div>
+    );
+  }
+
+  const Icon = kind === "pdf" ? FileText : FileIcon;
+
+  const label =
+    kind === "pdf"
+      ? "PDF"
+      : kind === "doc"
+      ? "DOC"
+      : kind === "xls"
+      ? "XLS"
+      : kind === "ppt"
+      ? "PPT"
+      : "ARQ";
+
+  const labelClass =
+    kind === "pdf"
+      ? "text-red-600"
+      : kind === "doc"
+      ? "text-blue-700"
+      : kind === "xls"
+      ? "text-emerald-700"
+      : kind === "ppt"
+      ? "text-orange-700"
+      : "text-slate-700";
+
+  return (
+    <div className="flex flex-col items-center" title={name}>
+      <div className={box}>
+        <div className="flex flex-col items-center justify-center">
+          <div className={`text-[10px] font-black ${labelClass}`}>{label}</div>
+          <Icon size={18} className="text-slate-500 mt-1" />
+        </div>
+      </div>
+      <div className={caption}>{name}</div>
+    </div>
+  );
+}
+
+function MiniaturaUrl({ url }) {
+  const kind = fileKindFromUrl(url);
+
+  const box =
+    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center hover:bg-slate-50";
+  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1";
+
+  const name = (() => {
+    try {
+      const base = String(url).split("?")[0];
+      return base.substring(base.lastIndexOf("/") + 1) || "arquivo";
+    } catch {
+      return "arquivo";
+    }
+  })();
+
+  if (kind === "image") {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex flex-col items-center"
+        title={name}
+      >
+        <div className={box}>
+          <img src={url} alt={name} className="w-full h-full object-cover" />
+        </div>
+        <div className={caption}>{name}</div>
+      </a>
+    );
+  }
+
+  const Icon = kind === "pdf" ? FileText : FileIcon;
+
+  const label =
+    kind === "pdf"
+      ? "PDF"
+      : kind === "doc"
+      ? "DOC"
+      : kind === "xls"
+      ? "XLS"
+      : kind === "ppt"
+      ? "PPT"
+      : "ARQ";
+
+  const labelClass =
+    kind === "pdf"
+      ? "text-red-600"
+      : kind === "doc"
+      ? "text-blue-700"
+      : kind === "xls"
+      ? "text-emerald-700"
+      : kind === "ppt"
+      ? "text-orange-700"
+      : "text-slate-700";
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="flex flex-col items-center"
+      title={name}
+    >
+      <div className={box}>
+        <div className="flex flex-col items-center justify-center">
+          <div className={`text-[10px] font-black ${labelClass}`}>{label}</div>
+          <Icon size={18} className="text-slate-500 mt-1" />
+        </div>
+      </div>
+      <div className={caption}>{name}</div>
+    </a>
+  );
+}
