@@ -1,7 +1,7 @@
 // src/pages/Copiloto.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../components/tatico/Layout";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseInove } from "../supabaseClient";
 import {
   Bot,
   Search,
@@ -138,7 +138,7 @@ export default function Copiloto() {
     (async () => {
       try {
         setLoadingResponsaveis(true);
-        const { data, error } = await supabase
+        const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select("id, nome, sobrenome, nome_completo, ativo")
           .eq("ativo", true)
