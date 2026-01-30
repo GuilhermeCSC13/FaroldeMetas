@@ -1,3 +1,4 @@
+// src/components/tatico/RecorderDock.jsx
 import React from "react";
 import { Monitor, Loader2 } from "lucide-react";
 import { useRecording } from "../../context/RecordingContext";
