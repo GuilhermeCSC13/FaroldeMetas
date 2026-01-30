@@ -50,14 +50,17 @@ function secondsToMMSS(s) {
   return `${mm}:${ss}`;
 }
 
+// ✅ agora baseado em usuarios_aprovadores (nome_completo / nome / apelido)
 function buildNomeSobrenome(u) {
+  const nomeCompleto = String(u?.nome_completo || "").trim();
   const nome = String(u?.nome || "").trim();
   const sobrenome = String(u?.sobrenome || "").trim();
-  const nomeCompleto = String(u?.nome_completo || "").trim();
+  const apelido = String(u?.apelido || "").trim();
 
-  if (nome && sobrenome) return `${nome} ${sobrenome}`;
   if (nomeCompleto) return nomeCompleto;
+  if (nome && sobrenome) return `${nome} ${sobrenome}`;
   if (nome) return nome;
+  if (apelido) return apelido;
   return "-";
 }
 
@@ -118,15 +121,15 @@ export default function Copiloto() {
   );
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
-  // ✅ Criar ação (responsavel_id UUID, vencimento e evidência obrigatória)
+  // ✅ Criar ação (responsavel_id TEXT, vencimento e evidência obrigatória)
   const [novaAcao, setNovaAcao] = useState({
     descricao: "",
-    responsavelId: "",
+    responsavelId: "", // ✅ id (int) convertido para string e gravado em acoes.responsavel_id (TEXT)
     vencimento: "",
   });
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
 
-  // ✅ Responsáveis (usuarios_sistema - UUID)
+  // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
@@ -152,33 +155,23 @@ export default function Copiloto() {
   ========================= */
   useEffect(() => {
     isMountedRef.current = true;
-
     fetchReunioes();
 
-    // ✅ carregar responsáveis (UUID) — usuarios_sistema (SUPABASE PRINCIPAL)
+    // ✅ carregar responsáveis (INOVE / usuarios_aprovadores)
     (async () => {
       try {
         setLoadingResponsaveis(true);
 
-        let { data, error } = await supabase
-          .from("usuarios_sistema")
-          .select("id, nome, sobrenome, nome_completo, email, ativo")
+        const { data, error } = await supabaseInove
+          .from("usuarios_aprovadores")
+          .select(
+            "id, nome, sobrenome, nome_completo, apelido, login, email, ativo, nivel"
+          )
           .eq("ativo", true)
           .order("nome", { ascending: true });
 
         if (error) {
-          const r2 = await supabase
-            .from("usuarios_sistema")
-            .select("id, nome, email, ativo")
-            .eq("ativo", true)
-            .order("nome", { ascending: true });
-
-          data = r2.data;
-          error = r2.error;
-        }
-
-        if (error) {
-          console.error("carregarResponsaveis (usuarios_sistema):", error);
+          console.error("carregarResponsaveis (usuarios_aprovadores):", error);
           safeSet(() => setListaResponsaveis([]));
           return;
         }
@@ -213,12 +206,13 @@ export default function Copiloto() {
     setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
     setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
+    setRespOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada?.id]);
 
   /* =========================
      Fetch Reuniões (do dia)
-     ✅ Ajuste: manter "selecionada" sempre atualizada com o objeto mais novo
+     ✅ manter "selecionada" sempre atualizada
   ========================= */
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -236,7 +230,7 @@ export default function Copiloto() {
     const rows = data || [];
     safeSet(() => setReunioes(rows));
 
-    // ✅ se existe selecionada, troca pelo "row" atualizado (status etc.)
+    // ✅ se existe selecionada, troca pelo "row" atualizado
     if (selecionada?.id) {
       const atualizada = rows.find((r) => r.id === selecionada.id) || null;
       if (atualizada) safeSet(() => setSelecionada(atualizada));
@@ -294,7 +288,7 @@ export default function Copiloto() {
 
   /* =========================
      Gravação
-     ✅ Ajuste: bloquear iniciar se reunião já está Realizada
+     ✅ bloquear iniciar se reunião já está Realizada
   ========================= */
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
@@ -375,7 +369,7 @@ export default function Copiloto() {
 
     setShowUnlock(false);
     setSenhaAdm("");
-    await fetchReunioes(); // ✅ garante status atualizado na selecionada
+    await fetchReunioes();
   };
 
   /* =========================
@@ -410,8 +404,8 @@ export default function Copiloto() {
 
   /* =========================
      AÇÕES
-     ✅ Ajuste: Pendências do tipo considerar "Aberta" e "Pendente"
-     ✅ Ajuste: Concluídas desde a última considerar "Concluída/Concluida"
+     ✅ Pendências do tipo: Aberta e Pendente
+     ✅ Concluídas desde a última: Concluída/Concluida
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
@@ -495,12 +489,13 @@ export default function Copiloto() {
     }
   };
 
-  // ✅ Criar ação agora exige: responsável + vencimento + evidência
+  // ✅ Criar ação exige: responsável + vencimento + evidência
+  // ✅ responsavel_id é TEXT no banco principal
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
 
     const descricao = String(novaAcao.descricao || "").trim();
-    const responsavelId = String(novaAcao.responsavelId || "").trim(); // ✅ UUID
+    const responsavelId = String(novaAcao.responsavelId || "").trim(); // id do INOVE em string
     const vencimento = String(novaAcao.vencimento || "").trim();
 
     if (!descricao) return;
@@ -514,6 +509,7 @@ export default function Copiloto() {
       (u) => String(u.id) === responsavelId
     );
     const responsavelNome = buildNomeSobrenome(user);
+    const responsavelLogin = String(user?.login || "").trim();
 
     const payloadCriacao = {
       descricao,
@@ -521,16 +517,15 @@ export default function Copiloto() {
       reuniao_id: selecionada.id,
       tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
 
-      // ✅ vincular responsável UUID (usuarios_sistema)
+      // ✅ TEXT
       responsavel_id: responsavelId,
       responsavel: responsavelNome,
       responsavel_nome: responsavelNome,
+      responsavel_login: responsavelLogin || null,
 
       data_vencimento: vencimento,
-
       created_at: nowIso(),
       data_criacao: nowIso(),
-
       fotos_acao: [],
     };
 
@@ -589,24 +584,38 @@ export default function Copiloto() {
 
   /* =========================
      Responsável autocomplete
+     ✅ filtra por nome OU login OU email
   ========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
     if (!q) return [];
     return (listaResponsaveis || [])
-      .filter((u) => buildNomeSobrenome(u).toLowerCase().includes(q))
+      .filter((u) => {
+        const nome = buildNomeSobrenome(u).toLowerCase();
+        const login = String(u?.login || "").toLowerCase();
+        const email = String(u?.email || "").toLowerCase();
+        const apelido = String(u?.apelido || "").toLowerCase();
+        return (
+          nome.includes(q) ||
+          login.includes(q) ||
+          email.includes(q) ||
+          apelido.includes(q)
+        );
+      })
       .slice(0, 10);
   }, [responsavelQuery, listaResponsaveis]);
 
   const selecionarResponsavel = (u) => {
     const nome = buildNomeSobrenome(u);
     setNovaAcao((p) => ({ ...p, responsavelId: String(u.id || "") }));
-    setResponsavelQuery(nome);
+    setResponsavelQuery(
+      nome !== "-" ? nome : u?.login || u?.email || String(u?.id || "")
+    );
     setRespOpen(false);
   };
 
   /* =========================
-     Evidências: adicionar + remover (múltiplas)
+     Evidências: adicionar + remover
   ========================= */
   const onAddEvidencias = (fileList) => {
     const files = Array.from(fileList || []);
@@ -614,7 +623,7 @@ export default function Copiloto() {
     setNovasEvidenciasAcao((prev) => [...(prev || []), ...files]);
   };
 
-  // ✅ FIX: removerEvidencia (sem "setNovx:")
+  // ✅ FIX: sintaxe correta
   const removerEvidencia = (id) => {
     setNovasEvidenciasAcao((prev) => {
       const arr = prev || [];
@@ -625,7 +634,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Previews de evidências (miniaturas)
+     Previews de evidências
   ========================= */
   const previews = useMemo(() => {
     return (novasEvidenciasAcao || []).map((f, idx) => {
@@ -824,71 +833,72 @@ export default function Copiloto() {
 
         {/* COLUNA DIREITA */}
         <div className="flex-1 p-6 overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-xl font-black tracking-tight truncate">
-                {selecionada?.titulo || "Selecione uma reunião à esquerda"}
-              </div>
-
-              <div className="mt-1 text-xs text-slate-500">
-                {selecionada?.data_hora ? toBR(selecionada.data_hora) : "-"}
-              </div>
-
-              {selecionada?.id && (
-                <div className="mt-2 flex items-center gap-2">
-                  <span
-                    className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${statusBadgeClass(
-                      statusLabel(selecionada)
-                    )}`}
-                  >
-                    {statusLabel(selecionada)}
-                  </span>
-
-                  {isRecording && (
-                    <span className="text-[10px] px-2 py-1 rounded-lg font-extrabold bg-blue-600/10 border border-blue-200 text-blue-800">
-                      EM GRAVAÇÃO
-                    </span>
-                  )}
+          {/* Header direita */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xl font-black tracking-tight truncate">
+                  {selecionada?.titulo || "Selecione uma reunião à esquerda"}
                 </div>
-              )}
-            </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-2">
-              {selecionada?.id &&
-                String(selecionada?.status || "").trim() === "Realizada" && (
+                <div className="mt-1 text-xs text-slate-500">
+                  {selecionada?.data_hora ? toBR(selecionada.data_hora) : "-"}
+                </div>
+
+                {selecionada?.id && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span
+                      className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${statusBadgeClass(
+                        statusLabel(selecionada)
+                      )}`}
+                    >
+                      {statusLabel(selecionada)}
+                    </span>
+
+                    {isRecording && (
+                      <span className="text-[10px] px-2 py-1 rounded-lg font-extrabold bg-blue-600/10 border border-blue-200 text-blue-800">
+                        EM GRAVAÇÃO
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selecionada?.id &&
+                  String(selecionada?.status || "").trim() === "Realizada" && (
+                    <button
+                      onClick={() => setShowUnlock(true)}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
+                      type="button"
+                      title="Reabrir reunião (exige senha do Administrador)"
+                    >
+                      <Lock size={16} />
+                      Reabrir (ADM)
+                    </button>
+                  )}
+
+                {selecionada?.id && (
                   <button
-                    onClick={() => setShowUnlock(true)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
+                    onClick={() => {
+                      fetchReunioes();
+                      fetchAcoes(selecionada);
+                      carregarAtas(selecionada);
+                    }}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-black text-xs hover:bg-slate-50"
                     type="button"
-                    title="Reabrir reunião (exige senha do Administrador)"
+                    title="Atualizar"
                   >
-                    <Lock size={16} />
-                    Reabrir (ADM)
+                    <RefreshCw size={16} />
+                    Atualizar
                   </button>
                 )}
-
-              {selecionada?.id && (
-                <button
-                  onClick={() => {
-                    fetchReunioes();
-                    fetchAcoes(selecionada);
-                    carregarAtas(selecionada);
-                  }}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-black text-xs hover:bg-slate-50"
-                  type="button"
-                  title="Atualizar"
-                >
-                  <RefreshCw size={16} />
-                  Atualizar
-                </button>
-              )}
+              </div>
             </div>
           </div>
 
           {/* Tabs principais */}
-          <div className="flex flex-wrap gap-2 mt-5 mb-4">
+          <div className="flex flex-wrap gap-2 mb-4">
             <TabButton
               active={tab === "acoes"}
               onClick={() => setTab("acoes")}
@@ -1028,9 +1038,7 @@ export default function Copiloto() {
                       onFocus={() => setRespOpen(true)}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       placeholder={
-                        loadingResponsaveis
-                          ? "Carregando..."
-                          : "Digite o nome..."
+                        loadingResponsaveis ? "Carregando..." : "Digite o nome..."
                       }
                       disabled={loadingResponsaveis}
                     />
@@ -1047,11 +1055,10 @@ export default function Copiloto() {
                             <div className="font-semibold">
                               {buildNomeSobrenome(u)}
                             </div>
-                            {u?.email ? (
-                              <div className="text-xs text-slate-500">
-                                {u.email}
-                              </div>
-                            ) : null}
+                            <div className="text-xs text-slate-500">
+                              {u?.login ? `@${u.login}` : null}
+                              {u?.email ? ` • ${u.email}` : null}
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -1126,11 +1133,7 @@ export default function Copiloto() {
                   <button
                     type="button"
                     onClick={() => {
-                      setNovaAcao({
-                        descricao: "",
-                        responsavelId: "",
-                        vencimento: "",
-                      });
+                      setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
                       setResponsavelQuery("");
                       setNovasEvidenciasAcao([]);
                       setRespOpen(false);
@@ -1214,62 +1217,62 @@ export default function Copiloto() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Modal detalhes ação (Central) */}
-      {acaoSelecionada && (
-        <ModalDetalhesAcao
-          aberto={!!acaoSelecionada}
-          acao={acaoSelecionada}
-          status={acaoSelecionada?.status}
-          onClose={() => setAcaoSelecionada(null)}
-          onAfterSave={() => fetchAcoes(selecionada)}
-          onAfterDelete={() => fetchAcoes(selecionada)}
-          onConcluir={async () => {
-            await supabase
-              .from("acoes")
-              .update({
-                status: "Concluída",
-                data_conclusao: new Date().toISOString(),
-              })
-              .eq("id", acaoSelecionada.id);
+        {/* Modal detalhes ação (Central) */}
+        {acaoSelecionada && (
+          <ModalDetalhesAcao
+            aberto={!!acaoSelecionada}
+            acao={acaoSelecionada}
+            status={acaoSelecionada?.status}
+            onClose={() => setAcaoSelecionada(null)}
+            onAfterSave={() => fetchAcoes(selecionada)}
+            onAfterDelete={() => fetchAcoes(selecionada)}
+            onConcluir={async () => {
+              await supabase
+                .from("acoes")
+                .update({
+                  status: "Concluída",
+                  data_conclusao: new Date().toISOString(),
+                })
+                .eq("id", acaoSelecionada.id);
 
-            await fetchAcoes(selecionada);
-          }}
-        />
-      )}
+              await fetchAcoes(selecionada);
+            }}
+          />
+        )}
 
-      {/* Reabrir ADM */}
-      {showUnlock && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-2xl w-[360px]">
-            <div className="font-black mb-2">Senha do Administrador</div>
-            <input
-              type="password"
-              value={senhaAdm}
-              onChange={(e) => setSenhaAdm(e.target.value)}
-              className="w-full border rounded-xl p-3"
-            />
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={validarSenhaAdm}
-                className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-              >
-                Liberar
-              </button>
-              <button
-                onClick={() => setShowUnlock(false)}
-                className="border px-4 py-2 rounded-xl text-xs"
-              >
-                Cancelar
-              </button>
-            </div>
-            <div className="mt-2 text-[11px] text-slate-500">
-              Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
+        {/* Reabrir ADM */}
+        {showUnlock && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+            <div className="bg-white p-6 rounded-2xl w-[360px]">
+              <div className="font-black mb-2">Senha do Administrador</div>
+              <input
+                type="password"
+                value={senhaAdm}
+                onChange={(e) => setSenhaAdm(e.target.value)}
+                className="w-full border rounded-xl p-3"
+              />
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={validarSenhaAdm}
+                  className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
+                >
+                  Liberar
+                </button>
+                <button
+                  onClick={() => setShowUnlock(false)}
+                  className="border px-4 py-2 rounded-xl text-xs"
+                >
+                  Cancelar
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-500">
+                Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </Layout>
   );
 }
@@ -1385,9 +1388,15 @@ function MiniaturaArquivo({ preview, onRemove }) {
 }
 
 function AcaoCard({ acao, onClick }) {
-  const st = String(acao?.status || "").toLowerCase();
-  const done = st === "concluída" || st === "concluida";
-  const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
+  const done =
+    String(acao?.status || "").toLowerCase() === "concluída" ||
+    String(acao?.status || "").toLowerCase() === "concluida";
+
+  const resp =
+    acao?.responsavel_nome ||
+    acao?.responsavel ||
+    acao?.responsavel_login ||
+    "Geral";
 
   return (
     <button
@@ -1431,3 +1440,4 @@ function AcaoCard({ acao, onClick }) {
     </button>
   );
 }
+
