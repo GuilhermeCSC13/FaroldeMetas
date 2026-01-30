@@ -47,15 +47,38 @@ function secondsToMMSS(s) {
   return `${mm}:${ss}`;
 }
 
+function buildNomeSobrenome(u) {
+  const nome = String(u?.nome || "").trim();
+  const sobrenome = String(u?.sobrenome || "").trim();
+  const nomeCompleto = String(u?.nome_completo || "").trim();
+
+  if (nome && sobrenome) return `${nome} ${sobrenome}`;
+  if (nomeCompleto) return nomeCompleto;
+  if (nome) return nome;
+  return "-";
+}
+
+function sanitizeFileName(name) {
+  return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
+}
+
 /* =========================
    Page
 ========================= */
 export default function Copiloto() {
-  const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
-    useRecording();
+  const {
+    isRecording,
+    isProcessing,
+    timer,
+    startRecording,
+    stopRecording,
+    current,
+  } = useRecording();
 
   // filtros esquerda
-  const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split("T")[0]);
+  const [dataFiltro, setDataFiltro] = useState(
+    new Date().toISOString().split("T")[0]
+  );
   const [busca, setBusca] = useState("");
 
   // reuniões
@@ -74,10 +97,22 @@ export default function Copiloto() {
   const [loadingAcoes, setLoadingAcoes] = useState(false);
   const [acoesDaReuniao, setAcoesDaReuniao] = useState([]);
   const [acoesPendentesTipo, setAcoesPendentesTipo] = useState([]);
-  const [acoesConcluidasDesdeUltima, setAcoesConcluidasDesdeUltima] = useState([]);
+  const [acoesConcluidasDesdeUltima, setAcoesConcluidasDesdeUltima] = useState(
+    []
+  );
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
-  const [novaAcao, setNovaAcao] = useState({ descricao: "", responsavel: "" });
+  // ✅ Criar ação (agora com responsavel_id, vencimento e evidência obrigatória)
+  const [novaAcao, setNovaAcao] = useState({
+    descricao: "",
+    responsavelId: "",
+    vencimento: "",
+  });
+  const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // arquivos (foto/video/doc)
+
+  // ✅ Responsáveis (usuarios_aprovadores)
+  const [listaResponsaveis, setListaResponsaveis] = useState([]);
+  const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
   // Modal Ação (Central)
   const [acaoSelecionada, setAcaoSelecionada] = useState(null);
@@ -98,6 +133,29 @@ export default function Copiloto() {
   useEffect(() => {
     isMountedRef.current = true;
     fetchReunioes();
+
+    // ✅ carregar responsáveis uma vez
+    (async () => {
+      try {
+        setLoadingResponsaveis(true);
+        const { data, error } = await supabase
+          .from("usuarios_aprovadores")
+          .select("id, nome, sobrenome, nome_completo, ativo")
+          .eq("ativo", true)
+          .order("nome", { ascending: true });
+
+        if (error) {
+          console.error("carregarResponsaveis:", error);
+          safeSet(() => setListaResponsaveis([]));
+          return;
+        }
+
+        safeSet(() => setListaResponsaveis(data || []));
+      } finally {
+        safeSet(() => setLoadingResponsaveis(false));
+      }
+    })();
+
     return () => {
       isMountedRef.current = false;
     };
@@ -224,7 +282,10 @@ export default function Copiloto() {
 
       // ✅ encerrou => reunião realizada
       if (selecionada?.id) {
-        await supabase.from("reunioes").update({ status: "Realizada" }).eq("id", selecionada.id);
+        await supabase
+          .from("reunioes")
+          .update({ status: "Realizada" })
+          .eq("id", selecionada.id);
       }
 
       await fetchReunioes();
@@ -272,6 +333,36 @@ export default function Copiloto() {
     setShowUnlock(false);
     setSenhaAdm("");
     fetchReunioes();
+  };
+
+  /* =========================
+     Upload Evidências (mesma lógica do Modal)
+  ========================= */
+  const uploadEvidencias = async (acaoId, files) => {
+    const urls = [];
+
+    for (const file of files) {
+      const fileName = `acao-${acaoId}-${Date.now()}-${sanitizeFileName(
+        file.name
+      )}`;
+
+      const { error } = await supabase.storage
+        .from("evidencias")
+        .upload(fileName, file);
+
+      if (error) {
+        console.error("Erro upload evidência:", error);
+        continue;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("evidencias")
+        .getPublicUrl(fileName);
+
+      if (urlData?.publicUrl) urls.push(urlData.publicUrl);
+    }
+
+    return urls;
   };
 
   /* =========================
@@ -332,7 +423,6 @@ export default function Copiloto() {
 
         if (ultima?.data_hora) {
           // ações concluídas depois da última reunião (data_conclusao)
-          // obs: assume que existe data_conclusao no schema de acoes
           const { data: concl, error: e4 } = await supabase
             .from("acoes")
             .select("*")
@@ -346,7 +436,6 @@ export default function Copiloto() {
 
           concluidasDesde = concl || [];
         } else {
-          // se não existe reunião anterior, pode ficar vazio (decisão objetiva)
           concluidasDesde = [];
         }
       }
@@ -368,37 +457,100 @@ export default function Copiloto() {
     }
   };
 
+  // ✅ Criar ação agora exige: responsável + vencimento + evidência (foto/video/doc)
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
-    if (!novaAcao.descricao?.trim()) return;
 
-    // ✅ tipo_reuniao_id obrigatório
-    const payload = {
-      descricao: novaAcao.descricao.trim(),
-      responsavel: (novaAcao.responsavel || "Geral").trim(),
+    const descricao = String(novaAcao.descricao || "").trim();
+    const responsavelId = String(novaAcao.responsavelId || "").trim();
+    const vencimento = String(novaAcao.vencimento || "").trim();
+
+    if (!descricao) return;
+    if (!responsavelId) return alert("Selecione o responsável.");
+    if (!vencimento) return alert("Informe o vencimento.");
+    if ((novasEvidenciasAcao || []).length === 0) {
+      return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
+    }
+
+    const user = (listaResponsaveis || []).find(
+      (u) => String(u.id) === responsavelId
+    );
+    const responsavelNome = buildNomeSobrenome(user);
+
+    // 1) cria ação primeiro
+    const payloadCriacao = {
+      descricao,
       status: "Aberta",
       reuniao_id: selecionada.id,
       tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
+
+      // vincular responsável (usuarios_aprovadores)
+      responsavel_id: responsavelId,
+      responsavel: responsavelNome, // compatibilidade
+      responsavel_nome: responsavelNome, // coluna existente no seu schema
+
+      // vencimento
+      data_vencimento: vencimento,
+
+      // timestamps
       created_at: nowIso(),
       data_criacao: nowIso(),
+
+      // evidências (vai preencher no passo 2)
+      fotos_acao: [],
     };
 
-    const { data, error } = await supabase.from("acoes").insert([payload]).select("*");
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert([payloadCriacao])
+      .select("*");
 
     if (error) {
-      console.error("salvarAcao:", error);
-      alert("Erro ao criar ação: " + (error.message || error));
-      return;
+      console.error("salvarAcao insert:", error);
+      return alert("Erro ao criar ação: " + (error.message || error));
     }
 
-    safeSet(() => {
-      setNovaAcao({ descricao: "", responsavel: "" });
-      setAcoesDaReuniao((prev) => [data?.[0], ...(prev || [])].filter(Boolean));
-    });
+    const inserted = data?.[0];
+    const acaoId = inserted?.id;
+    if (!acaoId) return alert("Erro: ação criada sem ID.");
 
-    // mantém na aba de ações e lista “da reunião”
+    // 2) upload evidências
+    const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
+
+    if (!urls.length) {
+      return alert(
+        "A ação foi criada, mas falhou o upload das evidências. Tente anexar novamente no detalhe."
+      );
+    }
+
+    // 3) atualizar ação com evidências
+    const payloadUpdate = {
+      fotos_acao: urls,
+      fotos: urls, // compatibilidade tabela antiga
+      evidencia_url: urls[0] || null,
+    };
+
+    const { error: e2 } = await supabase
+      .from("acoes")
+      .update(payloadUpdate)
+      .eq("id", acaoId);
+
+    if (e2) {
+      console.error("salvarAcao update evidencias:", e2);
+      return alert(
+        "Ação criada, mas não consegui gravar as evidências: " +
+          (e2.message || e2)
+      );
+    }
+
+    // 4) reset UI + refresh
+    setNovaAcao({ descricao: "", responsavelId: "", vencimento: "" });
+    setNovasEvidenciasAcao([]);
+
     setTab("acoes");
     setAcaoTab("reuniao");
+
+    await fetchAcoes(selecionada);
   };
 
   /* =========================
@@ -406,7 +558,9 @@ export default function Copiloto() {
   ========================= */
   const reunioesFiltradas = useMemo(() => {
     const q = (busca || "").toLowerCase();
-    return (reunioes || []).filter((r) => (r.titulo || "").toLowerCase().includes(q));
+    return (reunioes || []).filter((r) =>
+      (r.titulo || "").toLowerCase().includes(q)
+    );
   }, [reunioes, busca]);
 
   const statusLabel = (r) => {
@@ -416,10 +570,14 @@ export default function Copiloto() {
 
   const statusBadgeClass = (lbl) => {
     const v = norm(lbl);
-    if (v === "REALIZADA") return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
-    if (v === "EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border border-blue-200";
-    if (v === "AGENDADA") return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    if (v === "PENDENTE") return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v === "REALIZADA")
+      return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
+    if (v === "EM ANDAMENTO")
+      return "bg-blue-600/15 text-blue-700 border border-blue-200";
+    if (v === "AGENDADA")
+      return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v === "PENDENTE")
+      return "bg-slate-600/10 text-slate-700 border border-slate-200";
     return "bg-slate-600/10 text-slate-700 border border-slate-200";
   };
 
@@ -454,7 +612,10 @@ export default function Copiloto() {
           {/* filtros */}
           <div className="flex gap-2 mb-3">
             <div className="relative flex-1">
-              <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
+              <Calendar
+                size={16}
+                className="absolute left-3 top-3 text-slate-400"
+              />
               <input
                 type="date"
                 className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
@@ -464,7 +625,10 @@ export default function Copiloto() {
             </div>
 
             <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-3 text-slate-400" />
+              <Search
+                size={16}
+                className="absolute left-3 top-3 text-slate-400"
+              />
               <input
                 type="text"
                 placeholder="Buscar..."
@@ -711,7 +875,7 @@ export default function Copiloto() {
                   </button>
                 </div>
 
-                {/* Criar ação */}
+                {/* ✅ Criar ação (responsável + vencimento + evidência obrigatória) */}
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4">
                   <div className="text-[11px] font-extrabold text-slate-600 uppercase mb-2">
                     Criar nova ação
@@ -721,35 +885,109 @@ export default function Copiloto() {
                     className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/25 h-24"
                     placeholder="Descreva a ação..."
                     value={novaAcao.descricao}
-                    onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
+                    onChange={(e) =>
+                      setNovaAcao((p) => ({ ...p, descricao: e.target.value }))
+                    }
                   />
 
                   <div className="flex gap-2 mt-2">
-                    <input
+                    <select
                       className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
-                      placeholder="Responsável"
-                      value={novaAcao.responsavel}
-                      onChange={(e) => setNovaAcao((p) => ({ ...p, responsavel: e.target.value }))}
+                      value={novaAcao.responsavelId}
+                      onChange={(e) =>
+                        setNovaAcao((p) => ({
+                          ...p,
+                          responsavelId: e.target.value,
+                        }))
+                      }
+                      disabled={loadingResponsaveis}
+                    >
+                      <option value="">
+                        {loadingResponsaveis
+                          ? "Carregando responsáveis..."
+                          : "Selecione o responsável"}
+                      </option>
+                      {listaResponsaveis.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {buildNomeSobrenome(u)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="date"
+                      className="w-[170px] bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ring-blue-500/25"
+                      value={novaAcao.vencimento}
+                      onChange={(e) =>
+                        setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))
+                      }
                     />
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <label className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 cursor-pointer">
+                      <span className="px-3 py-2 rounded-xl border border-blue-200 bg-white hover:bg-blue-50">
+                        Anexar evidências (obrigatório)
+                      </span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                        className="hidden"
+                        onChange={(e) =>
+                          setNovasEvidenciasAcao(
+                            Array.from(e.target.files || [])
+                          )
+                        }
+                      />
+                    </label>
+
+                    <div className="text-[11px] text-slate-600">
+                      {novasEvidenciasAcao.length > 0
+                        ? `${novasEvidenciasAcao.length} arquivo(s) selecionado(s)`
+                        : "Nenhum arquivo selecionado"}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-3">
                     <button
                       onClick={salvarAcao}
-                      disabled={!novaAcao.descricao?.trim()}
+                      disabled={
+                        !novaAcao.descricao?.trim() ||
+                        !novaAcao.responsavelId ||
+                        !novaAcao.vencimento ||
+                        novasEvidenciasAcao.length === 0
+                      }
                       className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-4 py-2 rounded-xl font-black text-sm flex items-center gap-2"
                     >
                       <Plus size={16} /> Criar
                     </button>
                   </div>
+
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    Para criar: obrigatório <b>Responsável</b>, <b>Vencimento</b>{" "}
+                    e <b>Evidência</b>.
+                  </div>
                 </div>
 
                 {/* Sub-tabs ações */}
                 <div className="flex gap-2 mb-3">
-                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
+                  <Pill
+                    active={acaoTab === "reuniao"}
+                    onClick={() => setAcaoTab("reuniao")}
+                  >
                     Da reunião ({acoesDaReuniao.length})
                   </Pill>
-                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
+                  <Pill
+                    active={acaoTab === "backlog"}
+                    onClick={() => setAcaoTab("backlog")}
+                  >
                     Pendências do tipo ({acoesPendentesTipo.length})
                   </Pill>
-                  <Pill active={acaoTab === "desde_ultima"} onClick={() => setAcaoTab("desde_ultima")}>
+                  <Pill
+                    active={acaoTab === "desde_ultima"}
+                    onClick={() => setAcaoTab("desde_ultima")}
+                  >
                     Concluídas desde a última ({acoesConcluidasDesdeUltima.length})
                   </Pill>
                 </div>
@@ -777,7 +1015,6 @@ export default function Copiloto() {
       </div>
 
       {/* Modal detalhes ação (Central) */}
-
       {acaoSelecionada && (
         <ModalDetalhesAcao
           aberto={!!acaoSelecionada}
@@ -787,16 +1024,16 @@ export default function Copiloto() {
           onAfterSave={() => fetchAcoes(selecionada)}
           onAfterDelete={() => fetchAcoes(selecionada)}
           onConcluir={async () => {
-            // marca como concluída no banco + data_conclusao
             await supabase
               .from("acoes")
               .update({ status: "Concluída", data_conclusao: new Date().toISOString() })
               .eq("id", acaoSelecionada.id);
-      
+
             await fetchAcoes(selecionada);
           }}
         />
       )}
+
       {/* Reabrir ADM */}
       {showUnlock && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
@@ -868,6 +1105,11 @@ function AcaoCard({ acao, onClick }) {
     String(acao?.status || "").toLowerCase() === "concluída" ||
     String(acao?.status || "").toLowerCase() === "concluida";
 
+  const resp =
+    acao?.responsavel_nome ||
+    acao?.responsavel ||
+    "Geral";
+
   return (
     <button
       onClick={onClick}
@@ -889,8 +1131,7 @@ function AcaoCard({ acao, onClick }) {
           </div>
 
           <div className="text-[12px] text-slate-600 mt-1">
-            <span className="font-semibold">Responsável:</span>{" "}
-            {acao?.responsavel || "Geral"}
+            <span className="font-semibold">Responsável:</span> {resp}
             {acao?.data_conclusao ? (
               <span className="text-slate-500">
                 {" "}
