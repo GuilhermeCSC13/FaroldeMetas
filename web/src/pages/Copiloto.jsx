@@ -17,6 +17,7 @@ import {
   UploadCloud,
   File as FileIcon,
   Check,
+  Loader2 // ✅ Importei Loader2 para o ícone de carregamento
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -128,6 +129,9 @@ export default function Copiloto() {
     vencimento: "",
   });
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
+  
+  // ✅ Estado para controlar o loading do botão salvar
+  const [creatingAcao, setCreatingAcao] = useState(false);
 
   // ✅ Responsáveis vêm do SUPABASE INOVE (usuarios_aprovadores)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
@@ -513,9 +517,12 @@ export default function Copiloto() {
 
   /**
    * ✅ Salvar Ação Atualizado
+   * - Agora com bloqueio de botão (loading state)
+   * - Feedback visual
    */
   const salvarAcao = async () => {
     if (!selecionada?.id) return;
+    if (creatingAcao) return; // ✅ Evita duplo clique
 
     const descricao = String(novaAcao.descricao || "").trim(); // NOME
     const observacao = String(novaAcao.observacao || "").trim(); // DESCRIÇÃO
@@ -529,109 +536,117 @@ export default function Copiloto() {
       return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
     }
 
-    // responsável selecionado
-    const respRow =
-      (listaResponsaveis || []).find(
-        (u) => String(u.login || "") === responsavelId
-      ) ||
-      (listaResponsaveis || []).find((u) => String(u.id) === responsavelId) ||
-      null;
+    setCreatingAcao(true); // ✅ Inicia Loading e Bloqueia botão
 
-    const responsavelNome = buildNomeSobrenome(respRow);
+    try {
+      // responsável selecionado
+      const respRow =
+        (listaResponsaveis || []).find(
+          (u) => String(u.login || "") === responsavelId
+        ) ||
+        (listaResponsaveis || []).find((u) => String(u.id) === responsavelId) ||
+        null;
 
-    // ✅ Tenta garantir quem é o usuário logado
-    let criadorFinalId = currentUser?.id || null;
-    let criadorFinalNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
-    
-    // Fallback: se currentUser estiver nulo, tenta pegar da sessão agora
-    if (!criadorFinalId) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user?.email) {
-            criadorFinalNome = user.email; // Pelo menos o email
-            // Tenta achar na lista de novo
-            const found = (listaResponsaveis || []).find(u => u.email === user.email);
-            if (found) {
-                criadorFinalId = found.id;
-                criadorFinalNome = buildNomeSobrenome(found);
-            }
+      const responsavelNome = buildNomeSobrenome(respRow);
+
+      // ✅ Tenta garantir quem é o usuário logado
+      let criadorFinalId = currentUser?.id || null;
+      let criadorFinalNome = buildNomeSobrenome(currentUser) || "Sistema/Copiloto";
+      
+      // Fallback: se currentUser estiver nulo, tenta pegar da sessão agora
+      if (!criadorFinalId) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user?.email) {
+              criadorFinalNome = user.email; // Pelo menos o email
+              const found = (listaResponsaveis || []).find(u => u.email === user.email);
+              if (found) {
+                  criadorFinalId = found.id;
+                  criadorFinalNome = buildNomeSobrenome(found);
+              }
+          }
+      }
+
+      const payloadCriacao = {
+        descricao,      // Nome
+        observacao,     // Detalhes
+        status: "Aberta",
+        reuniao_id: selecionada.id,
+        tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
+        
+        responsavel_id: null,
+        
+        responsavel_aprovador_id: respRow?.id ?? null,
+        responsavel_nome: responsavelNome,
+
+        // ✅ Quem criou
+        criado_por_aprovador_id: criadorFinalId,
+        criado_por_nome: criadorFinalNome,
+        
+        data_vencimento: vencimento,
+        data_abertura: todayISODate(),
+        
+        created_at: nowIso(),
+        data_criacao: nowIso(),
+        
+        fotos_acao: [],
+        fotos: [],
+        evidencia_url: null,
+      };
+
+      const { data, error } = await supabase
+        .from("acoes")
+        .insert([payloadCriacao])
+        .select("*");
+
+      if (error) {
+        console.error("salvarAcao insert:", error);
+        throw new Error("Erro ao criar ação: " + (error.message || error));
+      }
+
+      const inserted = data?.[0];
+      const acaoId = inserted?.id;
+      if (!acaoId) throw new Error("Erro: ação criada sem ID.");
+
+      const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
+
+      if (!urls.length) {
+        alert("Atenção: A ação foi criada, mas falhou o upload da evidência. Edite a ação para tentar novamente.");
+      } else {
+        const payloadUpdate = {
+          fotos_acao: urls,
+          fotos: urls,
+          evidencia_url: urls[0] || null,
+        };
+
+        const { error: e2 } = await supabase
+          .from("acoes")
+          .update(payloadUpdate)
+          .eq("id", acaoId);
+
+        if (e2) {
+          console.error("salvarAcao update evidencias:", e2);
+          alert("Ação criada, mas houve erro ao vincular os arquivos: " + e2.message);
         }
+      }
+
+      // ✅ Sucesso: Limpa tudo e avisa
+      setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
+      setResponsavelQuery("");
+      setNovasEvidenciasAcao([]);
+      setRespOpen(false);
+
+      setTab("acoes");
+      setAcaoTab("reuniao");
+
+      // ✅ Atualiza lista imediatamente
+      await fetchAcoes(selecionada);
+      alert("Ação criada com sucesso!");
+
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setCreatingAcao(false); // ✅ Libera o botão
     }
-
-    const payloadCriacao = {
-      descricao,      // Nome
-      observacao,     // Detalhes
-      status: "Aberta",
-      reuniao_id: selecionada.id,
-      tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
-      
-      responsavel_id: null,
-      
-      responsavel_aprovador_id: respRow?.id ?? null,
-      responsavel_nome: responsavelNome,
-
-      // ✅ Quem criou
-      criado_por_aprovador_id: criadorFinalId,
-      criado_por_nome: criadorFinalNome,
-      
-      data_vencimento: vencimento,
-      data_abertura: todayISODate(),
-      
-      created_at: nowIso(),
-      data_criacao: nowIso(),
-      
-      fotos_acao: [],
-      fotos: [],
-      evidencia_url: null,
-    };
-
-    const { data, error } = await supabase
-      .from("acoes")
-      .insert([payloadCriacao])
-      .select("*");
-
-    if (error) {
-      console.error("salvarAcao insert:", error);
-      return alert("Erro ao criar ação: " + (error.message || error));
-    }
-
-    const inserted = data?.[0];
-    const acaoId = inserted?.id;
-    if (!acaoId) return alert("Erro: ação criada sem ID.");
-
-    const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
-
-    if (!urls.length) {
-      return alert(
-        "Ação criada, mas falhou o upload. Tente anexar novamente no detalhe."
-      );
-    }
-
-    const payloadUpdate = {
-      fotos_acao: urls,
-      fotos: urls,
-      evidencia_url: urls[0] || null,
-    };
-
-    const { error: e2 } = await supabase
-      .from("acoes")
-      .update(payloadUpdate)
-      .eq("id", acaoId);
-
-    if (e2) {
-      console.error("salvarAcao update evidencias:", e2);
-      return alert("Ação criada, mas erro ao gravar evidências: " + e2.message);
-    }
-
-    // reset
-    setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
-    setResponsavelQuery("");
-    setNovasEvidenciasAcao([]);
-    setRespOpen(false);
-
-    setTab("acoes");
-    setAcaoTab("reuniao");
-
-    await fetchAcoes(selecionada);
   };
 
   /* =========================
@@ -1182,10 +1197,11 @@ export default function Copiloto() {
                   <button
                     type="button"
                     onClick={salvarAcao}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm shadow-sm"
+                    disabled={creatingAcao} // ✅ BLOQUEIA O BOTÃO
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Save size={16} />
-                    Salvar ação
+                    {creatingAcao ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    {creatingAcao ? "Salvando..." : "Salvar ação"}
                   </button>
 
                   <button
