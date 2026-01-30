@@ -61,8 +61,6 @@ export function RecordingProvider({ children }) {
   const timerRef = useRef(null);
   const segmentIntervalRef = useRef(null);
 
-  // 🔥 refs "fixas" para não depender de state/closure
-  const reuniaoIdRef = useRef(null);
   const sessionIdRef = useRef(null);
   const partNumberRef = useRef(0);
 
@@ -74,15 +72,14 @@ export function RecordingProvider({ children }) {
   const uploadsInFlightRef = useRef(new Set());
   const queueDrainPromiseRef = useRef(null);
 
+  // ✅ promise do stop aguardar finalização
   const stopFinalizePromiseRef = useRef(null); // { promise, resolve, reject }
+
+  // ✅ evita finalize concorrente + garante idempotência
   const finalizeRunningRef = useRef(false);
 
   const buildPartPath = (reuniaoId, sessionId, partNumber) =>
     `reunioes/${reuniaoId}/${sessionId}/part_${safeFilePart(partNumber)}.webm`;
-
-  const log = (...args) => console.log("[REC]", ...args);
-  const warn = (...args) => console.warn("[REC]", ...args);
-  const errlog = (...args) => console.error("[REC]", ...args);
 
   const startTimerFn = () => {
     clearInterval(timerRef.current);
@@ -131,9 +128,9 @@ export function RecordingProvider({ children }) {
       stopFinalizePromiseRef.current = null;
     }
   };
-  const rejectStopPromise = (e) => {
+  const rejectStopPromise = (err) => {
     try {
-      stopFinalizePromiseRef.current?.reject?.(e);
+      stopFinalizePromiseRef.current?.reject?.(err);
     } finally {
       stopFinalizePromiseRef.current = null;
     }
@@ -181,36 +178,24 @@ export function RecordingProvider({ children }) {
     await queueDrainPromiseRef.current.promise;
   };
 
-  // ✅ agora NÃO depende de current/state
   const uploadPart = async (blob, partNumber) => {
-    const reuniaoId = reuniaoIdRef.current;
+    if (!current?.reuniaoId) return;
+    if (!sessionIdRef.current) return;
+
+    const reuniaoId = current.reuniaoId;
     const sessionId = sessionIdRef.current;
-
-    if (!reuniaoId || !sessionId) {
-      warn("uploadPart abort: missing ids", { reuniaoId, sessionId, partNumber });
-      return;
-    }
-
     const path = buildPartPath(reuniaoId, sessionId, partNumber);
 
-    log("uploadPart start", { partNumber, bytes: blob?.size, path });
-
     const uploadPromise = (async () => {
-      // 1) Storage upload
       await withRetry(async () => {
-        const { error: upErr } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .upload(path, blob, {
-            contentType: "video/webm",
-            cacheControl: "3600",
-            upsert: false,
-          });
+        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
+          contentType: "video/webm",
+          cacheControl: "3600",
+          upsert: false,
+        });
         if (upErr) throw upErr;
       });
 
-      log("uploadPart storage OK", { partNumber, path });
-
-      // 2) DB insert metadados (não pode impedir o storage já ter subido)
       await withRetry(async () => {
         const { error: insErr } = await supabase.from("reuniao_gravacao_partes").insert([
           {
@@ -225,19 +210,12 @@ export function RecordingProvider({ children }) {
         ]);
         if (insErr) throw insErr;
       });
-
-      log("uploadPart db OK", { partNumber });
     })();
 
     uploadsInFlightRef.current.add(uploadPromise);
 
     try {
       await uploadPromise;
-    } catch (e) {
-      errlog("uploadPart FAILED", e);
-      // aqui você já sabe que o storage pode ter falhado ou a insert falhou.
-      // mas NÃO travamos o finalize pra sempre.
-      throw e;
     } finally {
       uploadsInFlightRef.current.delete(uploadPromise);
     }
@@ -257,6 +235,7 @@ export function RecordingProvider({ children }) {
   };
 
   const finalizeFailClosed = async (reuniaoId, message) => {
+    // ✅ nunca deixa GRAVANDO infinito
     try {
       await supabase
         .from("reunioes")
@@ -281,21 +260,20 @@ export function RecordingProvider({ children }) {
       chunks.push(e.data);
     };
 
+    // ✅ onstop agora só fecha o blob e manda pra fila.
+    // ❌ NÃO finaliza aqui (não confiar no onstop)
     rec.onstop = async () => {
       try {
         const blob = new Blob(chunks, { type: rec.mimeType || "video/webm" });
         const partNumber = ++partNumberRef.current;
 
-        if (blob.size > 0) {
-          log("segment ready -> enqueue", { partNumber, bytes: blob.size });
-          enqueueUpload(blob, partNumber);
-        } else {
-          warn("segment empty", { partNumber });
-        }
+        if (blob.size > 0) enqueueUpload(blob, partNumber);
 
-        if (!stopAllRequestedRef.current) startSegment();
+        if (!stopAllRequestedRef.current) {
+          startSegment();
+        }
       } catch (e) {
-        errlog("rec.onstop error:", e);
+        console.error("rec.onstop error:", e);
       }
     };
 
@@ -315,78 +293,64 @@ export function RecordingProvider({ children }) {
   };
 
   const enqueueDriveJob = async (reuniaoId) => {
-    // ✅ DRIVE é best-effort: se falhar NÃO pode matar a gravação no storage
-    try {
-      const { data: r, error: e1 } = await supabase
-        .from("reunioes")
-        .select("id, gravacao_bucket, gravacao_prefix")
-        .eq("id", reuniaoId)
-        .single();
-      if (e1) throw e1;
+    const { data: r, error: e1 } = await supabase
+      .from("reunioes")
+      .select("id, gravacao_bucket, gravacao_prefix")
+      .eq("id", reuniaoId)
+      .single();
+    if (e1) throw e1;
 
-      const prefix = String(r?.gravacao_prefix || "").trim();
-      if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
-        throw new Error(
-          `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
-        );
-      }
-
-      const { error: e2 } = await supabase.from("drive_upload_queue").insert([
-        {
-          reuniao_id: reuniaoId,
-          status: "PENDENTE",
-          storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
-          storage_prefix: prefix,
-          last_error: null,
-          // ⚠️ drive_folder_id no seu banco está NOT NULL.
-          // Se você ainda não tem essa coluna preenchida, o insert vai falhar.
-          // Aqui a gente NÃO derruba a gravação por causa disso.
-        },
-      ]);
-      if (e2) throw e2;
-
-      await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
-
-      log("drive job enqueued OK");
-    } catch (e) {
-      warn("drive enqueue failed (ignored):", e?.message || e);
+    const prefix = String(r?.gravacao_prefix || "").trim();
+    if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
+      throw new Error(
+        `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
+      );
     }
+
+    const { error: e2 } = await supabase.from("drive_upload_queue").insert([
+      {
+        reuniao_id: reuniaoId,
+        status: "PENDENTE",
+        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
+        storage_prefix: prefix,
+        last_error: null,
+      },
+    ]);
+    if (e2) throw e2;
+
+    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
+    if (e3) throw e3;
   };
 
   const enqueueCompileJob = async (reuniaoId) => {
-    try {
-      const { data: r, error: e1 } = await supabase
-        .from("reunioes")
-        .select("id, gravacao_bucket, gravacao_prefix")
-        .eq("id", reuniaoId)
-        .single();
-      if (e1) throw e1;
+    const { data: r, error: e1 } = await supabase
+      .from("reunioes")
+      .select("id, gravacao_bucket, gravacao_prefix")
+      .eq("id", reuniaoId)
+      .single();
+    if (e1) throw e1;
 
-      const prefix = String(r?.gravacao_prefix || "").trim();
-      if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
-        throw new Error(
-          `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
-        );
-      }
-
-      const { error: e2 } = await supabase.from("recording_compile_queue").insert([
-        {
-          reuniao_id: reuniaoId,
-          status: "PENDENTE",
-          storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
-          storage_prefix: prefix,
-          tentativas: 0,
-          last_error: null,
-        },
-      ]);
-      if (e2) throw e2;
-
-      await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
-
-      log("compile job enqueued OK");
-    } catch (e) {
-      warn("compile enqueue failed (ignored):", e?.message || e);
+    const prefix = String(r?.gravacao_prefix || "").trim();
+    if (!prefix.startsWith(`reunioes/${reuniaoId}/sess_`)) {
+      throw new Error(
+        `Prefix inválido: "${prefix}". Esperado: reunioes/${reuniaoId}/sess_<uuid>/`
+      );
     }
+
+    const { error: e2 } = await supabase.from("recording_compile_queue").insert([
+      {
+        reuniao_id: reuniaoId,
+        status: "PENDENTE",
+        storage_bucket: r?.gravacao_bucket || STORAGE_BUCKET,
+        storage_prefix: prefix,
+        tentativas: 0,
+        last_error: null,
+      },
+    ]);
+    if (e2) throw e2;
+
+    const { error: e3 } = await supabase.from("reunioes").update({ updated_at: nowIso() }).eq("id", reuniaoId);
+    if (e3) throw e3;
   };
 
   const startRecording = async ({ reuniaoId, reuniaoTitulo }) => {
@@ -403,8 +367,6 @@ export function RecordingProvider({ children }) {
       crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const sessionId = `sess_${sessionUuid}`;
 
-    // ✅ grava nas refs (não depende de state)
-    reuniaoIdRef.current = reuniaoId;
     sessionIdRef.current = sessionId;
     partNumberRef.current = 0;
 
@@ -414,9 +376,6 @@ export function RecordingProvider({ children }) {
       sessionId,
       startedAtIso: nowIso(),
     });
-
-    log("startRecording:", { reuniaoId, reuniaoTitulo });
-    log("MediaRecorder will use session:", sessionId);
 
     const { error: uErr } = await supabase
       .from("reunioes")
@@ -443,7 +402,10 @@ export function RecordingProvider({ children }) {
     micStreamRef.current = micStream;
 
     const videoTrack = displayStream.getVideoTracks()[0];
-    if (videoTrack) videoTrack.onended = () => stopRecording();
+    if (videoTrack) {
+      // se user parar compartilhamento, encerra com finalize forçado
+      videoTrack.onended = () => stopRecording();
+    }
 
     const audioCtx = new AudioContext();
     audioCtxRef.current = audioCtx;
@@ -473,13 +435,12 @@ export function RecordingProvider({ children }) {
     startTimerFn();
   };
 
+  // ✅ STOP DEFINITIVO: não depende de onstop
   const stopRecording = async () => {
     if (stopAllRequestedRef.current) return;
 
     stopAllRequestedRef.current = true;
     const stopPromise = createStopPromise();
-
-    log("stopRecording...");
 
     try {
       setIsRecording(false);
@@ -488,39 +449,33 @@ export function RecordingProvider({ children }) {
 
       const rec = recorderRef.current;
 
+      // tenta parar o recorder, mas NÃO depende disso
       try {
         if (rec && rec.state === "recording") {
-          // força flush final
-          try {
-            if (typeof rec.requestData === "function") {
-              log("forceChunk requestData()");
-              rec.requestData();
-              await sleep(120);
-            }
-          } catch {}
-
+          // não confiar no onstop para fluxo
           rec.stop();
-          log("recorder stop requested");
         }
       } catch (e) {
-        warn("rec.stop falhou, seguindo para finalize:", e);
+        console.warn("rec.stop falhou, seguindo para finalize:", e);
       }
 
+      // 🔥 finaliza sempre, independente do MediaRecorder
       await finalizeRecording();
+
       await stopPromise;
     } catch (e) {
-      errlog("stopRecording error:", e);
+      console.error("stopRecording error:", e);
       rejectStopPromise(e);
       try {
         await finalizeRecording();
       } catch {}
     } finally {
-      resolveStopPromise();
+      resolveStopPromise(); // nunca deixa pendurado
     }
   };
 
   const finalizeRecording = async () => {
-    const reuniaoId = reuniaoIdRef.current;
+    const reuniaoId = current?.reuniaoId;
 
     if (!reuniaoId) {
       resolveStopPromise();
@@ -533,7 +488,8 @@ export function RecordingProvider({ children }) {
     try {
       setIsProcessing(true);
 
-      // janela p/ último onstop enfileirar blob
+      // dá uma janela curta pra capturar o último chunk do onstop
+      // (se o onstop rodar, ele enfileira o blob)
       await sleep(400);
 
       await waitQueueDrain();
@@ -561,6 +517,7 @@ export function RecordingProvider({ children }) {
         { retries: 3, baseDelayMs: 700 }
       );
 
+      // valida que saiu de GRAVANDO
       const { data: checkRow, error: checkErr } = await supabase
         .from("reunioes")
         .select("gravacao_status")
@@ -572,23 +529,17 @@ export function RecordingProvider({ children }) {
         throw new Error("Update não aplicou: gravacao_status permaneceu GRAVANDO.");
       }
 
-      // ✅ ambos são best-effort (não pode travar o fluxo)
       await enqueueDriveJob(reuniaoId);
       await enqueueCompileJob(reuniaoId);
-
-      log("finalizeRecording OK");
     } catch (e) {
-      errlog("finalizeRecording error:", e);
+      console.error("finalizeRecording error:", e);
       await finalizeFailClosed(reuniaoId, e?.message || e);
     } finally {
       setIsProcessing(false);
 
       cleanupMedia();
 
-      // ✅ só zera refs DEPOIS de tudo
       sessionIdRef.current = null;
-      reuniaoIdRef.current = null;
-
       partNumberRef.current = 0;
       startTimeRef.current = null;
       stopAllRequestedRef.current = false;
