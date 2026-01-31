@@ -24,7 +24,8 @@ import {
   Play,
   Pause,
   Volume2,
-  VolumeX
+  VolumeX,
+  StickyNote // Adicionei ícone de nota
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -152,7 +153,9 @@ export default function CentralAtas() {
 
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
-  const [observacoes, setObservacoes] = useState("");
+  
+  // ✅ MUDANÇA: Agora usamos 'ataManual' em vez de 'observacoes'
+  const [ataManual, setAtaManual] = useState("");
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
@@ -170,8 +173,8 @@ export default function CentralAtas() {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
       setEditedPauta(selectedAta.pauta || "");
-      // ✅ Garante que as observações sejam carregadas ao selecionar
-      setObservacoes(selectedAta.observacoes || "");
+      // ✅ Carrega o campo correto (ata_manual)
+      setAtaManual(selectedAta.ata_manual || "");
       setIsEditing(false);
 
       hydrateMediaUrls(selectedAta);
@@ -237,10 +240,9 @@ export default function CentralAtas() {
              carregarDetalhes(data);
              if (data.pauta) setEditedPauta(data.pauta);
              
-             // ✅ FIX: Atualiza as observações se elas vierem do banco (Sync)
-             // (Só atualiza se não estiver editando para não sobrescrever o que o usuário está digitando)
+             // ✅ Atualiza Ata Manual se vier do banco (Sync)
              if (!isEditing) {
-                setObservacoes(data.observacoes || "");
+                setAtaManual(data.ata_manual || "");
              }
         }
       }
@@ -342,19 +344,27 @@ export default function CentralAtas() {
   };
 
   const handleSaveAta = async () => {
-    const { error } = await supabase.from("reunioes").update({ pauta: editedPauta, observacoes }).eq("id", selectedAta.id);
+    // ✅ Salva na coluna 'ata_manual' (igual ao Copiloto)
+    const { error } = await supabase
+        .from("reunioes")
+        .update({ 
+            pauta: editedPauta, 
+            ata_manual: ataManual 
+        })
+        .eq("id", selectedAta.id);
+
     if (!error) {
       setIsEditing(false);
-      // Atualiza o estado local para refletir a mudança imediatamente
-      setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, observacoes }));
-      setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: editedPauta, observacoes } : a)));
+      // Atualiza estado local
+      setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, ata_manual: ataManual }));
+      setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: editedPauta, ata_manual: ataManual } : a)));
       alert("Ata salva com sucesso!");
     } else {
       alert("Erro ao salvar ata: " + error.message);
     }
   };
 
-  // ✅ IA GEMINI DINÂMICA + AUTO-SAVE SEM MODO EDIÇÃO
+  // ✅ IA GEMINI DINÂMICA + AUTO-SAVE
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -376,7 +386,7 @@ export default function CentralAtas() {
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-          // 1. Busca Prompt no Banco
+          // 1. Busca Prompt
           let promptTemplate = "";
           const { data: promptData } = await supabase
             .from('app_prompts')
@@ -394,14 +404,14 @@ export default function CentralAtas() {
             .replace(/{titulo}/g, titulo)
             .replace(/{data}/g, dataBR);
 
-          // 2. Gera Conteúdo
+          // 2. Gera
           const result = await model.generateContent([
             finalPrompt, 
             { inlineData: { data: base64data, mimeType: "video/webm" } }
           ]);
           const texto = result.response.text();
 
-          // 3. Salva no Banco
+          // 3. Salva
           const { error: saveErr } = await supabase
             .from("reunioes")
             .update({ 
@@ -412,7 +422,7 @@ export default function CentralAtas() {
 
           if (saveErr) throw saveErr;
 
-          // 4. Atualiza Interface (SEM MODO DE EDIÇÃO)
+          // 4. Atualiza Interface
           setEditedPauta(texto);
           setIsEditing(false); 
           
@@ -753,17 +763,17 @@ export default function CentralAtas() {
                 </div>
               </div>
 
-              {/* OBSERVAÇÕES */}
+              {/* OBSERVAÇÕES / ATA MANUAL */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                 <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
-                  <Edit3 size={18} /> Observações Gerais
+                  <StickyNote size={18} /> Ata Manual / Observações
                 </h3>
                 <textarea
                   className="w-full h-24 bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm outline-none"
-                  value={observacoes}
-                  onChange={(e) => setObservacoes(e.target.value)}
+                  value={ataManual}
+                  onChange={(e) => setAtaManual(e.target.value)}
                   disabled={!isEditing}
-                  placeholder="Notas manuais da reunião..."
+                  placeholder="Notas manuais da reunião escritas no Copiloto..."
                 />
               </div>
             </div>
