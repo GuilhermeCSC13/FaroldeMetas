@@ -1,60 +1,188 @@
-import React from 'react';
-import Layout from '../components/tatico/Layout'; // Importe o seu Layout aqui
-import { Settings, Construction, Clock } from 'lucide-react';
+// src/pages/Configuracoes.jsx
+import React, { useState, useEffect } from 'react';
+import Layout from '../components/tatico/Layout';
+import { supabase } from '../supabaseClient';
+import { 
+  Settings, 
+  Save, 
+  Terminal, 
+  RefreshCw, 
+  Edit3, 
+  AlertCircle,
+  CheckCircle2
+} from 'lucide-react';
 
 export default function Configuracoes() {
+  const [prompts, setPrompts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState(null);
+
+  useEffect(() => {
+    fetchPrompts();
+  }, []);
+
+  const fetchPrompts = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('app_prompts')
+      .select('*')
+      .order('titulo', { ascending: true });
+
+    if (error) {
+      console.error('Erro ao buscar prompts:', error);
+    } else {
+      setPrompts(data || []);
+    }
+    setLoading(false);
+  };
+
+  const handleUpdatePrompt = (id, newText) => {
+    setPrompts(prev => prev.map(p => p.id === id ? { ...p, prompt_text: newText } : p));
+  };
+
+  const savePrompt = async (prompt) => {
+    setSavingId(prompt.id);
+    try {
+      const { error } = await supabase
+        .from('app_prompts')
+        .update({ 
+          prompt_text: prompt.prompt_text,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', prompt.id);
+
+      if (error) throw error;
+      
+      // Feedback visual rápido (opcional, pode ser um toast)
+      alert(`Prompt "${prompt.titulo}" atualizado com sucesso!`);
+    } catch (e) {
+      alert('Erro ao salvar: ' + e.message);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto p-8 font-sans h-[80vh] flex flex-col justify-center items-center animate-in fade-in duration-700">
-        
-        {/* ÍCONE CENTRAL COM ANIMAÇÃO */}
-        <div className="relative mb-8">
-          <div className="absolute inset-0 bg-blue-500/10 rounded-full blur-3xl animate-pulse" />
-          <div className="relative bg-white border border-slate-100 p-8 rounded-full shadow-xl">
-            <Construction size={64} className="text-blue-600 animate-bounce" />
-          </div>
-        </div>
-
-        {/* TEXTO PRINCIPAL */}
-        <div className="text-center space-y-4 max-w-md">
-          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic uppercase">
-            Módulo de Configuração
-          </h1>
-          <div className="flex items-center justify-center gap-2 px-4 py-1 bg-amber-50 border border-amber-100 rounded-full w-fit mx-auto">
-            <div className="w-2 h-2 bg-amber-500 rounded-full animate-ping" />
-            <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Em Desenvolvimento</span>
-          </div>
-          
-          <p className="text-slate-500 text-sm leading-relaxed font-medium">
-            Estamos preparando este espaço para você gerenciar categorias oficiais, padrões de cores, segurança por senha e integrações automáticas.
-          </p>
-        </div>
-
-        {/* GRID DE PREVIEW DAS FUNCIONALIDADES */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-12 w-full max-w-4xl">
-          {[
-            { label: 'Categorias', desc: 'Padronização de rituais' },
-            { label: 'Segurança', desc: 'Controle de exclusão' },
-            { label: 'Padrões', desc: 'Cores e taxonomias' }
-          ].map((item, i) => (
-            <div key={i} className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-start gap-3 opacity-60 grayscale hover:grayscale-0 transition-all">
-              <div className="p-2 bg-white rounded-lg shadow-sm">
-                <Settings size={16} className="text-slate-400" />
-              </div>
+      <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
+        {/* CONTEÚDO PRINCIPAL */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+          <div className="max-w-5xl mx-auto space-y-8">
+            
+            {/* HEADER */}
+            <div className="flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-700 uppercase">{item.label}</p>
-                <p className="text-[10px] text-slate-400 font-medium">{item.desc}</p>
+                <h1 className="text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+                  <div className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm">
+                    <Settings className="text-blue-600" size={24} />
+                  </div>
+                  Configuração de IA
+                </h1>
+                <p className="text-slate-500 mt-2 text-sm font-medium">
+                  Gerencie os prompts do sistema ("Cérebro da IA") sem precisar alterar o código.
+                </p>
               </div>
+              
+              <button 
+                onClick={fetchPrompts}
+                className="p-2 text-slate-400 hover:text-blue-600 transition-colors bg-white border border-slate-200 rounded-lg shadow-sm"
+                title="Recarregar dados"
+              >
+                <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+              </button>
             </div>
-          ))}
-        </div>
 
-        {/* FOOTER */}
-        <div className="mt-16 flex items-center gap-2 text-slate-300">
-          <Clock size={14} />
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Disponível em breve nas atualizações</span>
+            {/* LISTA DE PROMPTS */}
+            {loading ? (
+              <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
+                <LoaderSkeleton />
+                <span className="text-xs font-bold uppercase tracking-wider">Carregando configurações...</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-6">
+                {prompts.map((prompt) => (
+                  <div key={prompt.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden group hover:border-blue-300 transition-all">
+                    
+                    {/* CABEÇALHO DO CARD */}
+                    <div className="bg-slate-50/50 p-4 border-b border-slate-100 flex justify-between items-start">
+                      <div className="flex gap-3">
+                        <div className="mt-1 p-1.5 bg-blue-50 rounded text-blue-600">
+                          <Terminal size={16} />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                            {prompt.titulo}
+                            <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                              {prompt.slug}
+                            </span>
+                          </h3>
+                          <p className="text-xs text-slate-500 mt-0.5">{prompt.descricao}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => savePrompt(prompt)}
+                        disabled={savingId === prompt.id}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                          savingId === prompt.id
+                            ? 'bg-blue-100 text-blue-400 cursor-wait'
+                            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
+                        }`}
+                      >
+                        {savingId === prompt.id ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Save size={14} />
+                        )}
+                        {savingId === prompt.id ? 'Salvando...' : 'Salvar Alterações'}
+                      </button>
+                    </div>
+
+                    {/* ÁREA DE EDIÇÃO */}
+                    <div className="p-4 bg-slate-50 relative">
+                      <div className="absolute top-4 right-4 z-10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow">
+                          Markdown Suportado
+                        </span>
+                      </div>
+                      <textarea
+                        value={prompt.prompt_text}
+                        onChange={(e) => handleUpdatePrompt(prompt.id, e.target.value)}
+                        className="w-full h-64 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar resize-y border border-slate-800 shadow-inner"
+                        spellCheck="false"
+                      />
+                      
+                      {/* DICA DE VARIÁVEIS */}
+                      <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-400">
+                        <AlertCircle size={12} />
+                        <span>
+                          Dica: Mantenha as variáveis como 
+                          <strong className="text-blue-600 mx-1">{'{titulo}'}</strong> e 
+                          <strong className="text-blue-600 mx-1">{'{data}'}</strong> 
+                          para o sistema substituir automaticamente.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {prompts.length === 0 && (
+                  <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-300">
+                    <p className="text-slate-400 text-sm">Nenhum prompt configurado no banco de dados.</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Layout>
   );
 }
+
+// Pequeno skeleton loader para dar um charme
+const LoaderSkeleton = () => (
+  <div className="animate-pulse flex space-x-4">
+    <div className="h-12 w-12 bg-slate-200 rounded-full"></div>
+  </div>
+);
