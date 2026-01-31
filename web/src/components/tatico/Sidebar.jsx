@@ -1,6 +1,7 @@
 // src/components/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { supabase, supabaseInove } from "../supabaseClient"; // ✅ Importando supabaseInove
 import {
   FaHome,
   FaClipboardList,
@@ -10,7 +11,7 @@ import {
   FaCalendarAlt,
   FaTasks,
   FaMicrophone,
-  FaTags, // ✅ Tipos de reunião
+  FaTags,
 } from "react-icons/fa";
 
 const setores = [
@@ -22,12 +23,55 @@ const setores = [
 
 export default function Sidebar() {
   const location = useLocation();
+  const [user, setUser] = useState({ nome: "Gestor", nivel: "" });
 
   const isPlanejamentoActive = setores.some((s) =>
     location.pathname.startsWith(s.path)
   );
 
   const [openPlanejamento, setOpenPlanejamento] = useState(isPlanejamentoActive);
+
+  // ✅ Busca dados em usuarios_aprovadores no Supabase Inove
+  useEffect(() => {
+    const loadUserInove = async () => {
+      let emailAlvo = null;
+
+      // 1. Tenta pegar da sessão de Auth atual
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        emailAlvo = session.user.email;
+      } 
+      // 2. Se não, tenta pegar do localStorage (LandingFarol)
+      else {
+        const stored = localStorage.getItem("usuario_externo");
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            emailAlvo = parsed.email;
+          } catch (e) { console.error(e); }
+        }
+      }
+
+      if (emailAlvo) {
+        // ✅ Consulta a tabela correta no banco correto
+        const { data, error } = await supabaseInove
+          .from("usuarios_aprovadores")
+          .select("nome, nivel, login")
+          .eq("email", emailAlvo)
+          .maybeSingle();
+
+        if (!error && data) {
+          setUser({ nome: data.nome, nivel: data.nivel });
+        }
+      }
+    };
+
+    loadUserInove();
+  }, []);
+
+  const primeiroNome = user.nome ? user.nome.split(" ")[0] : "Gestor";
+  // ✅ Validação de ADM baseada no retorno de usuarios_aprovadores
+  const isAdm = String(user.nivel || "").toLowerCase() === "administrador";
 
   useEffect(() => {
     if (isPlanejamentoActive) {
@@ -47,10 +91,10 @@ export default function Sidebar() {
       <div className="px-4 py-4 border-b border-blue-500/40">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center text-xl font-bold backdrop-blur-sm">
-            Q
+            {primeiroNome.charAt(0).toUpperCase()}
           </div>
           <div>
-            <p className="text-xs text-blue-100 opacity-80">Olá, Gestor 👋</p>
+            <p className="text-xs text-blue-100 opacity-80">Olá, {primeiroNome} 👋</p>
             <p className="text-sm font-bold tracking-tight">Farol Tático</p>
           </div>
         </div>
@@ -58,7 +102,6 @@ export default function Sidebar() {
 
       {/* Navegação */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
-        {/* Visão Geral */}
         <NavLink
           to="/"
           className={({ isActive }) =>
@@ -72,7 +115,7 @@ export default function Sidebar() {
           <span>Visão Geral</span>
         </NavLink>
 
-        {/* Planejamento Tático → Áreas */}
+        {/* Planejamento */}
         <div className="pt-2 pb-1">
           <button
             type="button"
@@ -158,7 +201,6 @@ export default function Sidebar() {
             <span>Agenda Tática</span>
           </NavLink>
 
-          {/* Tipos de Reunião */}
           <NavLink
             to="/tipos-reuniao"
             className={({ isActive }) =>
@@ -183,9 +225,6 @@ export default function Sidebar() {
             <span>Banco de Atas</span>
           </NavLink>
 
-          {/* ❌ REMOVIDO: Projetos */}
-          {/* <NavLink to="/projetos" ...>...</NavLink> */}
-
           <NavLink
             to="/gestao-acoes"
             className={({ isActive }) =>
@@ -198,23 +237,25 @@ export default function Sidebar() {
             <span>Central de Ações</span>
           </NavLink>
 
-          <NavLink
-            to="/configuracoes"
-            className={({ isActive }) =>
-              `${linkBaseClasses} ${
-                isActive ? linkActiveClasses : linkInactiveClasses
-              }`
-            }
-          >
-            <FaCogs className="text-sm" />
-            <span>Configurações</span>
-          </NavLink>
+          {/* ✅ Configurações (Somente visível para Administrador validado no Inove) */}
+          {isAdm && (
+            <NavLink
+              to="/configuracoes"
+              className={({ isActive }) =>
+                `${linkBaseClasses} ${
+                  isActive ? linkActiveClasses : linkInactiveClasses
+                }`
+              }
+            >
+              <FaCogs className="text-sm" />
+              <span>Configurações</span>
+            </NavLink>
+          )}
         </div>
       </nav>
 
       {/* Rodapé */}
       <div className="px-3 py-3 border-t border-blue-500/40">
-        {/* ✅ NOVO: Voltar para INOVE (sem nova aba e sem empilhar histórico) */}
         <button
           type="button"
           onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
