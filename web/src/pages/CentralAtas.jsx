@@ -346,7 +346,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ IA GEMINI DINÂMICA (BUSCA PROMPT NO BANCO)
+  // ✅ IA GEMINI DINÂMICA + AUTO-SAVE SEM MODO EDIÇÃO
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -368,7 +368,7 @@ export default function CentralAtas() {
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-          // --- 1. BUSCA O PROMPT NO BANCO DE DADOS ---
+          // 1. Busca Prompt no Banco
           let promptTemplate = "";
           const { data: promptData } = await supabase
             .from('app_prompts')
@@ -379,29 +379,21 @@ export default function CentralAtas() {
           if (promptData?.prompt_text) {
             promptTemplate = promptData.prompt_text;
           } else {
-            // Fallback (segurança) caso o banco esteja vazio
-            console.warn("Prompt 'ata_reuniao' não encontrado no banco. Usando padrão.");
             promptTemplate = `Você é secretária de reunião. Contexto: "{titulo}" - {data}. Gere a ATA em Markdown.`;
           }
 
-          // --- 2. SUBSTITUI VARIÁVEIS DO PROMPT ---
-          // Substitui {titulo} e {data} pelo valor real
           const finalPrompt = promptTemplate
             .replace(/{titulo}/g, titulo)
             .replace(/{data}/g, dataBR);
 
-          // --- 3. CHAMA A IA ---
+          // 2. Gera Conteúdo
           const result = await model.generateContent([
             finalPrompt, 
             { inlineData: { data: base64data, mimeType: "video/webm" } }
           ]);
           const texto = result.response.text();
 
-          // Atualiza Interface
-          setEditedPauta(texto);
-          setIsEditing(true);
-
-          // ✅ AUTO-SAVE: Salva direto no banco
+          // 3. Salva no Banco
           const { error: saveErr } = await supabase
             .from("reunioes")
             .update({ 
@@ -412,6 +404,10 @@ export default function CentralAtas() {
 
           if (saveErr) throw saveErr;
 
+          // 4. Atualiza Interface (SEM MODO DE EDIÇÃO)
+          setEditedPauta(texto);
+          setIsEditing(false); // ✅ FIX: Mantém fechado, pois já está salvo!
+          
           setSelectedAta(prev => ({ ...prev, pauta: texto, ata_ia_status: 'PRONTA' }));
           setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, pauta: texto, ata_ia_status: 'PRONTA' } : a));
 
