@@ -1,3 +1,4 @@
+// src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -31,11 +32,15 @@ import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
 
+// ✅ FIX BRASÍLIA: Garante que o horário do banco (ex: 09:00) seja exibido como 09:00
+// Ignora o offset UTC que transformava 09:00 em 06:00
 function parseDataLocal(dataString) {
   if (!dataString) return new Date();
-  // data_hora vem como ISO do Postgres (com timezone). parseISO aceita.
   try {
-    return parseISO(String(dataString));
+    // Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:mm:ss)
+    // Isso remove o 'Z', '+00', etc., forçando o navegador a usar o horário "de relógio"
+    const raw = String(dataString).substring(0, 19);
+    return new Date(raw);
   } catch {
     return new Date(String(dataString));
   }
@@ -74,7 +79,8 @@ function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
 }
 
 export default function CentralReunioes() {
-  const [view, setView] = useState("calendar"); // 'calendar' | 'week' | 'list'
+  // ✅ ORDEM ALTERADA: Padrão agora é 'week'
+  const [view, setView] = useState("week"); // 'week' | 'list' | 'calendar'
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reunioes, setReunioes] = useState([]);
   const [tipos, setTipos] = useState([]);
@@ -87,7 +93,7 @@ export default function CentralReunioes() {
     tipo_reuniao_id: "",
     data: "",
     hora_inicio: "09:00",
-    hora_fim: "09:15", // ✅ só front (não envia pro banco)
+    hora_fim: "09:15",
     cor: "#3B82F6",
     responsavel: "",
     ata: "",
@@ -155,7 +161,6 @@ export default function CentralReunioes() {
       ? String(reuniao.horario_inicio).slice(0, 5)
       : format(dt, "HH:mm");
 
-    // ✅ NÃO usa reuniao.horario_fim (pra não depender de coluna / tipo)
     const hhmmFim = hhmmFimFromInicioDuracao(dt, reuniao.duracao_segundos);
 
     setFormData({
@@ -178,27 +183,21 @@ export default function CentralReunioes() {
     e.preventDefault();
 
     const tipo = getTipoById(formData.tipo_reuniao_id);
-    const tipoNome = tipo?.nome || "Geral"; // ✅ garante não-null (NOT NULL no banco)
+    const tipoNome = tipo?.nome || "Geral";
 
+    // Monta a data string simples para salvar
     const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
     const duracao_segundos = calcDuracaoSegundos(
       formData.hora_inicio,
       formData.hora_fim
     );
 
-    // ✅ IMPORTANTE:
-    // - sempre preencher tipo_reuniao_legacy (NOT NULL)
-    // - NÃO enviar horario_fim (pra não cair no erro "timestamp with time zone: 09:15")
-
     const dados = {
       titulo: formData.titulo,
       data_hora: dataHoraIso,
       tipo_reuniao_id: formData.tipo_reuniao_id || null,
-      tipo_reuniao_legacy: tipoNome, // NOT NULL
-
-  // ✅ NÃO envia horario_inicio nem horario_fim (evita erro de tipo no banco)
+      tipo_reuniao_legacy: tipoNome,
       duracao_segundos,
-
       cor: formData.cor,
       responsavel: formData.responsavel,
       ata: formData.ata,
@@ -251,7 +250,6 @@ export default function CentralReunioes() {
     end: endOfWeek(endOfMonth(currentDate)),
   });
 
-  // ✅ CORREÇÃO DO BUG: sem parêntese extra
   const weekDays = eachDayOfInterval({
     start: startOfWeek(currentDate),
     end: endOfWeek(currentDate),
@@ -309,17 +307,8 @@ export default function CentralReunioes() {
           </div>
 
           <div className="flex gap-2">
+            {/* ✅ NOVA ORDEM: SEMANA -> LISTA -> CALENDÁRIO */}
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
-              <button
-                onClick={() => setView("calendar")}
-                className={`p-2 rounded ${
-                  view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"
-                }`}
-                title="Calendário"
-              >
-                <CalIcon size={18} />
-              </button>
-
               <button
                 onClick={() => setView("week")}
                 className={`p-2 rounded ${
@@ -339,6 +328,16 @@ export default function CentralReunioes() {
               >
                 <List size={18} />
               </button>
+
+              <button
+                onClick={() => setView("calendar")}
+                className={`p-2 rounded ${
+                  view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"
+                }`}
+                title="Calendário"
+              >
+                <CalIcon size={18} />
+              </button>
             </div>
 
             <button
@@ -350,101 +349,7 @@ export default function CentralReunioes() {
           </div>
         </div>
 
-        {/* MODO CALENDÁRIO */}
-        {view === "calendar" && (
-          <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-xl font-bold text-slate-700 capitalize">
-                {format(currentDate, "MMMM yyyy", { locale: ptBR })}
-              </h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setCurrentDate(subMonths(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronLeft />
-                </button>
-                <button
-                  onClick={() => setCurrentDate(addMonths(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronRight />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-7 flex-1 overflow-y-auto">
-              {calendarDays.map((day) => (
-                <div
-                  key={day.toString()}
-                  onClick={() => onDateClick(day)}
-                  onDragOver={handleDragOverDay}
-                  onDrop={(e) => handleDropOnDay(e, day)}
-                  className={`border-r border-b min-h-[120px] p-2 hover:bg-blue-50/20 transition-colors ${
-                    !isSameMonth(day, currentDate) ? "opacity-30" : ""
-                  }`}
-                >
-                  <span
-                    className={`text-xs font-bold ${
-                      isSameDay(day, new Date())
-                        ? "bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center"
-                        : ""
-                    }`}
-                  >
-                    {format(day, "d")}
-                  </span>
-
-                  {reunioes
-                    .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
-                    .map((m) => {
-                      const badge = statusBadge(m.status);
-                      const dt = parseDataLocal(m.data_hora);
-                      const hhmm = m.horario_inicio
-                        ? String(m.horario_inicio).slice(0, 5)
-                        : format(dt, "HH:mm");
-
-                      return (
-                        <div
-                          key={m.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, m)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEdit(m);
-                          }}
-                          className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer flex items-center justify-between gap-2"
-                          style={{
-                            borderLeftColor: m.cor,
-                            backgroundColor: (m.cor || "#3B82F6") + "15",
-                          }}
-                          title={m.titulo}
-                        >
-                          <span className="truncate">
-                            {hhmm} {m.titulo}
-                          </span>
-
-                          <span
-                            className={`text-[10px] font-black ${
-                              badge.text === "✅"
-                                ? "text-green-600"
-                                : badge.text === "✖"
-                                ? "text-red-600"
-                                : "text-yellow-500"
-                            }`}
-                            title={badge.title}
-                          >
-                            {badge.text}
-                          </span>
-                        </div>
-                      );
-                    })}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* MODO SEMANAL */}
+        {/* MODO SEMANAL (Agora é o Primeiro) */}
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
             <div className="grid grid-cols-7 flex-1">
@@ -557,6 +462,100 @@ export default function CentralReunioes() {
                   </div>
                 </div>
               ))}
+          </div>
+        )}
+
+        {/* MODO CALENDÁRIO */}
+        {view === "calendar" && (
+          <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-xl font-bold text-slate-700 capitalize">
+                {format(currentDate, "MMMM yyyy", { locale: ptBR })}
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCurrentDate(subMonths(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronLeft />
+                </button>
+                <button
+                  onClick={() => setCurrentDate(addMonths(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronRight />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 flex-1 overflow-y-auto">
+              {calendarDays.map((day) => (
+                <div
+                  key={day.toString()}
+                  onClick={() => onDateClick(day)}
+                  onDragOver={handleDragOverDay}
+                  onDrop={(e) => handleDropOnDay(e, day)}
+                  className={`border-r border-b min-h-[120px] p-2 hover:bg-blue-50/20 transition-colors ${
+                    !isSameMonth(day, currentDate) ? "opacity-30" : ""
+                  }`}
+                >
+                  <span
+                    className={`text-xs font-bold ${
+                      isSameDay(day, new Date())
+                        ? "bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center"
+                        : ""
+                    }`}
+                  >
+                    {format(day, "d")}
+                  </span>
+
+                  {reunioes
+                    .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
+                    .map((m) => {
+                      const badge = statusBadge(m.status);
+                      const dt = parseDataLocal(m.data_hora);
+                      const hhmm = m.horario_inicio
+                        ? String(m.horario_inicio).slice(0, 5)
+                        : format(dt, "HH:mm");
+
+                      return (
+                        <div
+                          key={m.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, m)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(m);
+                          }}
+                          className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer flex items-center justify-between gap-2"
+                          style={{
+                            borderLeftColor: m.cor,
+                            backgroundColor: (m.cor || "#3B82F6") + "15",
+                          }}
+                          title={m.titulo}
+                        >
+                          <span className="truncate">
+                            {hhmm} {m.titulo}
+                          </span>
+
+                          <span
+                            className={`text-[10px] font-black ${
+                              badge.text === "✅"
+                                ? "text-green-600"
+                                : badge.text === "✖"
+                                ? "text-red-600"
+                                : "text-yellow-500"
+                            }`}
+                            title={badge.title}
+                          >
+                            {badge.text}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
