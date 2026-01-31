@@ -13,6 +13,9 @@ import {
   isSameDay,
   addMonths,
   subMonths,
+  // ✅ NOVOS IMPORTS PARA SEMANA
+  addWeeks,
+  subWeeks,
   parseISO,
   addMinutes,
 } from "date-fns";
@@ -32,13 +35,9 @@ import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
 
-// ✅ FIX BRASÍLIA: Garante que o horário do banco (ex: 09:00) seja exibido como 09:00
-// Ignora o offset UTC que transformava 09:00 em 06:00
 function parseDataLocal(dataString) {
   if (!dataString) return new Date();
   try {
-    // Pega apenas os primeiros 19 caracteres (YYYY-MM-DDTHH:mm:ss)
-    // Isso remove o 'Z', '+00', etc., forçando o navegador a usar o horário "de relógio"
     const raw = String(dataString).substring(0, 19);
     return new Date(raw);
   } catch {
@@ -79,8 +78,7 @@ function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
 }
 
 export default function CentralReunioes() {
-  // ✅ ORDEM ALTERADA: Padrão agora é 'week'
-  const [view, setView] = useState("week"); // 'week' | 'list' | 'calendar'
+  const [view, setView] = useState("week");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [reunioes, setReunioes] = useState([]);
   const [tipos, setTipos] = useState([]);
@@ -185,7 +183,6 @@ export default function CentralReunioes() {
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || "Geral";
 
-    // Monta a data string simples para salvar
     const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
     const duracao_segundos = calcDuracaoSegundos(
       formData.hora_inicio,
@@ -307,7 +304,6 @@ export default function CentralReunioes() {
           </div>
 
           <div className="flex gap-2">
-            {/* ✅ NOVA ORDEM: SEMANA -> LISTA -> CALENDÁRIO */}
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
               <button
                 onClick={() => setView("week")}
@@ -349,9 +345,31 @@ export default function CentralReunioes() {
           </div>
         </div>
 
-        {/* MODO SEMANAL (Agora é o Primeiro) */}
+        {/* MODO SEMANAL (COM NAVEGAÇÃO) */}
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
+            {/* ✅ HEADER DA SEMANA COM SETINHAS */}
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-xl font-bold text-slate-700 capitalize">
+                {format(startOfWeek(currentDate), "dd MMM", { locale: ptBR })} -{" "}
+                {format(endOfWeek(currentDate), "dd MMM yyyy", { locale: ptBR })}
+              </h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCurrentDate(subWeeks(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronLeft />
+                </button>
+                <button
+                  onClick={() => setCurrentDate(addWeeks(currentDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full"
+                >
+                  <ChevronRight />
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-7 flex-1">
               {weekDays.map((day) => (
                 <div key={day.toString()} className="border-r p-4 bg-white overflow-y-auto">
