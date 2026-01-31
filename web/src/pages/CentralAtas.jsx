@@ -87,7 +87,7 @@ export default function CentralAtas() {
       const jobType = "BACKFILL_COMPILE_ATA";
 
       // 1. Atualiza IMEDIATAMENTE o status na tabela 'reunioes'
-      // CORREÇÃO: Usamos 'PRONTO_PROCESSAR' para passar na validação do banco (Constraint Check)
+      // Usamos 'PRONTO_PROCESSAR' para passar na validação do banco
       const { error: updateReuniaoErr } = await supabase
         .from("reunioes")
         .update({
@@ -164,7 +164,6 @@ export default function CentralAtas() {
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
     // Verifica se algum dos status indica processamento
-    // Adicionado PRONTO_PROCESSAR na verificação
     const precisaAtualizar = 
       (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
       (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
@@ -551,7 +550,13 @@ Preencha cada seção somente com o que estiver claramente no áudio.
 
                   {mediaUrls.video ? (
                     <div className="space-y-2">
-                      <video controls className="w-full rounded-xl bg-black">
+                      {/* ✅ FIX: Chave única força recarregamento do vídeo */}
+                      <video 
+                        key={mediaUrls.video} 
+                        controls 
+                        className="w-full rounded-xl bg-black" 
+                        preload="metadata"
+                      >
                         <source src={mediaUrls.video} type="video/webm" />
                         Seu navegador não conseguiu reproduzir este vídeo.
                       </video>
