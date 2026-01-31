@@ -170,6 +170,7 @@ export default function CentralAtas() {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
       setEditedPauta(selectedAta.pauta || "");
+      // ✅ Garante que as observações sejam carregadas ao selecionar
       setObservacoes(selectedAta.observacoes || "");
       setIsEditing(false);
 
@@ -235,6 +236,12 @@ export default function CentralAtas() {
              hydrateMediaUrls(data);
              carregarDetalhes(data);
              if (data.pauta) setEditedPauta(data.pauta);
+             
+             // ✅ FIX: Atualiza as observações se elas vierem do banco (Sync)
+             // (Só atualiza se não estiver editando para não sobrescrever o que o usuário está digitando)
+             if (!isEditing) {
+                setObservacoes(data.observacoes || "");
+             }
         }
       }
     } catch (e) {
@@ -338,6 +345,7 @@ export default function CentralAtas() {
     const { error } = await supabase.from("reunioes").update({ pauta: editedPauta, observacoes }).eq("id", selectedAta.id);
     if (!error) {
       setIsEditing(false);
+      // Atualiza o estado local para refletir a mudança imediatamente
       setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, observacoes }));
       setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: editedPauta, observacoes } : a)));
       alert("Ata salva com sucesso!");
@@ -406,7 +414,7 @@ export default function CentralAtas() {
 
           // 4. Atualiza Interface (SEM MODO DE EDIÇÃO)
           setEditedPauta(texto);
-          setIsEditing(false); // ✅ FIX: Mantém fechado, pois já está salvo!
+          setIsEditing(false); 
           
           setSelectedAta(prev => ({ ...prev, pauta: texto, ata_ia_status: 'PRONTA' }));
           setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, pauta: texto, ata_ia_status: 'PRONTA' } : a));
