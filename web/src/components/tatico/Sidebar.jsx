@@ -1,7 +1,8 @@
 // src/components/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { supabase, supabaseInove } from "../supabaseClient"; // ✅ Importando supabaseInove
+// ✅ IMPORTAÇÃO CORRIGIDA (Assume que Sidebar está em src/components e supabaseClient em src/)
+import { supabase, supabaseInove } from "../supabaseClient"; 
 import {
   FaHome,
   FaClipboardList,
