@@ -9,13 +9,16 @@ import {
   RefreshCw, 
   Edit3, 
   AlertCircle,
-  CheckCircle2
+  X // Ícone para cancelar
 } from 'lucide-react';
 
 export default function Configuracoes() {
   const [prompts, setPrompts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState(null);
+  
+  // Controle de Edição
+  const [editingId, setEditingId] = useState(null); // Qual ID está sendo editado
+  const [savingId, setSavingId] = useState(null);   // Qual ID está salvando
 
   useEffect(() => {
     fetchPrompts();
@@ -36,8 +39,13 @@ export default function Configuracoes() {
     setLoading(false);
   };
 
-  const handleUpdatePrompt = (id, newText) => {
+  const handleUpdatePromptLocal = (id, newText) => {
     setPrompts(prev => prev.map(p => p.id === id ? { ...p, prompt_text: newText } : p));
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    fetchPrompts(); // Recarrega para descartar alterações não salvas
   };
 
   const savePrompt = async (prompt) => {
@@ -53,7 +61,7 @@ export default function Configuracoes() {
 
       if (error) throw error;
       
-      // Feedback visual rápido (opcional, pode ser um toast)
+      setEditingId(null); // Sai do modo edição
       alert(`Prompt "${prompt.titulo}" atualizado com sucesso!`);
     } catch (e) {
       alert('Erro ao salvar: ' + e.message);
@@ -100,71 +108,90 @@ export default function Configuracoes() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-6">
-                {prompts.map((prompt) => (
-                  <div key={prompt.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden group hover:border-blue-300 transition-all">
-                    
-                    {/* CABEÇALHO DO CARD */}
-                    <div className="bg-slate-50/50 p-4 border-b border-slate-100 flex justify-between items-start">
-                      <div className="flex gap-3">
-                        <div className="mt-1 p-1.5 bg-blue-50 rounded text-blue-600">
-                          <Terminal size={16} />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                            {prompt.titulo}
-                            <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                              {prompt.slug}
-                            </span>
-                          </h3>
-                          <p className="text-xs text-slate-500 mt-0.5">{prompt.descricao}</p>
-                        </div>
-                      </div>
+                {prompts.map((prompt) => {
+                  const isEditing = editingId === prompt.id;
 
-                      <button
-                        onClick={() => savePrompt(prompt)}
-                        disabled={savingId === prompt.id}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                          savingId === prompt.id
-                            ? 'bg-blue-100 text-blue-400 cursor-wait'
-                            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
-                        }`}
-                      >
-                        {savingId === prompt.id ? (
-                          <RefreshCw size={14} className="animate-spin" />
-                        ) : (
-                          <Save size={14} />
-                        )}
-                        {savingId === prompt.id ? 'Salvando...' : 'Salvar Alterações'}
-                      </button>
-                    </div>
-
-                    {/* ÁREA DE EDIÇÃO */}
-                    <div className="p-4 bg-slate-50 relative">
-                      <div className="absolute top-4 right-4 z-10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                        <span className="bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow">
-                          Markdown Suportado
-                        </span>
-                      </div>
-                      <textarea
-                        value={prompt.prompt_text}
-                        onChange={(e) => handleUpdatePrompt(prompt.id, e.target.value)}
-                        className="w-full h-64 bg-slate-900 text-slate-300 font-mono text-xs p-4 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 custom-scrollbar resize-y border border-slate-800 shadow-inner"
-                        spellCheck="false"
-                      />
+                  return (
+                    <div key={prompt.id} className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all ${isEditing ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-300'}`}>
                       
-                      {/* DICA DE VARIÁVEIS */}
-                      <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-400">
-                        <AlertCircle size={12} />
-                        <span>
-                          Dica: Mantenha as variáveis como 
-                          <strong className="text-blue-600 mx-1">{'{titulo}'}</strong> e 
-                          <strong className="text-blue-600 mx-1">{'{data}'}</strong> 
-                          para o sistema substituir automaticamente.
-                        </span>
+                      {/* CABEÇALHO DO CARD */}
+                      <div className="bg-slate-50/50 p-4 border-b border-slate-100 flex justify-between items-start">
+                        <div className="flex gap-3">
+                          <div className="mt-1 p-1.5 bg-blue-50 rounded text-blue-600">
+                            <Terminal size={16} />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                              {prompt.titulo}
+                              <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                                {prompt.slug}
+                              </span>
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-0.5">{prompt.descricao}</p>
+                          </div>
+                        </div>
+
+                        {/* BOTÕES DE AÇÃO */}
+                        <div className="flex items-center gap-2">
+                          {isEditing ? (
+                            <>
+                              <button
+                                onClick={handleCancelEdit}
+                                disabled={savingId === prompt.id}
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-red-500 transition-colors"
+                              >
+                                <X size={14} /> Cancelar
+                              </button>
+                              
+                              <button
+                                onClick={() => savePrompt(prompt)}
+                                disabled={savingId === prompt.id}
+                                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg transition-all"
+                              >
+                                {savingId === prompt.id ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                                {savingId === prompt.id ? 'Salvando...' : 'Salvar Alterações'}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setEditingId(prompt.id)}
+                              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all"
+                            >
+                              <Edit3 size={14} /> Editar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* ÁREA DE EDIÇÃO */}
+                      <div className={`p-4 transition-colors ${isEditing ? 'bg-white' : 'bg-slate-50'}`}>
+                        <textarea
+                          value={prompt.prompt_text}
+                          onChange={(e) => handleUpdatePromptLocal(prompt.id, e.target.value)}
+                          disabled={!isEditing}
+                          className={`w-full h-96 font-mono text-xs p-4 rounded-xl outline-none custom-scrollbar resize-y border shadow-inner transition-all
+                            ${isEditing 
+                              ? 'bg-slate-900 text-slate-300 border-slate-800 focus:ring-2 focus:ring-blue-500' 
+                              : 'bg-slate-100 text-slate-500 border-slate-200 cursor-default opacity-80'
+                            }`}
+                          spellCheck="false"
+                        />
+                        
+                        {/* DICA DE VARIÁVEIS (Só aparece editando) */}
+                        {isEditing && (
+                          <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500 animate-in fade-in slide-in-from-top-1">
+                            <AlertCircle size={12} className="text-blue-500" />
+                            <span>
+                              Variáveis disponíveis: 
+                              <strong className="text-blue-600 mx-1">{'{titulo}'}</strong> e 
+                              <strong className="text-blue-600 mx-1">{'{data}'}</strong>.
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {prompts.length === 0 && (
                   <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-300">
@@ -180,7 +207,6 @@ export default function Configuracoes() {
   );
 }
 
-// Pequeno skeleton loader para dar um charme
 const LoaderSkeleton = () => (
   <div className="animate-pulse flex space-x-4">
     <div className="h-12 w-12 bg-slate-200 rounded-full"></div>
