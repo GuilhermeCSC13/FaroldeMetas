@@ -86,8 +86,7 @@ export default function CentralAtas() {
     try {
       const jobType = "BACKFILL_COMPILE_ATA";
 
-      // 1. Atualiza IMEDIATAMENTE o status na tabela 'reunioes'
-      // Usamos 'PRONTO_PROCESSAR' para passar na validação do banco
+      // 1. Atualiza status na tabela 'reunioes'
       const { error: updateReuniaoErr } = await supabase
         .from("reunioes")
         .update({
@@ -133,10 +132,7 @@ export default function CentralAtas() {
       // 3. Atualiza interface localmente
       const novaAta = { ...selectedAta, gravacao_status: 'PRONTO_PROCESSAR', ata_ia_status: 'PENDENTE' };
       setSelectedAta(novaAta);
-      
       setAtas(prev => prev.map(a => a.id === novaAta.id ? { ...a, ...novaAta } : a));
-      
-      // 4. Inicia o polling
       checkAutoRefresh(novaAta);
       
       alert("Solicitação enviada! O sistema processará em breve.");
@@ -163,7 +159,6 @@ export default function CentralAtas() {
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
-    // Verifica se algum dos status indica processamento
     const precisaAtualizar = 
       (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
       (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
@@ -185,13 +180,10 @@ export default function CentralAtas() {
         .single();
 
       if (!error && data) {
-        // Atualiza estado apenas se mudou algo
         setSelectedAta(prev => {
            if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
            return prev;
         });
-
-        // Atualiza lista lateral
         setAtas(prev => prev.map(r => r.id === data.id ? { ...r, ...data } : r));
         
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
@@ -203,7 +195,6 @@ export default function CentralAtas() {
             
         if (!aindaProcessando) {
              stopPolling();
-             // Se terminou, recarrega as URLs e detalhes
              hydrateMediaUrls(data);
              carregarDetalhes(data);
              if (data.pauta) setEditedPauta(data.pauta);
@@ -220,9 +211,7 @@ export default function CentralAtas() {
   const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
     if (!bucket || !filePath) return null;
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
-    if (pub?.publicUrl) {
-        return pub.publicUrl;
-    }
+    if (pub?.publicUrl) return pub.publicUrl;
     const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
     return signed?.signedUrl || null;
   };
@@ -230,10 +219,13 @@ export default function CentralAtas() {
   const hydrateMediaUrls = async (ata) => {
     try {
       const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
-      const audioUrl = await getSignedOrPublicUrl(
-        ata.gravacao_audio_bucket || ata.gravacao_bucket,
-        ata.gravacao_audio_path
-      );
+      
+      // ✅ FIX: Se não houver audio separado, usa o vídeo como áudio
+      const audioPath = ata.gravacao_audio_path || ata.gravacao_path;
+      const audioBucket = ata.gravacao_audio_bucket || ata.gravacao_bucket;
+      
+      const audioUrl = await getSignedOrPublicUrl(audioBucket, audioPath);
+      
       setMediaUrls({ video: videoUrl, audio: audioUrl });
     } catch (e) {
       console.error("Erro URLs:", e);
@@ -327,14 +319,15 @@ export default function CentralAtas() {
     }
   };
 
+  // ✅ IA GEMINI CORRIGIDA (Usa vídeo como entrada)
   const handleRegenerateIA = async () => {
-    const audioUrl = mediaUrls.audio;
-    if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio?")) return;
+    const audioUrl = mediaUrls.audio || mediaUrls.video; // Usa o vídeo se o áudio falhar
+    if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
 
     setIsGenerating(true);
     try {
       const response = await fetch(audioUrl);
-      if (!response.ok) throw new Error("Falha ao baixar o áudio.");
+      if (!response.ok) throw new Error("Falha ao baixar o arquivo de mídia.");
 
       const blob = await response.blob();
       const reader = new FileReader();
@@ -348,7 +341,7 @@ export default function CentralAtas() {
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
           const prompt = `
-Você é secretária de reunião e deve gerar a ATA em Markdown usando SOMENTE o conteúdo real do áudio enviado.
+Você é secretária de reunião e deve gerar a ATA em Markdown usando SOMENTE o conteúdo real do áudio/vídeo enviado.
 Contexto: "${titulo}" - ${dataBR}.
 
 Gere a ata NO MÁXIMO com a seguinte estrutura:
@@ -367,20 +360,22 @@ Gere a ata NO MÁXIMO com a seguinte estrutura:
 Preencha cada seção somente com o que estiver claramente no áudio.
           `.trim();
 
-          const result = await model.generateContent([prompt, { inlineData: { data: base64data, mimeType: "audio/webm" } }]);
+          // ✅ FIX: Usamos "video/webm" porque o arquivo é um container webm (com áudio dentro)
+          const result = await model.generateContent([prompt, { inlineData: { data: base64data, mimeType: "video/webm" } }]);
           const texto = result.response.text();
 
           setEditedPauta(texto);
           setIsEditing(true);
-          alert("Resumo gerado. Revise e Salve.");
+          alert("Resumo gerado com sucesso! Revise e Salve.");
         } catch (err) {
+          console.error(err);
           alert("Erro na IA: " + err.message);
         } finally {
           setIsGenerating(false);
         }
       };
     } catch (e) {
-      alert("Erro áudio: " + e.message);
+      alert("Erro download áudio: " + e.message);
       setIsGenerating(false);
     }
   };
@@ -487,7 +482,6 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                         </span>
                       )}
                       
-                      {/* BOTÃO FORÇAR / ATUALIZAR VIDEOS E ATA */}
                       <button
                         onClick={handleForceReprocess}
                         disabled={jobLoading || isProcessingSomething}
@@ -550,7 +544,6 @@ Preencha cada seção somente com o que estiver claramente no áudio.
 
                   {mediaUrls.video ? (
                     <div className="space-y-2">
-                      {/* ✅ FIX: Chave única força recarregamento do vídeo */}
                       <video 
                         key={mediaUrls.video} 
                         controls 
