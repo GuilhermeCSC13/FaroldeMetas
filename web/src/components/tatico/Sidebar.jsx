@@ -1,7 +1,6 @@
 // src/components/tatico/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-// ✅ CORREÇÃO: Usamos "../../" para voltar duas pastas (tatico -> components -> src)
 import { supabase, supabaseInove } from "../../supabaseClient"; 
 import {
   FaHome,
@@ -32,47 +31,56 @@ export default function Sidebar() {
 
   const [openPlanejamento, setOpenPlanejamento] = useState(isPlanejamentoActive);
 
-  // ✅ Busca dados em usuarios_aprovadores no Supabase Inove
   useEffect(() => {
-    const loadUserInove = async () => {
-      let emailAlvo = null;
-
-      // 1. Tenta pegar da sessão de Auth atual
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.email) {
-        emailAlvo = session.user.email;
-      } 
-      // 2. Se não, tenta pegar do localStorage (LandingFarol)
-      else {
-        const stored = localStorage.getItem("usuario_externo");
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored);
-            emailAlvo = parsed.email;
-          } catch (e) { console.error(e); }
+    const loadUser = async () => {
+      // 1. PRIORIDADE: Tenta pegar os dados prontos do login (vindo do INOVE)
+      const stored = localStorage.getItem("usuario_externo");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          console.log("Dados carregados do cache:", parsed);
+          // Se já tem nome e nível, usa direto e para por aqui!
+          if (parsed.nome && parsed.nivel) {
+            setUser({ nome: parsed.nome, nivel: parsed.nivel });
+            return; 
+          }
+        } catch (e) {
+          console.error("Erro ao ler usuario_externo", e);
         }
       }
 
+      // 2. SEGUNDA OPÇÃO: Login direto no Farol (precisa buscar no banco)
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Se tiver sessão ou se tiver email no stored mas faltar dados
+      let emailAlvo = session?.user?.email;
+      
+      if (!emailAlvo && stored) {
+         try { emailAlvo = JSON.parse(stored).email; } catch {}
+      }
+
       if (emailAlvo) {
-        // ✅ Consulta a tabela correta no banco correto
+        console.log("Buscando dados no banco para:", emailAlvo);
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select("nome, nivel, login")
           .eq("email", emailAlvo)
           .maybeSingle();
 
-        if (!error && data) {
+        if (error) console.error("Erro ao buscar usuário:", error);
+
+        if (data) {
           setUser({ nome: data.nome, nivel: data.nivel });
         }
       }
     };
 
-    loadUserInove();
+    loadUser();
   }, []);
 
   const primeiroNome = user.nome ? user.nome.split(" ")[0] : "Gestor";
-  // ✅ Validação de ADM baseada no retorno de usuarios_aprovadores
-  const isAdm = String(user.nivel || "").toLowerCase() === "administrador";
+  // Validação mais flexível para garantir que pegue "Administrador" ou "administrador"
+  const isAdm = String(user.nivel || "").trim().toLowerCase() === "administrador";
 
   useEffect(() => {
     if (isPlanejamentoActive) {
@@ -95,7 +103,6 @@ export default function Sidebar() {
             {primeiroNome.charAt(0).toUpperCase()}
           </div>
           <div>
-            {/* ✅ Nome Dinâmico */}
             <p className="text-xs text-blue-100 opacity-80">Olá, {primeiroNome} 👋</p>
             <p className="text-sm font-bold tracking-tight">Farol Tático</p>
           </div>
@@ -104,7 +111,6 @@ export default function Sidebar() {
 
       {/* Navegação */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
-        {/* Visão Geral */}
         <NavLink
           to="/"
           className={({ isActive }) =>
@@ -118,7 +124,7 @@ export default function Sidebar() {
           <span>Visão Geral</span>
         </NavLink>
 
-        {/* Planejamento Tático → Áreas */}
+        {/* Planejamento */}
         <div className="pt-2 pb-1">
           <button
             type="button"
@@ -204,7 +210,6 @@ export default function Sidebar() {
             <span>Agenda Tática</span>
           </NavLink>
 
-          {/* Tipos de Reunião */}
           <NavLink
             to="/tipos-reuniao"
             className={({ isActive }) =>
@@ -241,7 +246,7 @@ export default function Sidebar() {
             <span>Central de Ações</span>
           </NavLink>
 
-          {/* ✅ Configurações (Apenas ADM) */}
+          {/* ✅ Configurações (Agora aparece se o nível for Administrador) */}
           {isAdm && (
             <NavLink
               to="/configuracoes"
