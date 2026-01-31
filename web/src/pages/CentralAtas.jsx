@@ -21,7 +21,6 @@ import {
   Loader2,
   Clock,
   ImageIcon,
-  RefreshCw,
   Play,
   Pause,
   Volume2,
@@ -158,7 +157,6 @@ export default function CentralAtas() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [jobLoading, setJobLoading] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
@@ -185,69 +183,6 @@ export default function CentralAtas() {
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAta?.id]);
-
-  const handleForceReprocess = async () => {
-    if (!selectedAta?.id) return;
-    if (!window.confirm("Deseja forçar a atualização do vídeo e da ata?\n\nIsso colocará a reunião na fila de processamento novamente.")) return;
-
-    setJobLoading(true);
-    try {
-      const jobType = "BACKFILL_COMPILE_ATA";
-
-      const { error: updateReuniaoErr } = await supabase
-        .from("reunioes")
-        .update({
-          gravacao_status: 'PRONTO_PROCESSAR',
-          ata_ia_status: 'PENDENTE',
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", selectedAta.id);
-
-      if (updateReuniaoErr) throw updateReuniaoErr;
-
-      const { data: existingJob } = await supabase
-        .from("reuniao_processing_queue")
-        .select("id")
-        .eq("reuniao_id", selectedAta.id)
-        .eq("job_type", jobType)
-        .single();
-
-      if (existingJob) {
-        const { error: upErr } = await supabase
-          .from("reuniao_processing_queue")
-          .update({
-            status: "PENDENTE",
-            last_error: null,
-            result: null,
-            next_run_at: new Date().toISOString(),
-          })
-          .eq("id", existingJob.id);
-        if (upErr) throw upErr;
-      } else {
-        const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
-          {
-            reuniao_id: selectedAta.id,
-            job_type: jobType,
-            status: "PENDENTE",
-            next_run_at: new Date().toISOString(),
-          },
-        ]);
-        if (insertErr) throw insertErr;
-      }
-
-      const novaAta = { ...selectedAta, gravacao_status: 'PRONTO_PROCESSAR', ata_ia_status: 'PENDENTE' };
-      setSelectedAta(novaAta);
-      setAtas(prev => prev.map(a => a.id === novaAta.id ? { ...a, ...novaAta } : a));
-      checkAutoRefresh(novaAta);
-      
-      alert("Solicitação enviada! O sistema processará em breve.");
-    } catch (e) {
-      console.error("Erro ao solicitar reprocessamento:", e);
-      alert("Erro ao solicitar atualização: " + (e?.message || e));
-    } finally {
-      setJobLoading(false);
-    }
-  };
 
   const stopPolling = () => {
     if (pollingRef.current) {
@@ -411,6 +346,7 @@ export default function CentralAtas() {
     }
   };
 
+  // ✅ IA GEMINI DINÂMICA (BUSCA PROMPT NO BANCO)
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -428,38 +364,61 @@ export default function CentralAtas() {
         try {
           const base64data = reader.result.split(",")[1];
           const model = getGeminiFlash();
+          
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-          const prompt = `
-Você é secretária de reunião e deve gerar a ATA em Markdown usando SOMENTE o conteúdo real do áudio/vídeo enviado.
-Contexto: "${titulo}" - ${dataBR}.
+          // --- 1. BUSCA O PROMPT NO BANCO DE DADOS ---
+          let promptTemplate = "";
+          const { data: promptData } = await supabase
+            .from('app_prompts')
+            .select('prompt_text')
+            .eq('slug', 'ata_reuniao')
+            .single();
 
-Gere a ata NO MÁXIMO com a seguinte estrutura:
-# ${titulo}
-**Data:** ${dataBR}
+          if (promptData?.prompt_text) {
+            promptTemplate = promptData.prompt_text;
+          } else {
+            // Fallback (segurança) caso o banco esteja vazio
+            console.warn("Prompt 'ata_reuniao' não encontrado no banco. Usando padrão.");
+            promptTemplate = `Você é secretária de reunião. Contexto: "{titulo}" - {data}. Gere a ATA em Markdown.`;
+          }
 
-## 1. Resumo
-(Resumo fiel do que foi discutido)
+          // --- 2. SUBSTITUI VARIÁVEIS DO PROMPT ---
+          // Substitui {titulo} e {data} pelo valor real
+          const finalPrompt = promptTemplate
+            .replace(/{titulo}/g, titulo)
+            .replace(/{data}/g, dataBR);
 
-## 2. Decisões
-- Decisão 1...
-
-## 3. Ações
-- Ação — Responsável — Prazo
-
-Preencha cada seção somente com o que estiver claramente no áudio.
-          `.trim();
-
-          const result = await model.generateContent([prompt, { inlineData: { data: base64data, mimeType: "video/webm" } }]);
+          // --- 3. CHAMA A IA ---
+          const result = await model.generateContent([
+            finalPrompt, 
+            { inlineData: { data: base64data, mimeType: "video/webm" } }
+          ]);
           const texto = result.response.text();
 
+          // Atualiza Interface
           setEditedPauta(texto);
           setIsEditing(true);
-          alert("Resumo gerado com sucesso! Revise e Salve.");
+
+          // ✅ AUTO-SAVE: Salva direto no banco
+          const { error: saveErr } = await supabase
+            .from("reunioes")
+            .update({ 
+                pauta: texto,
+                ata_ia_status: 'PRONTA' 
+            })
+            .eq("id", selectedAta.id);
+
+          if (saveErr) throw saveErr;
+
+          setSelectedAta(prev => ({ ...prev, pauta: texto, ata_ia_status: 'PRONTA' }));
+          setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, pauta: texto, ata_ia_status: 'PRONTA' } : a));
+
+          alert("Ata gerada e salva automaticamente!");
         } catch (err) {
           console.error(err);
-          alert("Erro na IA: " + err.message);
+          alert("Erro na IA ou ao Salvar: " + err.message);
         } finally {
           setIsGenerating(false);
         }
@@ -498,10 +457,6 @@ Preencha cada seção somente com o que estiver claramente no áudio.
       red: "bg-red-100 text-red-700 border-red-200",
       gray: "bg-slate-100 text-slate-700 border-slate-200",
     }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
-
-  const isProcessingSomething = 
-    (iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") ||
-    (gravacaoStatusNorm === "PROCESSANDO" || gravacaoStatusNorm === "PENDENTE" || gravacaoStatusNorm === "PRONTO_PROCESSAR");
 
   return (
     <Layout>
@@ -571,18 +526,6 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                           IA: {selectedAta.ata_ia_status}
                         </span>
                       )}
-                      
-                      <button
-                        onClick={handleForceReprocess}
-                        disabled={jobLoading || isProcessingSomething}
-                        className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit hover:opacity-80 transition-opacity ${
-                            isProcessingSomething ? 'bg-blue-50 text-blue-400 border-blue-100 cursor-not-allowed' : 'bg-slate-50 text-slate-600 border-slate-200 cursor-pointer'
-                        }`}
-                        title="Se o vídeo ou a ata não geraram, clique aqui para tentar novamente."
-                      >
-                        {jobLoading || isProcessingSomething ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-                        {isProcessingSomething ? "Processando..." : "Atualizar Vídeo e ATA"}
-                      </button>
                     </div>
 
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
@@ -665,7 +608,7 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                   )}
                 </div>
 
-                {/* ÁUDIO - COM FIX DE CACHE (KEY) */}
+                {/* ÁUDIO - COM AUTO-SAVE NA IA */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Áudio e Transcrição
@@ -675,7 +618,7 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                     <div className="flex-1">
                       {mediaUrls.audio ? (
                         <CustomAudioPlayer 
-                          key={mediaUrls.audio} // ✅ AQUI ESTÁ A CORREÇÃO (Igual ao vídeo)
+                          key={mediaUrls.audio}
                           src={mediaUrls.audio} 
                           durationDb={selectedAta.duracao_segundos} 
                         />
