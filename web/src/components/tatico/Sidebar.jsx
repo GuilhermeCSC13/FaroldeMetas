@@ -1,8 +1,8 @@
-// src/components/Sidebar.jsx
+// src/components/tatico/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-// ✅ IMPORTAÇÃO CORRIGIDA (Assume que Sidebar está em src/components e supabaseClient em src/)
-import { supabase, supabaseInove } from "../supabaseClient"; 
+// ✅ CORREÇÃO: Usamos "../../" para voltar duas pastas (tatico -> components -> src)
+import { supabase, supabaseInove } from "../../supabaseClient"; 
 import {
   FaHome,
   FaClipboardList,
@@ -95,6 +95,7 @@ export default function Sidebar() {
             {primeiroNome.charAt(0).toUpperCase()}
           </div>
           <div>
+            {/* ✅ Nome Dinâmico */}
             <p className="text-xs text-blue-100 opacity-80">Olá, {primeiroNome} 👋</p>
             <p className="text-sm font-bold tracking-tight">Farol Tático</p>
           </div>
@@ -103,6 +104,7 @@ export default function Sidebar() {
 
       {/* Navegação */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
+        {/* Visão Geral */}
         <NavLink
           to="/"
           className={({ isActive }) =>
@@ -116,7 +118,7 @@ export default function Sidebar() {
           <span>Visão Geral</span>
         </NavLink>
 
-        {/* Planejamento */}
+        {/* Planejamento Tático → Áreas */}
         <div className="pt-2 pb-1">
           <button
             type="button"
@@ -202,6 +204,7 @@ export default function Sidebar() {
             <span>Agenda Tática</span>
           </NavLink>
 
+          {/* Tipos de Reunião */}
           <NavLink
             to="/tipos-reuniao"
             className={({ isActive }) =>
@@ -238,7 +241,7 @@ export default function Sidebar() {
             <span>Central de Ações</span>
           </NavLink>
 
-          {/* ✅ Configurações (Somente visível para Administrador validado no Inove) */}
+          {/* ✅ Configurações (Apenas ADM) */}
           {isAdm && (
             <NavLink
               to="/configuracoes"
