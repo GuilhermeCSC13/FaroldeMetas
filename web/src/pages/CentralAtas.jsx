@@ -21,7 +21,7 @@ import {
   Loader2,
   Clock,
   ImageIcon,
-  RefreshCw // ✅ Ícone para o botão
+  RefreshCw
 } from "lucide-react";
 
 export default function CentralAtas() {
@@ -75,23 +75,23 @@ export default function CentralAtas() {
   }, [selectedAta?.id]); 
 
   // =========================
-  // ✅ Lógica de Reprocessamento (Botão "Atualizar Vídeo e ATA")
+  // ✅ Lógica de Reprocessamento (CORRIGIDA)
   // =========================
   const handleForceReprocess = async () => {
     if (!selectedAta?.id) return;
     
-    // Confirmação
     if (!window.confirm("Deseja forçar a atualização do vídeo e da ata?\n\nIsso colocará a reunião na fila de processamento novamente.")) return;
 
     setJobLoading(true);
     try {
       const jobType = "BACKFILL_COMPILE_ATA";
 
-      // 1. Atualiza IMEDIATAMENTE o status na tabela 'reunioes' para travar a UI e persistir o loading
+      // 1. Atualiza IMEDIATAMENTE o status na tabela 'reunioes'
+      // CORREÇÃO: Usamos 'PRONTO_PROCESSAR' para passar na validação do banco (Constraint Check)
       const { error: updateReuniaoErr } = await supabase
         .from("reunioes")
         .update({
-          gravacao_status: 'PENDENTE',
+          gravacao_status: 'PRONTO_PROCESSAR', 
           ata_ia_status: 'PENDENTE',
           updated_at: new Date().toISOString()
         })
@@ -100,7 +100,6 @@ export default function CentralAtas() {
       if (updateReuniaoErr) throw updateReuniaoErr;
 
       // 2. Insere ou Atualiza o Job na Fila
-      // Verifica se já existe job pendente para não duplicar desnecessariamente
       const { data: existingJob } = await supabase
         .from("reuniao_processing_queue")
         .select("id")
@@ -109,7 +108,6 @@ export default function CentralAtas() {
         .single();
 
       if (existingJob) {
-        // Se já existe, reseta ele para rodar agora
         const { error: upErr } = await supabase
           .from("reuniao_processing_queue")
           .update({
@@ -121,7 +119,6 @@ export default function CentralAtas() {
           .eq("id", existingJob.id);
         if (upErr) throw upErr;
       } else {
-        // Se não existe, cria novo
         const { error: insertErr } = await supabase.from("reuniao_processing_queue").insert([
           {
             reuniao_id: selectedAta.id,
@@ -134,13 +131,12 @@ export default function CentralAtas() {
       }
 
       // 3. Atualiza interface localmente
-      const novaAta = { ...selectedAta, gravacao_status: 'PENDENTE', ata_ia_status: 'PENDENTE' };
+      const novaAta = { ...selectedAta, gravacao_status: 'PRONTO_PROCESSAR', ata_ia_status: 'PENDENTE' };
       setSelectedAta(novaAta);
       
-      // Atualiza também na lista da esquerda
       setAtas(prev => prev.map(a => a.id === novaAta.id ? { ...a, ...novaAta } : a));
       
-      // 4. Inicia o polling para assistir o progresso
+      // 4. Inicia o polling
       checkAutoRefresh(novaAta);
       
       alert("Solicitação enviada! O sistema processará em breve.");
@@ -168,14 +164,15 @@ export default function CentralAtas() {
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
     // Verifica se algum dos status indica processamento
+    // Adicionado PRONTO_PROCESSAR na verificação
     const precisaAtualizar = 
-      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO") ||
+      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
       (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
         refreshSelectedAta(ata.id);
-      }, 4000); // 4 segundos para resposta rápida
+      }, 4000); // 4 segundos
     }
   };
 
@@ -189,9 +186,8 @@ export default function CentralAtas() {
         .single();
 
       if (!error && data) {
-        // Atualiza estado apenas se mudou algo crítico ou se finalizou
+        // Atualiza estado apenas se mudou algo
         setSelectedAta(prev => {
-           // Se mudou algo, retorna o novo objeto, senão mantém o prev
            if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
            return prev;
         });
@@ -203,14 +199,13 @@ export default function CentralAtas() {
         const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
         
         const aindaProcessando = 
-            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO") ||
+            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
             (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
             
         if (!aindaProcessando) {
              stopPolling();
-             // Se terminou, recarrega as URLs de mídia (vídeo novo)
+             // Se terminou, recarrega as URLs e detalhes
              hydrateMediaUrls(data);
-             // Recarrega detalhes (caso a IA tenha gerado ações novas)
              carregarDetalhes(data);
              if (data.pauta) setEditedPauta(data.pauta);
         }
@@ -225,14 +220,10 @@ export default function CentralAtas() {
   // =========================
   const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
     if (!bucket || !filePath) return null;
-    // Tenta obter URL pública primeiro (mais rápido se o bucket for public)
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
     if (pub?.publicUrl) {
-        // Verifica se é acessível (opcional, mas bom para garantir)
         return pub.publicUrl;
     }
-    
-    // Fallback para assinada
     const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
     return signed?.signedUrl || null;
   };
@@ -426,7 +417,7 @@ Preencha cada seção somente com o que estiver claramente no áudio.
 
   const isProcessingSomething = 
     (iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") ||
-    (gravacaoStatusNorm === "PROCESSANDO" || gravacaoStatusNorm === "PENDENTE");
+    (gravacaoStatusNorm === "PROCESSANDO" || gravacaoStatusNorm === "PENDENTE" || gravacaoStatusNorm === "PRONTO_PROCESSAR");
 
   return (
     <Layout>
@@ -576,7 +567,9 @@ Preencha cada seção somente com o que estiver claramente no áudio.
                     </div>
                   ) : (
                     <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
-                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") || String(selectedAta.gravacao_status || "").toUpperCase().includes("PENDENTE") 
+                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") || 
+                       String(selectedAta.gravacao_status || "").toUpperCase().includes("PENDENTE") ||
+                       String(selectedAta.gravacao_status || "").toUpperCase().includes("PRONTO_PROCESSAR")
                         ? <><Loader2 size={14} className="animate-spin text-blue-500" /> Processando vídeo...</>
                         : "Vídeo não disponível ainda."
                       }
