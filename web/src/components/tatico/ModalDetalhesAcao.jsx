@@ -1,6 +1,6 @@
 // src/components/tatico/ModalDetalhesAcao.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { CheckCircle, X, Trash2, UploadCloud, RotateCw, FileText, File as FileIcon, User, Calendar, Lock, AlertTriangle, Clipboard } from "lucide-react";
+import { CheckCircle, X, Trash2, UploadCloud, RotateCw, FileText, File as FileIcon, User, Calendar, Lock, AlertTriangle, Clipboard, ShieldAlert } from "lucide-react";
 import { supabase, supabaseInove } from "../../supabaseClient";
 
 /* =========================
@@ -104,7 +104,6 @@ const ModalDetalhesAcao = ({
 
     const files = [];
     for (let i = 0; i < items.length; i++) {
-      // Procura por imagens na área de transferência
       if (items[i].type.indexOf("image") !== -1) {
         const blob = items[i].getAsFile();
         const file = new File([blob], `print_${Date.now()}.png`, { type: blob.type });
@@ -113,7 +112,7 @@ const ModalDetalhesAcao = ({
     }
 
     if (files.length > 0) {
-      e.preventDefault(); // Evita colar o "texto" da imagem (se houver)
+      e.preventDefault();
       if (destino === "conclusao") {
          setNovosArquivosConclusao(prev => [...prev, ...files]);
       } else {
@@ -339,7 +338,7 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // EXCLUIR
+  // EXCLUIR (COM VALIDAÇÃO DE NÍVEL E REGISTRO DE NOME)
   // ---------------------------------------------------------------------------
   const handleExcluirClick = () => {
     setShowDeleteAuth(true);
@@ -350,9 +349,10 @@ const ModalDetalhesAcao = ({
     setDeleting(true);
 
     try {
+      // 1. Validar Usuário no banco do INOVE
       const { data: usuario, error: errAuth } = await supabaseInove
         .from("usuarios_aprovadores")
-        .select("id, login, senha, nome_completo, ativo")
+        .select("id, login, senha, nome, sobrenome, nome_completo, nivel, ativo")
         .eq("login", delLogin)
         .eq("senha", delSenha)
         .eq("ativo", true)
@@ -366,14 +366,28 @@ const ModalDetalhesAcao = ({
         return;
       }
 
+      // ✅ 2. VERIFICAÇÃO DE PERMISSÃO (Apenas Gestor ou Adm)
+      if (usuario.nivel !== 'Gestor' && usuario.nivel !== 'Administrador') {
+        alert("Permissão negada! Apenas Gestores e Administradores podem excluir ações.");
+        setDeleting(false);
+        return;
+      }
+
+      // ✅ 3. REGISTRA QUEM EXCLUIU (Usando o campo fechado_por_nome)
+      const nomeExcluidor = buildNomeSobrenome(usuario);
+
       const { error: errUpdate } = await supabase
         .from("acoes")
-        .update({ status: "Excluída" })
+        .update({ 
+            status: "Excluída",
+            fechado_por_nome: nomeExcluidor, // Grava quem excluiu
+            data_fechamento: new Date().toISOString() // Data da exclusão
+        })
         .eq("id", acao.id);
 
       if (errUpdate) throw errUpdate;
 
-      alert("Ação marcada como Excluída com sucesso.");
+      alert("Ação excluída com sucesso por: " + nomeExcluidor);
       if (typeof onAfterDelete === "function") onAfterDelete(acao.id);
       onClose();
 
@@ -386,7 +400,7 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // REABRIR / FINALIZAR
+  // REABRIR
   // ---------------------------------------------------------------------------
   const handleReabrir = async () => {
     if (!acao) return;
@@ -438,6 +452,7 @@ const ModalDetalhesAcao = ({
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
+  // Data de fechamento ou exclusão
   const dataFechamento = acao.data_fechamento || acao.data_conclusao 
     ? new Date(acao.data_fechamento || acao.data_conclusao).toLocaleString() 
     : null;
@@ -478,11 +493,11 @@ const ModalDetalhesAcao = ({
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
               <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-                <Trash2 size={24} />
+                <ShieldAlert size={24} />
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Confirmar Exclusão</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Área Restrita</h3>
               <p className="text-sm text-slate-500 mb-6">
-                Para excluir esta ação, insira suas credenciais de aprovação.
+                Exclusão permitida apenas para <b>Gestores</b> ou <b>Administradores</b>.
               </p>
               <div className="space-y-3 text-left">
                 <div>
@@ -496,7 +511,7 @@ const ModalDetalhesAcao = ({
               </div>
               <div className="flex gap-3 mt-6">
                 <button onClick={() => setShowDeleteAuth(false)} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50">Cancelar</button>
-                <button onClick={confirmarExclusao} disabled={deleting} className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50">{deleting ? "Validando..." : "Confirmar Exclusão"}</button>
+                <button onClick={confirmarExclusao} disabled={deleting} className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50">{deleting ? "Verificando..." : "Confirmar Exclusão"}</button>
               </div>
             </div>
           </div>
@@ -599,9 +614,14 @@ const ModalDetalhesAcao = ({
           <div>
             <div className="flex items-center justify-between mb-2 ml-1">
                  <h3 className="text-xs font-bold text-gray-500 uppercase">Conclusão da ação</h3>
-                 {statusLocal === "Concluída" && (acao.fechado_por_nome || dataFechamento) && (
+                 {/* ✅ EXIBE QUEM FECHOU OU QUEM EXCLUIU */}
+                 {(statusLocal === "Concluída" || statusLocal === "Excluída") && (acao.fechado_por_nome || dataFechamento) && (
                      <div className="text-right">
-                         {acao.fechado_por_nome && <span className="text-[10px] text-blue-600 font-bold block">Fechado por: {acao.fechado_por_nome}</span>}
+                         {acao.fechado_por_nome && (
+                            <span className={`text-[10px] font-bold block ${statusLocal === 'Excluída' ? 'text-red-600' : 'text-blue-600'}`}>
+                                {statusLocal === 'Excluída' ? 'Excluído por:' : 'Fechado por:'} {acao.fechado_por_nome}
+                            </span>
+                         )}
                          {dataFechamento && <span className="text-[10px] text-gray-400 block">Em: {dataFechamento}</span>}
                      </div>
                  )}
@@ -678,76 +698,3 @@ const ModalDetalhesAcao = ({
 };
 
 export default ModalDetalhesAcao;
-
-// (Manter os MiniaturaArquivo e MiniaturaUrl iguais)
-/* =========================
-   Miniaturas (Subcomponents)
-========================= */
-function MiniaturaArquivo({ preview }) {
-  const { kind, url, name } = preview;
-  const box = "w-16 h-16 rounded-lg border border-slate-200 bg-white overflow-hidden flex items-center justify-center relative shadow-sm";
-  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1 text-center";
-
-  if (kind === "image") {
-    return (
-      <div className="flex flex-col items-center" title={name}>
-        <div className={box}>
-          <img src={url} alt={name} className="w-full h-full object-cover" />
-        </div>
-        <div className={caption}>{name}</div>
-      </div>
-    );
-  }
-  
-  const Icon = kind === "pdf" ? FileText : FileIcon;
-  const label = kind.toUpperCase().substring(0,3);
-  const color = kind === "pdf" ? "text-red-500" : "text-blue-500";
-
-  return (
-    <div className="flex flex-col items-center" title={name}>
-      <div className={box}>
-        <Icon className={`${color}`} size={24} />
-        <span className="absolute bottom-1 text-[8px] font-bold text-gray-400">{label}</span>
-      </div>
-      <div className={caption}>{name}</div>
-    </div>
-  );
-}
-
-function MiniaturaUrl({ url }) {
-  const kind = fileKindFromUrl(url);
-  const box = "w-16 h-16 rounded-lg border border-slate-200 bg-white overflow-hidden flex items-center justify-center hover:ring-2 hover:ring-blue-200 transition-all shadow-sm cursor-pointer";
-  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1 text-center";
-  
-  const name = (() => {
-    try {
-      const base = String(url).split("?")[0];
-      return base.substring(base.lastIndexOf("/") + 1) || "arquivo";
-    } catch { return "arquivo"; }
-  })();
-
-  if (kind === "image") {
-    return (
-      <a href={url} target="_blank" rel="noreferrer" className="flex flex-col items-center" title={name}>
-        <div className={box}>
-          <img src={url} alt={name} className="w-full h-full object-cover" />
-        </div>
-        <div className={caption}>{name}</div>
-      </a>
-    );
-  }
-
-  const Icon = kind === "pdf" ? FileText : FileIcon;
-  const color = kind === "pdf" ? "text-red-500" : "text-blue-500";
-  const label = kind === 'image' ? 'IMG' : kind.toUpperCase().substring(0,3);
-
-  return (
-    <a href={url} target="_blank" rel="noreferrer" className="flex flex-col items-center" title={name}>
-      <div className={box}>
-         <Icon className={color} size={24} />
-         <span className="absolute bottom-1 text-[8px] font-bold text-gray-400">{label}</span>
-      </div>
-      <div className={caption}>{name}</div>
-    </a>
-  );
-}
