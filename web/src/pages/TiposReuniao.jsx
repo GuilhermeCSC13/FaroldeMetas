@@ -1,7 +1,7 @@
 // src/pages/TiposReuniao.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../components/tatico/Layout";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseInove } from "../supabaseClient";
 import { useNavigate } from "react-router-dom";
 import {
   Tags,
@@ -20,19 +20,13 @@ import {
   Hash,
   CheckCircle2,
   AlertTriangle,
+  ShieldAlert // ✅ Ícone de segurança
 } from "lucide-react";
 
 /**
  * TABELAS ESPERADAS
- * - public.tipos_reuniao:
- *   id, nome, slug, periodicidade, dias_semana (int[]),
- *   horario_inicio (time), horario_fim (time),
- *   ata_principal (text), cor (text), ordem (int)
- *
- * - public.reunioes:
- *   id, titulo, data_hora (timestamptz), tipo_reuniao (text)  // conforme seu calendário
- *
- * OBS: Se no futuro você trocar para tipo_reuniao_id, é só mudar REUNIOES_TIPO_FIELD.
+ * - public.tipos_reuniao
+ * - public.reunioes
  */
 const REUNIOES_TIPO_FIELD = "tipo_reuniao";
 
@@ -91,7 +85,7 @@ export default function TiposReuniao() {
   const [loading, setLoading] = useState(true);
   const [tipos, setTipos] = useState([]);
   const [q, setQ] = useState("");
-  const [view, setView] = useState("cards"); // 'cards' | 'table'
+  const [view, setView] = useState("cards");
 
   // counts: { [tipoId]: number }
   const [counts, setCounts] = useState({});
@@ -105,7 +99,7 @@ export default function TiposReuniao() {
 
   // Modal Create/Edit
   const [formOpen, setFormOpen] = useState(false);
-  const [formMode, setFormMode] = useState("create"); // create | edit
+  const [formMode, setFormMode] = useState("create");
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     id: null,
@@ -114,18 +108,34 @@ export default function TiposReuniao() {
     periodicidade: "SEMANAL",
     dias_semana: [1],
     horario_inicio: "09:00",
-    horario_fim: "", // ✅ NOVO
+    horario_fim: "",
     ata_principal: "",
     cor: "#111827",
     ordem: null,
   });
 
-  // Confirm delete
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // ✅ Estados para Exclusão Segura
+  const [showDeleteAuth, setShowDeleteAuth] = useState(false);
+  const [delLogin, setDelLogin] = useState("");
+  const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
+
+  // ✅ Estado do Usuário Logado (para permissão de edição)
+  const [userLevel, setUserLevel] = useState(null);
 
   useEffect(() => {
     fetchTipos();
+    
+    // Ler nível do usuário
+    try {
+      const stored = localStorage.getItem("usuario_externo");
+      if (stored) {
+        const u = JSON.parse(stored);
+        setUserLevel(u.nivel);
+      }
+    } catch (e) {
+      console.error("Erro ao ler usuario_externo", e);
+    }
   }, []);
 
   const fetchTipos = async () => {
@@ -149,7 +159,6 @@ export default function TiposReuniao() {
     setTipos(data || []);
     setLoading(false);
 
-    // Atualiza contagens após carregar
     if ((data || []).length) {
       fetchCounts(data || []);
     } else {
@@ -240,8 +249,16 @@ export default function TiposReuniao() {
     }
   };
 
-  // ---------- FORM ----------
+  // ---------- FORM (Create/Edit) ----------
+  const checkEditPermission = () => {
+    if (userLevel === "Administrador" || userLevel === "Gestor") return true;
+    alert("Permissão negada. Apenas Administradores e Gestores podem criar ou editar tipos.");
+    return false;
+  };
+
   const openCreate = () => {
+    if (!checkEditPermission()) return;
+
     setFormMode("create");
     setForm({
       id: null,
@@ -250,7 +267,7 @@ export default function TiposReuniao() {
       periodicidade: "SEMANAL",
       dias_semana: [1],
       horario_inicio: "09:00",
-      horario_fim: "", // ✅
+      horario_fim: "",
       ata_principal: "",
       cor: "#111827",
       ordem: null,
@@ -259,6 +276,8 @@ export default function TiposReuniao() {
   };
 
   const openEdit = (tipo) => {
+    if (!checkEditPermission()) return;
+
     setFormMode("edit");
     setForm({
       id: tipo?.id ?? null,
@@ -269,7 +288,7 @@ export default function TiposReuniao() {
       horario_inicio:
         formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
       horario_fim:
-        formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim), // ✅
+        formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim),
       ata_principal: tipo?.ata_principal ?? "",
       cor: tipo?.cor ?? "#111827",
       ordem: tipo?.ordem ?? null,
@@ -314,7 +333,7 @@ export default function TiposReuniao() {
         periodicidade: form.periodicidade || "SEMANAL",
         dias_semana: Array.isArray(form.dias_semana) ? form.dias_semana : [],
         horario_inicio: form.horario_inicio ? `${form.horario_inicio}:00` : null,
-        horario_fim: form.horario_fim ? `${form.horario_fim}:00` : null, // ✅
+        horario_fim: form.horario_fim ? `${form.horario_fim}:00` : null,
         ata_principal: form.ata_principal || null,
         cor: form.cor || null,
         ordem:
@@ -350,16 +369,46 @@ export default function TiposReuniao() {
     }
   };
 
-  // ---------- DELETE ----------
+  // ---------- DELETE (COM AUTH) ----------
   const requestDelete = (tipo) => {
+    // Abre o modal de autenticação em vez de deletar direto
     setSelectedTipo(tipo);
-    setDeleteOpen(true);
+    setShowDeleteAuth(true);
+    setDelLogin("");
+    setDelSenha("");
   };
 
-  const doDelete = async () => {
+  const confirmarExclusao = async () => {
     if (!selectedTipo?.id) return;
+    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
+    
     setDeleting(true);
     try {
+      // 1. Validar Usuário (INOVE)
+      const { data: usuario, error: errAuth } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, login, senha, nivel, ativo")
+        .eq("login", delLogin)
+        .eq("senha", delSenha)
+        .eq("ativo", true)
+        .maybeSingle();
+
+      if (errAuth) throw errAuth;
+
+      if (!usuario) {
+        alert("Credenciais inválidas.");
+        setDeleting(false);
+        return;
+      }
+
+      // 2. Apenas ADMINISTRADOR pode excluir
+      if (usuario.nivel !== "Administrador") {
+        alert("Permissão negada. Apenas Administradores podem excluir Tipos de Reunião.");
+        setDeleting(false);
+        return;
+      }
+
+      // 3. Verificar se há reuniões vinculadas
       const tipoKey = selectedTipo?.nome || selectedTipo?.slug || "";
       const { count } = await supabase
         .from("reunioes")
@@ -368,7 +417,7 @@ export default function TiposReuniao() {
 
       if ((count ?? 0) > 0) {
         const ok = window.confirm(
-          `Existem ${count} reunião(ões) com este tipo. Se você apagar, as reuniões vão ficar com tipo solto.\n\nDeseja continuar?`
+          `ATENÇÃO: Existem ${count} reunião(ões) vinculadas a este tipo.\n\nSe você apagar, elas ficarão sem categoria.\n\nDeseja continuar mesmo assim?`
         );
         if (!ok) {
           setDeleting(false);
@@ -376,12 +425,15 @@ export default function TiposReuniao() {
         }
       }
 
+      // 4. Excluir
       const { error } = await supabase.from("tipos_reuniao").delete().eq("id", selectedTipo.id);
       if (error) throw error;
 
-      setDeleteOpen(false);
+      setShowDeleteAuth(false);
       closeDrawer();
       await fetchTipos();
+      alert("Tipo excluído com sucesso.");
+
     } catch (e) {
       console.error(e);
       alert(`Erro ao excluir: ${e?.message || "falha"}`);
@@ -401,6 +453,60 @@ export default function TiposReuniao() {
   return (
     <Layout>
       <div className="p-6 h-full flex flex-col font-sans bg-gray-50 relative">
+        
+        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+        {showDeleteAuth && (
+          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                <ShieldAlert size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Confirmar Exclusão</h3>
+              <p className="text-sm text-slate-500 mb-6">
+                Ação restrita a <b>Administradores</b>.
+              </p>
+
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delLogin}
+                    onChange={e => setDelLogin(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
+                  <input 
+                    type="password" 
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delSenha}
+                    onChange={e => setDelSenha(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={() => setShowDeleteAuth(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmarExclusao}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col xl:flex-row justify-between items-center mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-200 gap-4">
           <div className="flex items-center gap-4 w-full xl:w-auto">
@@ -981,7 +1087,7 @@ export default function TiposReuniao() {
                     />
                   </div>
 
-                  {/* ✅ Horário fim */}
+                  {/* Horário fim */}
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
                       Horário (término)
@@ -1087,52 +1193,6 @@ export default function TiposReuniao() {
                     disabled={saving}
                   >
                     {saving ? "Salvando..." : "Salvar"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL DELETE */}
-        {deleteOpen && selectedTipo && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-200">
-              <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle size={18} className="text-red-600" />
-                  <h3 className="font-bold text-gray-900">Excluir tipo</h3>
-                </div>
-                <button
-                  onClick={() => setDeleteOpen(false)}
-                  className="text-gray-400 hover:text-red-500"
-                  title="Fechar"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              <div className="p-6">
-                <p className="text-sm text-gray-700">Você está prestes a excluir:</p>
-                <p className="text-lg font-bold text-gray-900 mt-1">{selectedTipo?.nome}</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Se existirem reuniões vinculadas, elas não serão apagadas automaticamente.
-                </p>
-
-                <div className="mt-6 flex gap-3">
-                  <button
-                    onClick={() => setDeleteOpen(false)}
-                    className="flex-1 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 border border-gray-200 font-bold text-gray-800"
-                    disabled={deleting}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={doDelete}
-                    className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold"
-                    disabled={deleting}
-                  >
-                    {deleting ? "Excluindo..." : "Excluir"}
                   </button>
                 </div>
               </div>
