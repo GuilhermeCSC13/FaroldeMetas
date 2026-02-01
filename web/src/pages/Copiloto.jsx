@@ -31,26 +31,27 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
    Helpers
 ========================= */
 
-// ✅ CORREÇÃO DE FUSO HORÁRIO: Pega a hora local e remove o "Z" do UTC
+// Pega data/hora local em formato ISO sem o "Z" (para salvar no banco como "local")
 function nowIso() {
   const now = new Date();
-  // Ajusta para o fuso horário local subtraindo o offset
   const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
-  // Retorna formato ISO limpo: YYYY-MM-DDTHH:mm:ss.sss
   return localDate.toISOString().slice(0, 19); 
 }
 
 function todayISODate() {
-  return nowIso().slice(0, 10); // YYYY-MM-DD local
+  return nowIso().slice(0, 10);
 }
 
+// ✅ CORREÇÃO: Exibe a data ignorando a conversão de fuso do navegador
 function toBR(dt) {
   try {
-    return dt ? new Date(dt).toLocaleString("pt-BR") : "-";
+    if (!dt) return "-";
+    return new Date(dt).toLocaleString("pt-BR", { timeZone: "UTC" });
   } catch {
     return "-";
   }
 }
+
 function norm(s) {
   return String(s || "").trim().toUpperCase();
 }
@@ -172,7 +173,7 @@ export default function Copiloto() {
       try {
         safeSet(() => setLoadingResponsaveis(true));
 
-        // Tenta ler o usuário do storage primeiro (Mais confiável agora)
+        // Tenta ler do storage primeiro
         const storedUser = localStorage.getItem("usuario_externo");
         if (storedUser) {
              safeSet(() => setCurrentUser(JSON.parse(storedUser)));
@@ -334,7 +335,6 @@ export default function Copiloto() {
     try {
       await stopRecording();
 
-      // ✅ Marcar reunião como realizada
       if (selecionada?.id) {
         await supabase
           .from("reunioes")
@@ -342,7 +342,6 @@ export default function Copiloto() {
           .eq("id", selecionada.id);
       }
 
-      // ✅ PASSO CRÍTICO: ENFILEIRAR PROCESSAMENTO COM bucket/prefix
       if (selecionada?.id) {
         const bucket = current?.storageBucket || "gravacoes";
         const prefix = current?.storagePrefix || `reunioes/${selecionada.id}`;
@@ -355,7 +354,7 @@ export default function Copiloto() {
               job_type: "BACKFILL_COMPILE_ATA",
               status: "PENDENTE",
               attempts: 0,
-              next_run_at: nowIso(), // Usando hora local correta
+              next_run_at: nowIso(),
               storage_bucket: bucket,
               storage_prefix: prefix,
               result: {}, 
@@ -561,7 +560,7 @@ export default function Copiloto() {
 
       const responsavelNome = buildNomeSobrenome(respRow);
 
-      // ✅ IDENTIFICAÇÃO DO CRIADOR (Correção: lê direto do LocalStorage)
+      // ✅ IDENTIFICAÇÃO DO CRIADOR (via localStorage)
       let criadorFinalId = null;
       let criadorFinalNome = "Sistema";
 
@@ -584,9 +583,7 @@ export default function Copiloto() {
         tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
         tipo_reuniao: nomeTipoReuniao || selecionada.tipo_reuniao || "Geral",
 
-        // responsavel_id é TEXT no seu schema -> não usar UUID aqui
         responsavel_id: null,
-
         responsavel_aprovador_id: respRow?.id ?? null,
         responsavel_nome: responsavelNome,
 
@@ -594,10 +591,10 @@ export default function Copiloto() {
         criado_por_nome: criadorFinalNome,
 
         data_vencimento: vencimento,
-        data_abertura: todayISODate(), // Data Local
+        data_abertura: todayISODate(), 
 
-        created_at: nowIso(), // Hora local ISO (sem Z)
-        data_criacao: nowIso(), // Hora local ISO (sem Z)
+        created_at: nowIso(), 
+        data_criacao: nowIso(), 
 
         fotos_acao: [],
         fotos: [],
