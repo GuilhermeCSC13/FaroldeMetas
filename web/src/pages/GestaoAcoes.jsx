@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Layout from '../components/tatico/Layout';
 import { supabase } from '../supabaseClient';
-import { CheckCircle, ExternalLink, Search, Trash2 } from 'lucide-react'; // Adicionei Trash2
+import { CheckCircle, ExternalLink, Search, Trash2, User, Calendar, Clock, AlertCircle } from 'lucide-react';
 import ModalDetalhesAcao from '../components/tatico/ModalDetalhesAcao';
 
 const GestaoAcoes = () => {
@@ -14,7 +14,7 @@ const GestaoAcoes = () => {
   
   // Filtros
   const [filtroTexto, setFiltroTexto] = useState('');
-  const [filtroStatus, setFiltroStatus] = useState('Todas'); // Todas, Pendente, Vencida, Concluída, Excluída
+  const [filtroStatus, setFiltroStatus] = useState('Todas'); 
   const [filtroResponsavel, setFiltroResponsavel] = useState('Todos'); 
   const [filtroOrigem, setFiltroOrigem] = useState('Todas');
 
@@ -30,7 +30,6 @@ const GestaoAcoes = () => {
   const getStatusAcao = (acao) => {
     if (!acao) return 'Pendente';
 
-    // ✅ Prioridade para Excluída
     if (acao.status === 'Excluída') return 'Excluída';
     if (acao.status === 'Concluída') return 'Concluída';
 
@@ -44,6 +43,22 @@ const GestaoAcoes = () => {
     }
 
     return 'Pendente';
+  };
+
+  // --------- CALCULAR DIAS DE ATRASO ----------
+  const getDiasAtraso = (dataVencimento) => {
+    if (!dataVencimento) return 0;
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    
+    const venc = new Date(dataVencimento);
+    venc.setHours(0, 0, 0, 0);
+
+    if (venc >= hoje) return 0; // Não está atrasado
+
+    const diffTime = Math.abs(hoje - venc);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+    return diffDays;
   };
 
   // --------- BUSCA NO SUPABASE ----------
@@ -65,7 +80,6 @@ const GestaoAcoes = () => {
     if (data) {
       setAcoes(data);
 
-      // listas para filtros
       const resps = [...new Set(data.map(item => item.responsavel).filter(Boolean))].sort();
       const origens = [...new Set(data.map(item => item.tipo_reuniao).filter(Boolean))].sort();
       setListaResponsaveis(resps);
@@ -94,14 +108,11 @@ const GestaoAcoes = () => {
     await fetchAcoes(id);
   };
 
-  // callbacks usados pelo modal
   const handleAfterSave = (id) => {
-    // recarrega mantendo a ação selecionada
     fetchAcoes(id);
   };
 
   const handleAfterDelete = () => {
-    // recarrega lista e fecha modal/limpa seleção
     fetchAcoes();
     setAcaoSelecionada(null);
     setShowModalDetalhes(false);
@@ -134,7 +145,7 @@ const GestaoAcoes = () => {
     let pendente = 0;
     let vencida = 0;
     let concluida = 0;
-    let excluida = 0; // ✅ Contador para excluídas
+    let excluida = 0;
 
     acoesFiltradas.forEach(a => {
       const s = getStatusAcao(a);
@@ -155,7 +166,6 @@ const GestaoAcoes = () => {
   const fecharModalDetalhes = () => {
     setShowModalDetalhes(false);
     setAcaoSelecionada(null);
-    // ao sair do popup, atualiza a lista automaticamente
     fetchAcoes();
   };
 
@@ -194,7 +204,6 @@ const GestaoAcoes = () => {
               {cardsResumo.concluida}
             </div>
           </div>
-          {/* ✅ Card Excluída */}
           <div className="bg-gray-100 border border-gray-300 p-4 rounded-lg">
             <div className="text-xs text-gray-600 font-bold uppercase">Excluída</div>
             <div className="text-2xl font-bold text-gray-800">
@@ -206,7 +215,6 @@ const GestaoAcoes = () => {
         {/* Barra de Filtros */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           
-          {/* Busca Texto */}
           <div className="col-span-2">
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Buscar Descrição</label>
             <div className="relative">
@@ -221,7 +229,6 @@ const GestaoAcoes = () => {
             </div>
           </div>
 
-          {/* Filtro Status */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Status</label>
             <select 
@@ -233,11 +240,10 @@ const GestaoAcoes = () => {
               <option value="Pendente">Pendente</option>
               <option value="Vencida">Vencida</option>
               <option value="Concluída">Concluída</option>
-              <option value="Excluída">Excluída</option> {/* ✅ Opção Excluída */}
+              <option value="Excluída">Excluída</option>
             </select>
           </div>
 
-          {/* Filtro Responsável */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Responsável</label>
             <select 
@@ -252,7 +258,6 @@ const GestaoAcoes = () => {
             </select>
           </div>
 
-          {/* Filtro Origem */}
           <div>
             <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Origem (Reunião)</label>
             <select 
@@ -276,9 +281,10 @@ const GestaoAcoes = () => {
                 <tr>
                   <th className="p-4 w-24">Status</th>
                   <th className="p-4">Descrição</th>
-                  <th className="p-4 w-48">Responsável</th>
-                  <th className="p-4 w-48">Origem</th>
-                  <th className="p-4 w-32">Data</th>
+                  <th className="p-4 w-40">Responsável</th>
+                  <th className="p-4 w-32">Abertura</th> {/* Quem abriu + Quando */}
+                  <th className="p-4 w-32">Vencimento</th> {/* Data + Atraso */}
+                  <th className="p-4 w-32">Origem</th>
                   <th className="p-4 w-24 text-center">Evidência</th>
                   <th className="p-4 w-20 text-center">Ação</th>
                 </tr>
@@ -286,13 +292,13 @@ const GestaoAcoes = () => {
               <tbody className="divide-y divide-gray-100">
                 {loading ? (
                   <tr>
-                    <td colSpan="7" className="p-10 text-center text-gray-400">
+                    <td colSpan="8" className="p-10 text-center text-gray-400">
                       Carregando...
                     </td>
                   </tr>
                 ) : acoesFiltradas.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="p-10 text-center text-gray-400">
+                    <td colSpan="8" className="p-10 text-center text-gray-400">
                       Nenhuma ação encontrada.
                     </td>
                   </tr>
@@ -300,22 +306,22 @@ const GestaoAcoes = () => {
                   acoesFiltradas.map(acao => {
                     const statusCalculado = getStatusAcao(acao);
                     const isExcluida = statusCalculado === 'Excluída';
+                    const diasAtraso = getDiasAtraso(acao.data_vencimento);
 
                     const evidenciasAcao = Array.isArray(acao.fotos_acao)
                       ? acao.fotos_acao
-                      : Array.isArray(acao.fotos)
-                        ? acao.fotos
-                        : [];
+                      : Array.isArray(acao.fotos) ? acao.fotos : [];
                     const evidenciasConclusao = Array.isArray(acao.fotos_conclusao)
-                      ? acao.fotos_conclusao
-                      : [];
+                      ? acao.fotos_conclusao : [];
 
                     const temFotos = evidenciasAcao.length > 0 || evidenciasConclusao.length > 0;
                     const primeiraFoto = temFotos
                       ? (evidenciasConclusao[0] || evidenciasAcao[0])
                       : null;
 
-                    const dataBase = acao.data_criacao || acao.created_at;
+                    // Dados de abertura
+                    const quemAbriu = acao.criado_por_nome || 'Sistema';
+                    const quandoAbriu = acao.created_at || acao.data_criacao;
 
                     return (
                       <tr
@@ -329,10 +335,10 @@ const GestaoAcoes = () => {
                               statusCalculado === 'Concluída'
                                 ? 'bg-green-50 text-green-700 border-green-200'
                                 : statusCalculado === 'Vencida'
-                                  ? 'bg-red-50 text-red-700 border-red-200'
-                                  : statusCalculado === 'Excluída' // ✅ Estilo Excluída
-                                    ? 'bg-gray-100 text-gray-600 border-gray-300'
-                                    : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                ? 'bg-red-50 text-red-700 border-red-200'
+                                : statusCalculado === 'Excluída'
+                                ? 'bg-gray-100 text-gray-600 border-gray-300'
+                                : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                             }`}
                           >
                             {statusCalculado}
@@ -346,15 +352,46 @@ const GestaoAcoes = () => {
                             <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center text-xs font-bold text-gray-600 uppercase border border-gray-200">
                               {acao.responsavel?.charAt(0)}
                             </div>
-                            <span className="text-gray-600">{acao.responsavel}</span>
+                            <span className="text-gray-600 truncate max-w-[120px]" title={acao.responsavel}>{acao.responsavel}</span>
                           </div>
                         </td>
-                        <td className="p-4 text-gray-500 text-xs font-mono bg-gray-50/50 rounded px-2">
-                          {acao.tipo_reuniao || 'Geral'}
+                        
+                        {/* COLUNA: ABERTURA (QUEM + QUANDO) */}
+                        <td className="p-4">
+                            <div className="flex flex-col">
+                                <span className="text-xs font-bold text-gray-700 flex items-center gap-1">
+                                    <User size={10} className="text-blue-500" />
+                                    {quemAbriu.split(' ')[0]} {/* Primeiro nome */}
+                                </span>
+                                <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                                    <Calendar size={10} />
+                                    {quandoAbriu ? new Date(quandoAbriu).toLocaleDateString() : '-'}
+                                </span>
+                            </div>
                         </td>
-                        <td className="p-4 text-gray-500 text-xs">
-                          {dataBase ? new Date(dataBase).toLocaleDateString() : '-'}
+
+                        {/* COLUNA: VENCIMENTO + ATRASO */}
+                        <td className="p-4">
+                            <div className="flex flex-col">
+                                <span className="text-xs text-gray-600 font-medium flex items-center gap-1">
+                                    <Clock size={12} />
+                                    {acao.data_vencimento ? new Date(acao.data_vencimento).toLocaleDateString() : '-'}
+                                </span>
+                                {statusCalculado === 'Vencida' && diasAtraso > 0 && (
+                                    <span className="text-[10px] text-red-600 font-bold flex items-center gap-1 mt-0.5 bg-red-50 w-fit px-1 rounded">
+                                        <AlertCircle size={10} />
+                                        +{diasAtraso} dias
+                                    </span>
+                                )}
+                            </div>
                         </td>
+
+                        <td className="p-4 text-gray-500 text-xs font-mono">
+                          <span className="bg-gray-100 px-2 py-1 rounded border border-gray-200">
+                             {acao.tipo_reuniao || 'Geral'}
+                          </span>
+                        </td>
+                        
                         <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                           {primeiraFoto ? (
                             <a
