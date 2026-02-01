@@ -1,15 +1,11 @@
-// src/App.jsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import RequireFarolAuth from "./routes/RequireFarolAuth";
-
 import { RecordingProvider } from "./context/RecordingContext";
 
-// ✅ Landing público
+// ✅ Login Obrigatório (Limpa sessão antiga)
 import LandingFarol from "./pages/LandingFarol";
 
-// ✅ NOVA PAGINA DE LIMPEZA (Crie este arquivo se ainda não criou)
-import ReceberAcesso from "./pages/ReceberAcesso";
-
+// Páginas do Sistema
 import Inicio from "./pages/Inicio";
 import Operacao from "./pages/Operacao";
 import Moov from "./pages/Moov";
@@ -30,14 +26,19 @@ export default function App() {
     <RecordingProvider>
       <BrowserRouter>
         <Routes>
-          {/* ✅ ROTA ESPECIAL DE LIMPEZA E SINCRONIA */}
-          {/* O Inove deve redirecionar para cá: https://farol.../receber-acesso?userData=... */}
-          <Route path="/receber-acesso" element={<ReceberAcesso />} />
-
-          {/* ✅ PÚBLICO: Landing padrão */}
+          {/* ✅ ROTA PÚBLICA (Login) 
+             Esta é a única porta de entrada. Ela limpa o cache.
+          */}
           <Route path="/" element={<LandingFarol />} />
 
-          {/* 🔐 PROTEGIDO: Todo o sistema do Farol */}
+          {/* 🔐 ROTA DE RECEBIMENTO (Legado/Segurança)
+             Caso o Inove ainda redirecione para cá, mandamos para o Login (/)
+          */}
+          <Route path="/receber-acesso" element={<Navigate to="/" replace />} />
+
+          {/* 🔐 ROTAS PROTEGIDAS 
+             Só entra aqui se tiver passado pelo Login do LandingFarol
+          */}
           <Route element={<RequireFarolAuth />}>
             <Route path="/inicio" element={<Inicio />} />
 
@@ -59,10 +60,13 @@ export default function App() {
             <Route path="/copiloto" element={<Copiloto />} />
             <Route path="/configuracoes" element={<Configuracoes />} />
 
+            {/* Redirecionamentos de conveniência */}
             <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
           </Route>
 
-          {/* ✅ Qualquer rota inexistente vai para Landing */}
+          {/* 🚫 QUALQUER OUTRA ROTA 
+             Se tentar acessar uma página que não existe ou sem permissão, vai pro Login
+          */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
