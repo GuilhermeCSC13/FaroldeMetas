@@ -1,42 +1,45 @@
 // src/routes/RequireFarolAuth.jsx
 import { useEffect } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { supabase } from "../supabaseClient";
 
-const FAROL_URL = "https://faroldemetas.onrender.com";
-const INOVE_LOGIN = "https://inovequatai.onrender.com/login";
-
-function hasFromInove() {
+function hasStoredExternalUser() {
   try {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("from") === "inove";
+    const v = localStorage.getItem("usuario_externo");
+    if (!v) return false;
+    JSON.parse(v);
+    return true;
   } catch {
     return false;
   }
 }
 
-function hasSessionFlag() {
-  return sessionStorage.getItem("farol_ok") === "1";
-}
-
 export default function RequireFarolAuth() {
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    if (hasFromInove()) {
-      sessionStorage.setItem("farol_ok", "1");
+    const run = async () => {
+      // ✅ 1) usuário externo já salvo => libera
+      if (hasStoredExternalUser()) return;
+
+      // ✅ 2) sessão supabase (se existir) => libera
       try {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("from");
-        window.history.replaceState({}, "", url.pathname + url.search);
+        const { data } = await supabase.auth.getSession();
+        if (data?.session) return;
       } catch {}
-      return;
-    }
 
-    if (hasSessionFlag()) return;
+      // ❌ aqui NÃO manda pro INOVE
+      // ✅ manda pro Landing, preservando intenção
+      const current = `${location.pathname}${location.search || ""}`;
+      const sp = new URLSearchParams();
+      if (current && current !== "/") sp.set("next", current);
 
-    const returnTo = `${FAROL_URL}${location.pathname}${location.search || ""}`;
-    const redirect = encodeURIComponent(returnTo);
-    window.location.replace(`${INOVE_LOGIN}?redirect=${redirect}`);
+      navigate(`/?${sp.toString()}`, { replace: true });
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, location.search]);
 
   return <Outlet />;
