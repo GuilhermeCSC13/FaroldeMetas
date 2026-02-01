@@ -1,7 +1,7 @@
 // src/pages/CentralAtas.jsx
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/tatico/Layout";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseInove } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 import {
@@ -25,7 +25,8 @@ import {
   Pause,
   Volume2,
   VolumeX,
-  StickyNote // Adicionei ícone de nota
+  StickyNote,
+  ShieldAlert // ✅ Ícone para o modal de segurança
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -154,7 +155,6 @@ export default function CentralAtas() {
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
   
-  // ✅ MUDANÇA: Agora usamos 'ataManual' em vez de 'observacoes'
   const [ataManual, setAtaManual] = useState("");
 
   const [isEditing, setIsEditing] = useState(false);
@@ -163,6 +163,12 @@ export default function CentralAtas() {
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
+
+  // ✅ Estados para Exclusão Segura
+  const [showDeleteAuth, setShowDeleteAuth] = useState(false);
+  const [delLogin, setDelLogin] = useState("");
+  const [delSenha, setDelSenha] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchAtas();
@@ -173,9 +179,13 @@ export default function CentralAtas() {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
       setEditedPauta(selectedAta.pauta || "");
-      // ✅ Carrega o campo correto (ata_manual)
       setAtaManual(selectedAta.ata_manual || "");
       setIsEditing(false);
+
+      // Reset delete modal
+      setShowDeleteAuth(false);
+      setDelLogin("");
+      setDelSenha("");
 
       hydrateMediaUrls(selectedAta);
       checkAutoRefresh(selectedAta);
@@ -239,10 +249,8 @@ export default function CentralAtas() {
              hydrateMediaUrls(data);
              carregarDetalhes(data);
              if (data.pauta) setEditedPauta(data.pauta);
-             
-             // ✅ Atualiza Ata Manual se vier do banco (Sync)
              if (!isEditing) {
-                setAtaManual(data.ata_manual || "");
+               setAtaManual(data.ata_manual || "");
              }
         }
       }
@@ -344,7 +352,6 @@ export default function CentralAtas() {
   };
 
   const handleSaveAta = async () => {
-    // ✅ Salva na coluna 'ata_manual' (igual ao Copiloto)
     const { error } = await supabase
         .from("reunioes")
         .update({ 
@@ -355,7 +362,6 @@ export default function CentralAtas() {
 
     if (!error) {
       setIsEditing(false);
-      // Atualiza estado local
       setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, ata_manual: ataManual }));
       setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: editedPauta, ata_manual: ataManual } : a)));
       alert("Ata salva com sucesso!");
@@ -364,7 +370,6 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ IA GEMINI DINÂMICA + AUTO-SAVE
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -443,11 +448,52 @@ export default function CentralAtas() {
     }
   };
 
-  const handleDeleteAta = async () => {
-    const senha = window.prompt("Senha para excluir:");
-    if (senha === "excluir") {
-      await supabase.from("reunioes").delete().eq("id", selectedAta.id);
-      window.location.reload();
+  // ✅ FUNÇÃO DE ABERTURA DO MODAL DE EXCLUSÃO
+  const handleDeleteClick = () => {
+    setShowDeleteAuth(true);
+  };
+
+  // ✅ FUNÇÃO DE VALIDAÇÃO E EXCLUSÃO
+  const confirmarExclusao = async () => {
+    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
+    setDeleting(true);
+
+    try {
+      // 1. Validar Usuário na tabela usuarios_aprovadores
+      const { data: usuario, error: errAuth } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, login, senha, nivel, ativo")
+        .eq("login", delLogin)
+        .eq("senha", delSenha)
+        .eq("ativo", true)
+        .maybeSingle();
+
+      if (errAuth) throw errAuth;
+
+      if (!usuario) {
+        alert("Credenciais inválidas.");
+        setDeleting(false);
+        return;
+      }
+
+      // 2. Validar se é ADMINISTRADOR
+      if (usuario.nivel !== "Administrador") {
+        alert("Apenas Administradores podem excluir Atas.");
+        setDeleting(false);
+        return;
+      }
+
+      // 3. Excluir a reunião
+      const { error: errDel } = await supabase.from("reunioes").delete().eq("id", selectedAta.id);
+      if (errDel) throw errDel;
+
+      alert("Ata excluída com sucesso.");
+      window.location.reload(); // Recarrega para limpar o estado
+
+    } catch (error) {
+      console.error("Erro exclusão:", error);
+      alert("Erro ao excluir: " + error.message);
+      setDeleting(false);
     }
   };
 
@@ -462,7 +508,6 @@ export default function CentralAtas() {
   }, [atas, busca]);
 
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
-  const gravacaoStatusNorm = String(selectedAta?.gravacao_status || "").toUpperCase();
   
   const badgeClass = (tone) =>
     ({
@@ -474,7 +519,61 @@ export default function CentralAtas() {
 
   return (
     <Layout>
-      <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
+      <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
+        
+        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+        {showDeleteAuth && (
+          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                <ShieldAlert size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Área Restrita</h3>
+              <p className="text-sm text-slate-500 mb-6">
+                Exclusão permitida apenas para <b>Administradores</b>.
+              </p>
+
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delLogin}
+                    onChange={e => setDelLogin(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
+                  <input 
+                    type="password" 
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delSenha}
+                    onChange={e => setDelSenha(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={() => setShowDeleteAuth(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmarExclusao}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* SIDEBAR */}
         <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-10 shadow-sm">
           <div className="p-5 border-b border-slate-100">
@@ -571,8 +670,9 @@ export default function CentralAtas() {
                         >
                           <Edit3 size={20} />
                         </button>
+                        {/* ✅ Botão EXCLUIR atualizado */}
                         <button
-                          onClick={handleDeleteAta}
+                          onClick={handleDeleteClick}
                           className="p-2 text-slate-400 hover:text-red-600 rounded-lg bg-slate-50"
                           title="Excluir"
                         >
