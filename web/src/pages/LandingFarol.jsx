@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
+// ✅ IMPORTAÇÃO CORRETA: Trazendo os dois clientes
+import { supabase, supabaseInove } from "../supabaseClient"; 
 import { LogIn, Lock, User, Loader2, AlertTriangle, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -12,23 +13,22 @@ export default function LandingFarol() {
   const [inputLogin, setInputLogin] = useState("");
   const [senha, setSenha] = useState("");
 
-  // 1. LIMPEZA TOTAL AO CARREGAR A PÁGINA
+  // 1. LIMPEZA DE SESSÃO
   useEffect(() => {
-    // Remove qualquer usuário "preso" no cache
     localStorage.removeItem("usuario_externo");
     localStorage.removeItem("farol_ia_date");
     localStorage.removeItem("farol_ia_text");
-    localStorage.removeItem("sb-access-token"); // Limpa tokens antigos se houver
+    localStorage.removeItem("sb-access-token");
     sessionStorage.clear();
     
-    // Força logout do Supabase para garantir sessão limpa
+    // Garante logout local
     const cleanSession = async () => {
         try { await supabase.auth.signOut(); } catch {}
     };
     cleanSession();
   }, []);
 
-  // 2. FUNÇÃO DE LOGIN (Consulta direta ao banco)
+  // 2. LOGIN (CONSULTANDO O BANCO DO INOVE)
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMsg("");
@@ -44,9 +44,11 @@ export default function LandingFarol() {
     }
 
     try {
-      // Busca usuário na tabela de aprovadores (Login ou Email)
-      const { data, error } = await supabase
-        .from("usuarios_aprovadores")
+      // ✅ O PULO DO GATO:
+      // Usamos 'supabaseInove' para buscar na tabela 'usuarios_aprovadores'
+      // que realmente existe no outro banco.
+      const { data, error } = await supabaseInove
+        .from("usuarios_aprovadores") 
         .select("*")
         .or(`login.eq.${termo},email.eq.${termo}`) 
         .eq("senha", pass)
@@ -54,17 +56,17 @@ export default function LandingFarol() {
         .maybeSingle();
 
       if (error) {
-        console.error(error);
-        throw new Error("Erro técnico ao conectar.");
+        console.error("Erro na conexão Inove:", error);
+        throw new Error("Erro ao validar credenciais no Inove.");
       }
 
       if (!data) {
-        setErrorMsg("Credenciais inválidas.");
+        setErrorMsg("Usuário ou senha incorretos.");
         setLoading(false);
         return;
       }
 
-      // 3. SUCESSO: CRIA A NOVA SESSÃO LOCAL
+      // 3. SUCESSO
       const usuarioOficial = {
         id: data.id,
         nome: data.nome || data.login,
@@ -72,10 +74,10 @@ export default function LandingFarol() {
         nivel: data.nivel,
         login: data.login,
         setor: data.setor || "N/A",
-        origem: "Login Manual Farol"
+        origem: "Login Manual Farol (Via Inove)"
       };
 
-      // Grava quem REALMENTE acabou de logar
+      // Grava a sessão localmente no Farol
       localStorage.setItem("usuario_externo", JSON.stringify(usuarioOficial));
       
       // Entra no sistema
@@ -90,7 +92,6 @@ export default function LandingFarol() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100 font-sans p-4 relative overflow-hidden">
-      {/* Background Decorativo */}
       <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-blue-900"></div>
       <div className="absolute -bottom-20 -right-20 w-64 h-64 bg-blue-200 rounded-full blur-3xl opacity-50"></div>
       
@@ -101,7 +102,7 @@ export default function LandingFarol() {
             <ShieldCheck size={32} />
           </div>
           <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Farol Tático</h1>
-          <p className="text-slate-500 text-sm mt-1">Sincronização de Segurança</p>
+          <p className="text-slate-500 text-sm mt-1">Acesso Integrado (Inove)</p>
         </div>
 
         {errorMsg && (
@@ -140,13 +141,13 @@ export default function LandingFarol() {
             disabled={loading}
             className="w-full bg-blue-900 hover:bg-blue-800 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2 mt-4 active:scale-[0.98]"
           >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : <><LogIn size={20} /> Confirmar Identidade</>}
+            {loading ? <Loader2 className="animate-spin" size={20} /> : <><LogIn size={20} /> Validar Acesso</>}
           </button>
         </form>
 
         <div className="mt-8 pt-6 border-t border-slate-100 text-center">
           <p className="text-xs text-slate-400 font-mono">
-            SISTEMA INTEGRADO GRUPO CSC • V2.2
+            SISTEMA INTEGRADO • v2.4
           </p>
         </div>
       </div>
