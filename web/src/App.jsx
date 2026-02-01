@@ -4,8 +4,11 @@ import RequireFarolAuth from "./routes/RequireFarolAuth";
 
 import { RecordingProvider } from "./context/RecordingContext";
 
-// ✅ Landing público (fora do guard)
+// ✅ Landing público
 import LandingFarol from "./pages/LandingFarol";
+
+// ✅ NOVA PAGINA DE LIMPEZA (Crie este arquivo se ainda não criou)
+import ReceberAcesso from "./pages/ReceberAcesso";
 
 import Inicio from "./pages/Inicio";
 import Operacao from "./pages/Operacao";
@@ -27,7 +30,11 @@ export default function App() {
     <RecordingProvider>
       <BrowserRouter>
         <Routes>
-          {/* ✅ PÚBLICO: Landing que recebe userData, grava usuario_externo e destrava o acesso */}
+          {/* ✅ ROTA ESPECIAL DE LIMPEZA E SINCRONIA */}
+          {/* O Inove deve redirecionar para cá: https://farol.../receber-acesso?userData=... */}
+          <Route path="/receber-acesso" element={<ReceberAcesso />} />
+
+          {/* ✅ PÚBLICO: Landing padrão */}
           <Route path="/" element={<LandingFarol />} />
 
           {/* 🔐 PROTEGIDO: Todo o sistema do Farol */}
@@ -55,7 +62,7 @@ export default function App() {
             <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
           </Route>
 
-          {/* ✅ Qualquer rota inexistente vai para Landing (não para /inicio) */}
+          {/* ✅ Qualquer rota inexistente vai para Landing */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
