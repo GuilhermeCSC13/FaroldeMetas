@@ -1,10 +1,11 @@
+// src/pages/LandingFarol.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { LogIn, CheckCircle, AlertTriangle } from "lucide-react";
+import { LogIn, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const FAROL_HOME = "/inicio";
-const INOVE_LOGIN = "https://inovequatai.onrender.com/login";
+const INOVE_LOGIN = "https://inovequatai.onrender.com/login"; // Confirme se a URL está correta
 const CURRENT_URL = window.location.origin;
 
 const LOOP_KEY = "redirect_count";
@@ -12,7 +13,7 @@ const MAX_REDIRECTS = 1;
 
 export default function LandingFarol() {
   const [status, setStatus] = useState("idle");
-  const [msg, setMsg] = useState("Verificando credenciais...");
+  const [msg, setMsg] = useState("Conectando ao satélite...");
   const [userDetected, setUserDetected] = useState(null);
   const [nextPath, setNextPath] = useState(FAROL_HOME);
 
@@ -25,71 +26,99 @@ export default function LandingFarol() {
       const userDataParam = params.get("userData");
       const next = params.get("next");
 
-      if (next && typeof next === "string") {
-        setNextPath(next.startsWith("/") ? next : FAROL_HOME);
+      // Define destino pós-login
+      if (next && typeof next === "string" && next.startsWith("/")) {
+        setNextPath(next);
       } else {
         setNextPath(FAROL_HOME);
       }
 
-      // ✅ 1) PRIORIDADE MÁXIMA: se veio userData do INOVE, SEMPRE sobrescreve cache
+      // -----------------------------------------------------------------------
+      // 1) PRIORIDADE ABSOLUTA: DADOS DO INOVE NA URL
+      // Se vier "userData", ignora quem estava logado antes (Guilherme) e usa o novo (Josue)
+      // -----------------------------------------------------------------------
       if (userDataParam) {
         try {
-          const userObj = JSON.parse(decodeURIComponent(userDataParam));
+          setMsg("Processando novas credenciais...");
+          
+          // Decodifica
+          const jsonString = decodeURIComponent(userDataParam);
+          const userObj = JSON.parse(jsonString);
+
+          // 🛑 LIMPEZA PROFUNDA: Remove o usuário antigo para não haver confusão
+          localStorage.removeItem("usuario_externo");
+          
+          // Grava o novo usuário (Josue)
           localStorage.setItem("usuario_externo", JSON.stringify(userObj));
 
-          setUserDetected(userObj.nome || "Usuário");
+          // Atualiza estado visual
+          setUserDetected(userObj.nome || userObj.login || "Novo Usuário");
           setStatus("success");
-          setMsg("Acesso autorizado!");
+          setMsg("Credenciais atualizadas com sucesso!");
 
-          window.history.replaceState({}, "", window.location.pathname);
+          // Limpa a URL para não ficar expondo o JSON
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // Reseta contadores de loop
           sessionStorage.removeItem(LOOP_KEY);
-          return;
+          return; // Encerra aqui, garantindo que o cache antigo não seja lido abaixo
+
         } catch (e) {
-          console.error(e);
+          console.error("Erro ao processar userData:", e);
           setStatus("error");
-          setMsg("Dados de acesso inválidos.");
+          setMsg("O pacote de credenciais veio corrompido.");
           return;
         }
       }
 
-      // ✅ 2) se já tem usuário externo salvo, usa
+      // -----------------------------------------------------------------------
+      // 2) SE NÃO VEIO PELA URL, CHECA SE JÁ TEM ALGUÉM NO CACHE
+      // -----------------------------------------------------------------------
       const storedUserRaw = localStorage.getItem("usuario_externo");
       if (storedUserRaw) {
         try {
           const u = JSON.parse(storedUserRaw);
           setUserDetected(u?.nome || "Usuário");
+          setStatus("success");
+          setMsg("Sessão ativa recuperada.");
+          return;
         } catch {
-          setUserDetected("Usuário");
+          // Se o JSON estiver quebrado, limpa
+          localStorage.removeItem("usuario_externo");
         }
-        setStatus("success");
-        setMsg("Sessão ativa encontrada.");
-        return;
       }
 
-      // ✅ 3) se já tem sessão supabase (auth nativo), valida
+      // -----------------------------------------------------------------------
+      // 3) CHECA SESSÃO NATIVA DO SUPABASE
+      // -----------------------------------------------------------------------
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         setStatus("success");
-        setMsg("Sessão ativa encontrada.");
+        setMsg("Sessão Supabase validada.");
         sessionStorage.removeItem(LOOP_KEY);
         return;
       }
 
-      // ✅ 4) veio do inove mas sem userData => erro (evita ping-pong)
+      // -----------------------------------------------------------------------
+      // 4) SE CHEGOU AQUI: NÃO TEM USUÁRIO NEM NA URL, NEM NO CACHE
+      // -----------------------------------------------------------------------
+      
+      // Evita loop infinito se veio do Inove mas falhou em trazer dados
       if (from === "inove") {
         setStatus("error");
-        setMsg("Falha na autenticação cruzada (sem userData). Faça login novamente pelo INOVE.");
+        setMsg("Falha na autenticação. O Inove não enviou as credenciais.");
         return;
       }
 
-      // ✅ 5) redirect 1 vez
+      // Contador de segurança contra redirecionamento infinito
       const c = Number(sessionStorage.getItem(LOOP_KEY) || 0);
       if (c >= MAX_REDIRECTS) {
         setStatus("error");
-        setMsg("Loop detectado. Clique para ir ao Login do INOVE.");
+        setMsg("Não foi possível validar seu acesso. Tente entrar pelo Inove novamente.");
         return;
       }
 
+      // Redireciona para o Inove buscar login
       sessionStorage.setItem(LOOP_KEY, String(c + 1));
       setStatus("redirect");
       setMsg("Redirecionando para login corporativo...");
@@ -98,79 +127,91 @@ export default function LandingFarol() {
         `${CURRENT_URL}/?from=inove${next ? `&next=${encodeURIComponent(next)}` : ""}`
       );
 
-      window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
+      // Delay visual curto antes de ir
+      setTimeout(() => {
+        window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
+      }, 800);
     };
 
     processarLogin();
-  }, []);
+  }, [navigate]);
 
   const handleEntrar = () => {
-    navigate(nextPath || FAROL_HOME, { replace: true });
+    navigate(nextPath, { replace: true });
   };
 
   const handleVoltarLogin = () => {
-    // ✅ opcional: limpar usuário para trocar conta
-    localStorage.removeItem("usuario_externo");
-
-    const params = new URLSearchParams(window.location.search);
-    const next = params.get("next");
-
-    const returnUrl = encodeURIComponent(
-      `${CURRENT_URL}/?from=inove${next ? `&next=${encodeURIComponent(next)}` : ""}`
-    );
-
+    localStorage.removeItem("usuario_externo"); // Garante limpeza
+    const returnUrl = encodeURIComponent(`${CURRENT_URL}/?from=inove`);
     window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 font-sans p-4">
-      <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm flex flex-col items-center gap-6 max-w-sm w-full text-center">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 font-sans p-6">
+      <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col items-center gap-6 max-w-sm w-full text-center relative overflow-hidden">
+        
+        {/* Barra de Status Topo */}
+        <div className={`absolute top-0 left-0 w-full h-1.5 ${
+            status === 'success' ? 'bg-green-500' : 
+            status === 'error' ? 'bg-red-500' : 
+            'bg-blue-500 animate-pulse'
+        }`} />
+
         {status === "idle" || status === "redirect" ? (
           <>
-            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-slate-500 font-medium">{msg}</p>
+            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-slate-500 font-medium animate-pulse">{msg}</p>
           </>
         ) : status === "success" ? (
           <>
-            <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-2">
-              <CheckCircle size={32} />
+            <div className="w-20 h-20 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-2 shadow-sm">
+              <CheckCircle size={40} strokeWidth={2.5} />
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-800">
-                Bem-vindo, {userDetected || "Usuário"}!
+            <div className="space-y-1">
+              <h2 className="text-2xl font-bold text-slate-800">
+                Olá, {userDetected}!
               </h2>
-              <p className="text-slate-500 text-sm mt-1">Suas credenciais foram validadas.</p>
+              <p className="text-slate-500 text-sm">{msg}</p>
             </div>
 
             <button
               onClick={handleEntrar}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2"
+              className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
             >
-              Acessar Sistema <LogIn size={18} />
+              Acessar Painel <LogIn size={20} />
+            </button>
+            
+            <button 
+              onClick={handleVoltarLogin}
+              className="text-xs text-slate-400 hover:text-blue-600 underline"
+            >
+              Não é {userDetected}? Trocar conta
             </button>
           </>
         ) : (
           <>
-            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-2">
-              <AlertTriangle size={32} />
+            <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-2 shadow-sm">
+              <AlertTriangle size={40} strokeWidth={2.5} />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-slate-800">Erro de Acesso</h2>
-              <p className="text-slate-500 text-sm mt-1">{msg}</p>
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold text-slate-800">Acesso Negado</h2>
+              <p className="text-slate-500 text-sm px-2">{msg}</p>
             </div>
 
             <button
               type="button"
               onClick={handleVoltarLogin}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all"
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2"
             >
-              Ir para Login do INOVE
+              <RefreshCw size={18} /> Tentar Login Novamente
             </button>
           </>
         )}
       </div>
 
-      <p className="mt-8 text-xs text-slate-400">Farol Tático v1.2</p>
+      <p className="mt-8 text-xs text-slate-400 font-mono">
+        FAROL TÁTICO v2.0 • INTEGRAÇÃO INOVE
+      </p>
     </div>
   );
 }
