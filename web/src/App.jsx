@@ -2,7 +2,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import RequireFarolAuth from "./routes/RequireFarolAuth";
 
-import { RecordingProvider } from "./context/RecordingContext"; // ✅ NOVO
+import { RecordingProvider } from "./context/RecordingContext";
+
+// ✅ Landing público (fora do guard)
+import LandingFarol from "./pages/LandingFarol";
 
 import Inicio from "./pages/Inicio";
 import Operacao from "./pages/Operacao";
@@ -24,14 +27,15 @@ export default function App() {
     <RecordingProvider>
       <BrowserRouter>
         <Routes>
+          {/* ✅ PÚBLICO: Landing que recebe userData, grava usuario_externo e destrava o acesso */}
+          <Route path="/" element={<LandingFarol />} />
+
+          {/* 🔐 PROTEGIDO: Todo o sistema do Farol */}
           <Route element={<RequireFarolAuth />}>
             <Route path="/inicio" element={<Inicio />} />
 
             <Route path="/planejamento/operacao" element={<Operacao />} />
-            <Route
-              path="/planejamento/administrativo"
-              element={<Administrativo />}
-            />
+            <Route path="/planejamento/administrativo" element={<Administrativo />} />
             <Route path="/moov" element={<Moov />} />
             <Route path="/manutencao" element={<Manutencao />} />
 
@@ -42,22 +46,17 @@ export default function App() {
 
             <Route path="/projetos" element={<Projetos />} />
 
-            <Route
-              path="/reunioes-calendario"
-              element={<ReunioesCalendario />}
-            />
+            <Route path="/reunioes-calendario" element={<ReunioesCalendario />} />
             <Route path="/reunioes/:id" element={<DetalheReuniao />} />
 
             <Route path="/copiloto" element={<Copiloto />} />
             <Route path="/configuracoes" element={<Configuracoes />} />
 
-            <Route
-              path="/planejamento-tatico"
-              element={<Navigate to="/inicio" replace />}
-            />
-            <Route path="/" element={<Navigate to="/inicio" replace />} />
-            <Route path="*" element={<Navigate to="/inicio" replace />} />
+            <Route path="/planejamento-tatico" element={<Navigate to="/inicio" replace />} />
           </Route>
+
+          {/* ✅ Qualquer rota inexistente vai para Landing (não para /inicio) */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </RecordingProvider>
