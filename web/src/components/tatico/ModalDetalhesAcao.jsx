@@ -52,7 +52,7 @@ function fileKindFromUrl(url) {
 }
 
 /* =========================
-   Component
+   Component Principal
 ========================= */
 const ModalDetalhesAcao = ({
   aberto,
@@ -69,7 +69,6 @@ const ModalDetalhesAcao = ({
   // ESTADOS LOCAIS
   // ---------------------------------------------------------------------------
   const [statusLocal, setStatusLocal] = useState(status || "Aberta");
-  const [usuarioLogado, setUsuarioLogado] = useState(null); // ✅ Estado para o usuário logado
 
   const [obsAcao, setObsAcao] = useState("");
   const [resultado, setResultado] = useState("");
@@ -101,14 +100,6 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!acao || !aberto) return;
-
-    // ✅ Carrega o usuário logado do cache
-    try {
-        const stored = localStorage.getItem("usuario_externo");
-        if (stored) setUsuarioLogado(JSON.parse(stored));
-    } catch (e) {
-        console.error("Erro ao ler usuario_externo", e);
-    }
 
     setStatusLocal(status || acao.status || "Aberta");
     setObsAcao(acao.observacao || "");
@@ -158,6 +149,7 @@ const ModalDetalhesAcao = ({
 
         setListaResponsaveis(data || []);
 
+        // Tenta casar o nome texto com um ID da lista se não tiver ID salvo
         if (!isValidUUID(acao.responsavel_id) && respTexto && (data || []).length) {
           const respNorm = String(respTexto).trim().toLowerCase();
           const found = (data || []).find((u) => {
@@ -180,7 +172,7 @@ const ModalDetalhesAcao = ({
   }, [acao, aberto, status]);
 
   // ---------------------------------------------------------------------------
-  // LÓGICA DE EXIBIÇÃO: CRIADO POR (Melhorada)
+  // LÓGICA DE EXIBIÇÃO: CRIADO POR
   // ---------------------------------------------------------------------------
   const nomeCriador = useMemo(() => {
     // 1. Se já veio no objeto da ação, usa
@@ -253,7 +245,7 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // SALVAR (Com injeção automática de quem fechou)
+  // SALVAR (COM CORREÇÃO DE USUÁRIO LOGADO)
   // ---------------------------------------------------------------------------
   const handleSalvar = async (overrideStatus = null) => {
     if (!acao) return;
@@ -270,10 +262,11 @@ const ModalDetalhesAcao = ({
           ? await uploadArquivos(novosArquivosConclusao)
           : [];
 
-      const user = (listaResponsaveis || []).find(
+      // Dados do responsável selecionado
+      const userResponsavel = (listaResponsaveis || []).find(
         (u) => String(u.id) === String(responsavelId)
       );
-      const nomeResp = responsavelId ? buildNomeSobrenome(user) : String(responsavelTexto || "").trim();
+      const nomeResp = responsavelId ? buildNomeSobrenome(userResponsavel) : String(responsavelTexto || "").trim();
       const safeResponsavelId = isValidUUID(responsavelId) ? responsavelId : null;
 
       const payload = {
@@ -287,14 +280,29 @@ const ModalDetalhesAcao = ({
         data_vencimento: vencimento || null,
       };
 
-      // ✅ SE ESTIVER CONCLUINDO, GRAVA QUEM FEZ ISSO
+      // ✅ SE ESTIVER CONCLUINDO:
       if (statusDestino === "Concluída") {
           payload.status = "Concluída";
-          // Só grava se ainda não tiver data, para preservar histórico se editar depois
+          
+          // Só grava se ainda não tiver data (para não sobrescrever histórico)
           if (!acao.data_fechamento) { 
               payload.data_fechamento = new Date().toISOString();
-              // Usa o usuário logado que pegamos no localStorage
-              payload.fechado_por_nome = usuarioLogado?.nome || usuarioLogado?.login || "Usuário do Sistema";
+              
+              // 🔴 CORREÇÃO CRÍTICA: Lê o usuário diretamente do localStorage agora
+              // Isso garante que pegamos quem acabou de logar, sem depender de states antigos
+              let nomeFinalizador = "Usuário do Sistema";
+              const rawUser = localStorage.getItem("usuario_externo");
+              
+              if (rawUser) {
+                  try {
+                      const u = JSON.parse(rawUser);
+                      nomeFinalizador = u.nome || u.login || u.email || "Usuário sem nome";
+                  } catch (e) {
+                      console.error("Erro ao ler dados do usuário", e);
+                  }
+              }
+              
+              payload.fechado_por_nome = nomeFinalizador;
           }
       }
 
@@ -330,6 +338,7 @@ const ModalDetalhesAcao = ({
     setDeleting(true);
 
     try {
+      // 1. Validar Usuário no banco do INOVE
       const { data: usuario, error: errAuth } = await supabaseInove
         .from("usuarios_aprovadores")
         .select("id, login, senha, nome_completo, ativo")
@@ -346,12 +355,12 @@ const ModalDetalhesAcao = ({
         return;
       }
 
-      // ✅ Update: Grava quem excluiu se tiver coluna para isso (opcional)
+      // 2. Realizar Soft Delete
       const { error: errUpdate } = await supabase
         .from("acoes")
         .update({
             status: "Excluída",
-            // excluido_por: usuario.nome_completo // Descomente se tiver a coluna
+            // excluido_por: usuario.nome_completo // Opcional
         })
         .eq("id", acao.id);
 
@@ -383,7 +392,7 @@ const ModalDetalhesAcao = ({
         .update({ 
             status: "Aberta", 
             data_conclusao: null,
-            data_fechamento: null, // Limpa a data também
+            data_fechamento: null, 
             fechado_por_nome: null,
             fechado_por_aprovador_id: null
         })
@@ -542,7 +551,7 @@ const ModalDetalhesAcao = ({
                    </span>
                 </div>
 
-                {/* Criação - AGORA USA O NOME CALCULADO */}
+                {/* Criação */}
                 <div className="flex flex-col">
                    <span className="text-[11px] font-bold text-gray-400 uppercase mb-1">Criação</span>
                    <span className="text-sm text-gray-700 flex items-center gap-1">
@@ -802,7 +811,7 @@ const ModalDetalhesAcao = ({
 export default ModalDetalhesAcao;
 
 /* =========================
-   Miniaturas
+   Miniaturas (Subcomponents)
 ========================= */
 function MiniaturaArquivo({ preview }) {
   const { kind, url, name } = preview;
