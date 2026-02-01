@@ -15,11 +15,23 @@ export default function LandingFarol() {
   const [msg, setMsg] = useState("Verificando credenciais...");
   const [userDetected, setUserDetected] = useState(null);
 
+  // ✅ NOVO: rota de retorno após autenticação (vinda do guard)
+  const [nextPath, setNextPath] = useState(FAROL_HOME);
+
   useEffect(() => {
     const processarLogin = async () => {
       const params = new URLSearchParams(window.location.search);
       const from = params.get("from");
       const userDataParam = params.get("userData");
+
+      // ✅ NOVO: captura o "next"
+      const next = params.get("next");
+      if (next && typeof next === "string") {
+        // proteção simples contra valores estranhos
+        setNextPath(next.startsWith("/") ? next : FAROL_HOME);
+      } else {
+        setNextPath(FAROL_HOME);
+      }
 
       // 1) Se já tem usuário externo salvo, considera autenticado
       const storedUserRaw = localStorage.getItem("usuario_externo");
@@ -45,7 +57,7 @@ export default function LandingFarol() {
           setStatus("success");
           setMsg("Acesso autorizado!");
 
-          // ✅ limpa só querystring
+          // ✅ limpa só querystring (mantém pathname)
           window.history.replaceState({}, "", window.location.pathname);
 
           // ✅ reset contador
@@ -75,7 +87,9 @@ export default function LandingFarol() {
       // 4) Se veio do INOVE mas SEM userData -> NÃO faz redirect automático (evita ping-pong)
       if (from === "inove") {
         setStatus("error");
-        setMsg("Falha na autenticação cruzada (sem userData). Faça login novamente pelo INOVE.");
+        setMsg(
+          "Falha na autenticação cruzada (sem userData). Faça login novamente pelo INOVE."
+        );
         return;
       }
 
@@ -91,7 +105,11 @@ export default function LandingFarol() {
       setStatus("redirect");
       setMsg("Redirecionando para login corporativo...");
 
-      const returnUrl = encodeURIComponent(`${CURRENT_URL}/?from=inove`);
+      // ✅ NOVO: preserva next na volta do INOVE (fica no Farol)
+      const returnUrl = encodeURIComponent(
+        `${CURRENT_URL}/?from=inove${next ? `&next=${encodeURIComponent(next)}` : ""}`
+      );
+
       window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
     };
 
@@ -99,11 +117,18 @@ export default function LandingFarol() {
   }, []);
 
   const handleEntrar = () => {
-    window.location.href = FAROL_HOME;
+    // ✅ NOVO: entra na rota pretendida (ou /inicio)
+    window.location.href = nextPath || FAROL_HOME;
   };
 
   const handleVoltarLogin = () => {
-    const returnUrl = encodeURIComponent(`${CURRENT_URL}/?from=inove`);
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+
+    const returnUrl = encodeURIComponent(
+      `${CURRENT_URL}/?from=inove${next ? `&next=${encodeURIComponent(next)}` : ""}`
+    );
+
     window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
   };
 
@@ -124,7 +149,9 @@ export default function LandingFarol() {
               <h2 className="text-xl font-bold text-slate-800">
                 Bem-vindo, {userDetected || "Usuário"}!
               </h2>
-              <p className="text-slate-500 text-sm mt-1">Suas credenciais foram validadas.</p>
+              <p className="text-slate-500 text-sm mt-1">
+                Suas credenciais foram validadas.
+              </p>
             </div>
 
             <button
@@ -144,7 +171,6 @@ export default function LandingFarol() {
               <p className="text-slate-500 text-sm mt-1">{msg}</p>
             </div>
 
-            {/* ✅ botão explícito (não automático) */}
             <button
               type="button"
               onClick={handleVoltarLogin}
