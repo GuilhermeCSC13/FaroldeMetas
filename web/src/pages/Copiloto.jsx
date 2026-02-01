@@ -30,12 +30,20 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 /* =========================
    Helpers
 ========================= */
+
+// ✅ CORREÇÃO DE FUSO HORÁRIO: Pega a hora local e remove o "Z" do UTC
 function nowIso() {
-  return new Date().toISOString();
+  const now = new Date();
+  // Ajusta para o fuso horário local subtraindo o offset
+  const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
+  // Retorna formato ISO limpo: YYYY-MM-DDTHH:mm:ss.sss
+  return localDate.toISOString().slice(0, 19); 
 }
+
 function todayISODate() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return nowIso().slice(0, 10); // YYYY-MM-DD local
 }
+
 function toBR(dt) {
   try {
     return dt ? new Date(dt).toLocaleString("pt-BR") : "-";
@@ -164,9 +172,11 @@ export default function Copiloto() {
       try {
         safeSet(() => setLoadingResponsaveis(true));
 
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        // Tenta ler o usuário do storage primeiro (Mais confiável agora)
+        const storedUser = localStorage.getItem("usuario_externo");
+        if (storedUser) {
+             safeSet(() => setCurrentUser(JSON.parse(storedUser)));
+        }
 
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
@@ -180,29 +190,6 @@ export default function Copiloto() {
           console.error("carregarResponsaveis (usuarios_aprovadores):", error);
         } else {
           safeSet(() => setListaResponsaveis(data || []));
-
-          let userEncontrado = null;
-          if (user?.email) {
-            userEncontrado = (data || []).find(
-              (u) =>
-                String(u.email || "").toLowerCase() ===
-                String(user.email).toLowerCase()
-            );
-          }
-
-          if (userEncontrado) {
-            safeSet(() => setCurrentUser(userEncontrado));
-          } else if (user?.email) {
-            safeSet(() =>
-              setCurrentUser({
-                id: null,
-                email: user.email,
-                nome: "Usuário",
-                sobrenome: "",
-                nome_completo: user.email,
-              })
-            );
-          }
         }
       } finally {
         safeSet(() => setLoadingResponsaveis(false));
@@ -356,14 +343,8 @@ export default function Copiloto() {
       }
 
       // ✅ PASSO CRÍTICO: ENFILEIRAR PROCESSAMENTO COM bucket/prefix
-      // - current.storageBucket / current.storagePrefix devem ser definidos pelo RecordingContext
-      // - fallback abaixo é seguro, MAS o ideal é bater 100% com o caminho real dos parts
       if (selecionada?.id) {
         const bucket = current?.storageBucket || "gravacoes";
-
-        // ⚠️ Ajuste esse fallback se o seu storage organiza diferente:
-        // Ex: se seus parts ficam em "gravacoes/reunioes/<id>/part_000001.webm",
-        // então prefix = `reunioes/${selecionada.id}`
         const prefix = current?.storagePrefix || `reunioes/${selecionada.id}`;
 
         const { error: qErr } = await supabase
@@ -374,10 +355,10 @@ export default function Copiloto() {
               job_type: "BACKFILL_COMPILE_ATA",
               status: "PENDENTE",
               attempts: 0,
-              next_run_at: new Date().toISOString(),
+              next_run_at: nowIso(), // Usando hora local correta
               storage_bucket: bucket,
               storage_prefix: prefix,
-              result: {}, // ✅ evita erro NOT NULL em "result"
+              result: {}, 
             },
           ]);
 
@@ -580,33 +561,19 @@ export default function Copiloto() {
 
       const responsavelNome = buildNomeSobrenome(respRow);
 
-      let criadorFinalId = currentUser?.id || null;
-      let criadorFinalNome = buildNomeSobrenome(currentUser);
+      // ✅ IDENTIFICAÇÃO DO CRIADOR (Correção: lê direto do LocalStorage)
+      let criadorFinalId = null;
+      let criadorFinalNome = "Sistema";
 
-      if (
-        !criadorFinalNome ||
-        criadorFinalNome === "-" ||
-        criadorFinalNome === "Usuário"
-      ) {
-        criadorFinalNome = currentUser?.email || "Sistema";
-      }
-
-      if (!criadorFinalId) {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user?.email) {
-          criadorFinalNome = user.email;
-          const found = (listaResponsaveis || []).find(
-            (u) =>
-              String(u.email || "").toLowerCase() ===
-              String(user.email).toLowerCase()
-          );
-          if (found) {
-            criadorFinalId = found.id;
-            criadorFinalNome = buildNomeSobrenome(found);
+      const storedUser = localStorage.getItem("usuario_externo");
+      if (storedUser) {
+          try {
+              const u = JSON.parse(storedUser);
+              criadorFinalId = u.id;
+              criadorFinalNome = buildNomeSobrenome(u) || u.login || u.email || "Usuário";
+          } catch(e) {
+              console.error("Erro ao ler criador do localStorage", e);
           }
-        }
       }
 
       const payloadCriacao = {
@@ -627,10 +594,10 @@ export default function Copiloto() {
         criado_por_nome: criadorFinalNome,
 
         data_vencimento: vencimento,
-        data_abertura: todayISODate(),
+        data_abertura: todayISODate(), // Data Local
 
-        created_at: nowIso(),
-        data_criacao: nowIso(),
+        created_at: nowIso(), // Hora local ISO (sem Z)
+        data_criacao: nowIso(), // Hora local ISO (sem Z)
 
         fotos_acao: [],
         fotos: [],
@@ -1102,6 +1069,7 @@ export default function Copiloto() {
                     <div className="text-xs text-slate-500">
                       Criado por:{" "}
                       <strong>
+                        {/* Exibe o usuário atual se disponível no state, apenas visualmente */}
                         {currentUser ? buildNomeSobrenome(currentUser) : "..."}
                       </strong>
                     </div>
