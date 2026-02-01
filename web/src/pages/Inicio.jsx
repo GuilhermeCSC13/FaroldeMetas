@@ -15,9 +15,6 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-// ✅ REMOVIDO: Guard duplicado aqui. O guard fica SOMENTE no LandingFarol (rota "/").
-// const INOVE_URL = "https://inovequatai.onrender.com/login";
-
 const Inicio = () => {
   const navigate = useNavigate();
   const [resumoIA, setResumoIA] = useState("Conectando aos satélites táticos...");
@@ -32,8 +29,24 @@ const Inicio = () => {
   });
 
   useEffect(() => {
-    // ✅ Sem guard aqui. O guard fica só no LandingFarol.
-    carregarDados();
+    // ✅ GUARD MÍNIMO: se entrou direto em /inicio sem autenticação,
+    // manda para "/" (LandingFarol). NÃO manda pro INOVE daqui.
+    const guard = async () => {
+      const storedUser = localStorage.getItem("usuario_externo");
+
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!storedUser && !session) {
+        // força passar pelo Landing, que é quem resolve o fluxo e grava userData
+        window.location.replace("/");
+        return;
+      }
+
+      // ok, segue
+      carregarDados();
+    };
+
+    guard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -96,10 +109,10 @@ const Inicio = () => {
       const prompt = `
         Aja como um Diretor de Operações Sênior analisando o Farol Tático.
         DADOS HOJE (${dataHoje}): Agenda: ${JSON.stringify(
-        dados.agendaHoje
-      )}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(
-        dados.ultimasRealizadas
-      )}.
+          dados.agendaHoje
+        )}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(
+          dados.ultimasRealizadas
+        )}.
         
         MISSÃO: Escreva um resumo executivo curto (máx 4 linhas).
         DIRETRIZES: Destaque pontos de atenção ou oportunidades de foco. Não invente dados. Use markdown simples (negrito **texto**).
@@ -405,7 +418,6 @@ const Inicio = () => {
                 </div>
               </div>
 
-              {/* ✅ AJUSTE: voltar para o INOVE SEM nova aba e sem empilhar histórico */}
               <button
                 type="button"
                 onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
