@@ -1,7 +1,7 @@
 // src/components/tatico/Sidebar.jsx
 import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { supabase, supabaseInove } from "../../supabaseClient"; 
+import { supabase, supabaseInove } from "../../supabaseClient";
 import {
   FaHome,
   FaClipboardList,
@@ -18,7 +18,11 @@ const setores = [
   { key: "operacao", label: "Operação", path: "/planejamento/operacao" },
   { key: "manutencao", label: "Manutenção", path: "/manutencao" },
   { key: "moov", label: "Moov", path: "/moov" },
-  { key: "administrativo", label: "Administrativo", path: "/planejamento/administrativo" },
+  {
+    key: "administrativo",
+    label: "Administrativo",
+    path: "/planejamento/administrativo",
+  },
 ];
 
 export default function Sidebar() {
@@ -33,30 +37,32 @@ export default function Sidebar() {
 
   useEffect(() => {
     const loadUser = async () => {
-      // 1. PRIORIDADE: Tenta pegar os dados prontos do login (vindo do INOVE)
+      // 1) PRIORIDADE: dados vindos do INOVE (usuario_externo)
       const stored = localStorage.getItem("usuario_externo");
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
           console.log("Dados carregados do cache:", parsed);
-          // Se já tem nome e nível, usa direto e para por aqui!
           if (parsed.nome && parsed.nivel) {
             setUser({ nome: parsed.nome, nivel: parsed.nivel });
-            return; 
+            return;
           }
         } catch (e) {
           console.error("Erro ao ler usuario_externo", e);
         }
       }
 
-      // 2. SEGUNDA OPÇÃO: Login direto no Farol (precisa buscar no banco)
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      // Se tiver sessão ou se tiver email no stored mas faltar dados
+      // 2) FALLBACK: login direto no Farol (supabase auth) + busca no banco INOVE
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       let emailAlvo = session?.user?.email;
-      
+
       if (!emailAlvo && stored) {
-         try { emailAlvo = JSON.parse(stored).email; } catch {}
+        try {
+          emailAlvo = JSON.parse(stored).email;
+        } catch {}
       }
 
       if (emailAlvo) {
@@ -79,13 +85,10 @@ export default function Sidebar() {
   }, []);
 
   const primeiroNome = user.nome ? user.nome.split(" ")[0] : "Gestor";
-  // Validação mais flexível para garantir que pegue "Administrador" ou "administrador"
   const isAdm = String(user.nivel || "").trim().toLowerCase() === "administrador";
 
   useEffect(() => {
-    if (isPlanejamentoActive) {
-      setOpenPlanejamento(true);
-    }
+    if (isPlanejamentoActive) setOpenPlanejamento(true);
   }, [location.pathname, isPlanejamentoActive]);
 
   const linkBaseClasses =
@@ -103,7 +106,9 @@ export default function Sidebar() {
             {primeiroNome.charAt(0).toUpperCase()}
           </div>
           <div>
-            <p className="text-xs text-blue-100 opacity-80">Olá, {primeiroNome} 👋</p>
+            <p className="text-xs text-blue-100 opacity-80">
+              Olá, {primeiroNome} 👋
+            </p>
             <p className="text-sm font-bold tracking-tight">Farol Tático</p>
           </div>
         </div>
@@ -111,14 +116,14 @@ export default function Sidebar() {
 
       {/* Navegação */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
+        {/* ✅ Visão Geral precisa ir para /inicio ("/" é o Landing) */}
         <NavLink
-          to="/"
+          to="/inicio"
           className={({ isActive }) =>
             `${linkBaseClasses} ${
               isActive ? linkActiveClasses : linkInactiveClasses
             }`
           }
-          end
         >
           <FaHome className="text-sm" />
           <span>Visão Geral</span>
@@ -246,7 +251,7 @@ export default function Sidebar() {
             <span>Central de Ações</span>
           </NavLink>
 
-          {/* ✅ Configurações (Agora aparece se o nível for Administrador) */}
+          {/* Configurações (somente Administrador) */}
           {isAdm && (
             <NavLink
               to="/configuracoes"
@@ -267,7 +272,9 @@ export default function Sidebar() {
       <div className="px-3 py-3 border-t border-blue-500/40">
         <button
           type="button"
-          onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
+          onClick={() =>
+            window.location.replace("https://inovequatai.onrender.com/")
+          }
           className="w-full bg-white text-blue-900 px-4 py-2 rounded-lg font-bold hover:bg-blue-50 transition-all shadow-sm text-sm"
           title="Voltar para o INOVE"
         >
