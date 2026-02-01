@@ -1,11 +1,10 @@
-// src/pages/LandingFarol.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { LogIn, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react";
+import { LogIn, CheckCircle, AlertTriangle, RefreshCw, UserX } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const FAROL_HOME = "/inicio";
-const INOVE_LOGIN = "https://inovequatai.onrender.com/login"; // Confirme se a URL está correta
+const INOVE_LOGIN = "https://inovequatai.onrender.com/login"; // Confirme se sua URL está certa
 const CURRENT_URL = window.location.origin;
 
 const LOOP_KEY = "redirect_count";
@@ -13,7 +12,7 @@ const MAX_REDIRECTS = 1;
 
 export default function LandingFarol() {
   const [status, setStatus] = useState("idle");
-  const [msg, setMsg] = useState("Conectando ao satélite...");
+  const [msg, setMsg] = useState("Verificando credenciais...");
   const [userDetected, setUserDetected] = useState(null);
   const [nextPath, setNextPath] = useState(FAROL_HOME);
 
@@ -26,192 +25,166 @@ export default function LandingFarol() {
       const userDataParam = params.get("userData");
       const next = params.get("next");
 
-      // Define destino pós-login
       if (next && typeof next === "string" && next.startsWith("/")) {
         setNextPath(next);
-      } else {
-        setNextPath(FAROL_HOME);
       }
 
-      // -----------------------------------------------------------------------
-      // 1) PRIORIDADE ABSOLUTA: DADOS DO INOVE NA URL
-      // Se vier "userData", ignora quem estava logado antes (Guilherme) e usa o novo (Josue)
-      // -----------------------------------------------------------------------
+      // =====================================================================
+      // 1. REGRA DE OURO: SE VEIO 'userData', QUEM MANDA É ELE (Inove)
+      // =====================================================================
       if (userDataParam) {
         try {
-          setMsg("Processando novas credenciais...");
-          
-          // Decodifica
-          const jsonString = decodeURIComponent(userDataParam);
-          const userObj = JSON.parse(jsonString);
+          console.log("🔄 Recebendo novo login do Inove...");
+          setMsg("Atualizando usuário...");
 
-          // 🛑 LIMPEZA PROFUNDA: Remove o usuário antigo para não haver confusão
+          // 1. Decodifica o novo usuário
+          const novoUsuario = JSON.parse(decodeURIComponent(userDataParam));
+
+          // 2. 🛑 LIMPEZA TOTAL: Remove qualquer rastro do usuário anterior (Josue)
           localStorage.removeItem("usuario_externo");
+          localStorage.removeItem("farol_ia_date"); // Opcional: limpa cache da IA
+          localStorage.removeItem("farol_ia_text");
           
-          // Grava o novo usuário (Josue)
-          localStorage.setItem("usuario_externo", JSON.stringify(userObj));
+          // 3. Grava o novo usuário (Guilherme)
+          localStorage.setItem("usuario_externo", JSON.stringify(novoUsuario));
 
-          // Atualiza estado visual
-          setUserDetected(userObj.nome || userObj.login || "Novo Usuário");
-          setStatus("success");
-          setMsg("Credenciais atualizadas com sucesso!");
-
-          // Limpa a URL para não ficar expondo o JSON
+          // 4. Limpa a URL para não ficar "suja" com JSON
           window.history.replaceState({}, document.title, window.location.pathname);
-          
-          // Reseta contadores de loop
-          sessionStorage.removeItem(LOOP_KEY);
-          return; // Encerra aqui, garantindo que o cache antigo não seja lido abaixo
+
+          // 5. Sucesso
+          setUserDetected(novoUsuario.nome || novoUsuario.login);
+          setStatus("success");
+          setMsg("Troca de usuário realizada com sucesso!");
+          return; // PARE AQUI. Não verifique mais nada.
 
         } catch (e) {
           console.error("Erro ao processar userData:", e);
           setStatus("error");
-          setMsg("O pacote de credenciais veio corrompido.");
+          setMsg("Erro ao processar dados do login.");
           return;
         }
       }
 
-      // -----------------------------------------------------------------------
-      // 2) SE NÃO VEIO PELA URL, CHECA SE JÁ TEM ALGUÉM NO CACHE
-      // -----------------------------------------------------------------------
+      // =====================================================================
+      // 2. SE NÃO VEIO 'userData', VERIFICA SE JÁ TEM ALGUÉM LOGADO
+      // =====================================================================
       const storedUserRaw = localStorage.getItem("usuario_externo");
       if (storedUserRaw) {
         try {
           const u = JSON.parse(storedUserRaw);
-          setUserDetected(u?.nome || "Usuário");
+          setUserDetected(u.nome || "Usuário");
           setStatus("success");
-          setMsg("Sessão ativa recuperada.");
+          setMsg("Login recuperado da memória.");
           return;
         } catch {
-          // Se o JSON estiver quebrado, limpa
           localStorage.removeItem("usuario_externo");
         }
       }
 
-      // -----------------------------------------------------------------------
-      // 3) CHECA SESSÃO NATIVA DO SUPABASE
-      // -----------------------------------------------------------------------
+      // 3. Verifica sessão nativa Supabase
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         setStatus("success");
-        setMsg("Sessão Supabase validada.");
-        sessionStorage.removeItem(LOOP_KEY);
+        setMsg("Sessão Supabase ativa.");
         return;
       }
 
-      // -----------------------------------------------------------------------
-      // 4) SE CHEGOU AQUI: NÃO TEM USUÁRIO NEM NA URL, NEM NO CACHE
-      // -----------------------------------------------------------------------
+      // =====================================================================
+      // 4. SE NÃO TEM NINGUÉM -> MANDA PRO INOVE LOGAR
+      // =====================================================================
       
-      // Evita loop infinito se veio do Inove mas falhou em trazer dados
+      // Proteção contra loop infinito
       if (from === "inove") {
         setStatus("error");
-        setMsg("Falha na autenticação. O Inove não enviou as credenciais.");
+        setMsg("Falha: O Inove não enviou as credenciais (userData ausente).");
         return;
       }
 
-      // Contador de segurança contra redirecionamento infinito
       const c = Number(sessionStorage.getItem(LOOP_KEY) || 0);
       if (c >= MAX_REDIRECTS) {
         setStatus("error");
-        setMsg("Não foi possível validar seu acesso. Tente entrar pelo Inove novamente.");
+        setMsg("Não foi possível logar. Tente reiniciar o processo.");
         return;
       }
 
-      // Redireciona para o Inove buscar login
       sessionStorage.setItem(LOOP_KEY, String(c + 1));
       setStatus("redirect");
-      setMsg("Redirecionando para login corporativo...");
+      setMsg("Buscando login no Inove...");
 
       const returnUrl = encodeURIComponent(
         `${CURRENT_URL}/?from=inove${next ? `&next=${encodeURIComponent(next)}` : ""}`
       );
 
-      // Delay visual curto antes de ir
       setTimeout(() => {
         window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
-      }, 800);
+      }, 1000);
     };
 
     processarLogin();
-  }, [navigate]);
+  }, []);
 
   const handleEntrar = () => {
     navigate(nextPath, { replace: true });
   };
 
-  const handleVoltarLogin = () => {
-    localStorage.removeItem("usuario_externo"); // Garante limpeza
+  const handleSairTrocar = () => {
+    localStorage.clear(); // Limpa tudo
     const returnUrl = encodeURIComponent(`${CURRENT_URL}/?from=inove`);
     window.location.replace(`${INOVE_LOGIN}?redirect=${returnUrl}`);
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 font-sans p-6">
-      <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col items-center gap-6 max-w-sm w-full text-center relative overflow-hidden">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-100 font-sans p-4">
+      <div className="bg-white rounded-2xl p-8 shadow-xl max-w-sm w-full text-center border border-slate-200">
         
-        {/* Barra de Status Topo */}
-        <div className={`absolute top-0 left-0 w-full h-1.5 ${
-            status === 'success' ? 'bg-green-500' : 
-            status === 'error' ? 'bg-red-500' : 
-            'bg-blue-500 animate-pulse'
-        }`} />
-
         {status === "idle" || status === "redirect" ? (
-          <>
-            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-slate-500 font-medium animate-pulse">{msg}</p>
-          </>
+          <div className="flex flex-col items-center py-4">
+            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-slate-500 font-medium">{msg}</p>
+          </div>
         ) : status === "success" ? (
-          <>
-            <div className="w-20 h-20 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-2 shadow-sm">
+          <div className="flex flex-col items-center animate-in fade-in zoom-in duration-300">
+            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 shadow-sm">
               <CheckCircle size={40} strokeWidth={2.5} />
             </div>
-            <div className="space-y-1">
-              <h2 className="text-2xl font-bold text-slate-800">
-                Olá, {userDetected}!
-              </h2>
-              <p className="text-slate-500 text-sm">{msg}</p>
-            </div>
+            
+            <h2 className="text-2xl font-bold text-slate-800 mb-1">
+              Olá, {userDetected}!
+            </h2>
+            <p className="text-slate-500 text-sm mb-6">{msg}</p>
 
             <button
               onClick={handleEntrar}
-              className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-200 mb-3 flex items-center justify-center gap-2"
             >
-              Acessar Painel <LogIn size={20} />
+              <LogIn size={20} /> Entrar no Painel
             </button>
             
             <button 
-              onClick={handleVoltarLogin}
-              className="text-xs text-slate-400 hover:text-blue-600 underline"
+              onClick={handleSairTrocar}
+              className="text-sm text-slate-400 hover:text-red-500 flex items-center gap-1 mx-auto mt-2"
             >
-              Não é {userDetected}? Trocar conta
+              <UserX size={14} /> Não é você? Trocar conta
             </button>
-          </>
+          </div>
         ) : (
-          <>
-            <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-2 shadow-sm">
-              <AlertTriangle size={40} strokeWidth={2.5} />
+          <div className="flex flex-col items-center">
+            <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-4">
+              <AlertTriangle size={32} />
             </div>
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold text-slate-800">Acesso Negado</h2>
-              <p className="text-slate-500 text-sm px-2">{msg}</p>
-            </div>
-
+            <h2 className="text-xl font-bold text-slate-800 mb-2">Acesso Bloqueado</h2>
+            <p className="text-slate-500 text-sm mb-6">{msg}</p>
+            
             <button
-              type="button"
-              onClick={handleVoltarLogin}
-              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2"
+              onClick={handleSairTrocar}
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-all"
             >
-              <RefreshCw size={18} /> Tentar Login Novamente
+              <RefreshCw className="inline mr-2" size={18}/> Tentar Novamente
             </button>
-          </>
+          </div>
         )}
       </div>
-
-      <p className="mt-8 text-xs text-slate-400 font-mono">
-        FAROL TÁTICO v2.0 • INTEGRAÇÃO INOVE
-      </p>
+      <div className="mt-8 text-xs text-slate-400">FAROL TÁTICO SYSTEM</div>
     </div>
   );
 }
