@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../supabaseClient";
-import { X, Plus, Trash2, Target, List, Settings } from "lucide-react";
+import { X, Plus, Trash2, Target, List, Settings, Lock, ShieldAlert } from "lucide-react";
 
 /* ✅ inclui ACUM (mes=13) para configurar meta do acumulado também */
 const MESES = [
@@ -19,17 +19,14 @@ const MESES = [
   { id: 13, label: "Acum" }, // ✅ meta do acumulado
 ];
 
-// ✅ UNID dropdown (fonte de verdade pro binário) — agora vale p/ metas E rotinas
+// ✅ UNID dropdown
 const UNIDADES = [
   { value: "currency", label: "R$" },
   { value: "pct", label: "%" },
   { value: "numero", label: "Número (123)" },
   { value: "binario", label: "Binário (Sim/Não)" },
-  // se você quiser manter o R$ nas rotinas, descomenta:
-  // { value: "currency", label: "R$" },
 ];
 
-// Fallback: Se não receber nada, assume que é a Operação
 const AREAS_PADRAO = [
   { id: 4, nome: "PCO" },
   { id: 5, nome: "Gestão de Motoristas" },
@@ -39,16 +36,48 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
   const areasDisponiveis =
     areasContexto && areasContexto.length > 0 ? areasContexto : AREAS_PADRAO;
 
-  const [tipo, setTipo] = useState("metas"); // 'metas' ou 'rotinas'
+  const [tipo, setTipo] = useState("metas");
   const [areaId, setAreaId] = useState(areasDisponiveis[0].id);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ✅ ESTADO DE PERMISSÃO
+  const [autorizado, setAutorizado] = useState(null); // null = verificando
+
+  // 1. VERIFICA PERMISSÃO AO MONTAR
   useEffect(() => {
-    fetchData();
+    const verificarAcesso = () => {
+      try {
+        const stored = localStorage.getItem("usuario_externo");
+        if (!stored) {
+          setAutorizado(false);
+          return;
+        }
+        const usuario = JSON.parse(stored);
+        const nivel = String(usuario.nivel || "").trim();
+
+        // ✅ Regra: Apenas 'Administrador' ou 'Gestor'
+        if (nivel === "Administrador" || nivel === "Gestor") {
+          setAutorizado(true);
+        } else {
+          setAutorizado(false);
+        }
+      } catch (e) {
+        console.error("Erro ao verificar permissão:", e);
+        setAutorizado(false);
+      }
+    };
+    verificarAcesso();
+  }, []);
+
+  // 2. CARREGA DADOS (SÓ SE AUTORIZADO)
+  useEffect(() => {
+    if (autorizado) {
+      fetchData();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, areaId]);
+  }, [tipo, areaId, autorizado]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -110,7 +139,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
       setItems(combined);
     } catch (error) {
       console.error("Erro ao carregar configuração geral:", error);
-      alert("Erro ao carregar dados da configuração. Veja o console para detalhes.");
+      alert("Erro ao carregar dados. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -127,30 +156,26 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           indicador: nome,
           nome_meta: nome,
           peso: 0,
-          unidade: "", // ✅ escolhido no dropdown
+          unidade: "", 
           tipo_comparacao: ">=",
           responsavel: "",
         });
         if (error) throw error;
       } else {
-        // ✅ agora Rotinas também usa "unidade" igual Metas
         const { error } = await supabase.from("rotinas_indicadores").insert({
           area_id: areaId,
           indicador: nome,
           ordem: items.length + 1,
           tipo_comparacao: ">=",
           peso: 0,
-          unidade: "", // ✅ NOVO: igual metas
+          unidade: "", 
           responsavel: "",
-          // se sua tabela exigir "formato", pode manter como legado:
-          // formato: "num",
         });
         if (error) throw error;
       }
 
       fetchData();
     } catch (err) {
-      console.error("Erro ao criar indicador:", err);
       alert("Erro ao criar indicador: " + err.message);
     }
   };
@@ -162,13 +187,11 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     );
 
     if (senha !== "APAGAR") {
-      alert("Exclusão cancelada. Senha incorreta ou vazia.");
+      alert("Exclusão cancelada.");
       return;
     }
 
-    const confirmar = confirm(
-      "Tem certeza absoluta que deseja excluir este indicador e todos os registros vinculados?"
-    );
+    const confirmar = confirm("Tem certeza absoluta?");
     if (!confirmar) return;
 
     const tableMain = tipo === "metas" ? "metas_farol" : "rotinas_indicadores";
@@ -177,36 +200,20 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
     try {
       if (tipo === "metas") {
-        const { error: errRes } = await supabase
-          .from("resultados_farol")
-          .delete()
-          .eq("meta_id", id);
-        if (errRes) throw errRes;
+        await supabase.from("resultados_farol").delete().eq("meta_id", id);
       }
-
-      const { error: errMensal } = await supabase
-        .from(tableMensal)
-        .delete()
-        .eq(fkCol, id);
-      if (errMensal) throw errMensal;
-
-      const { error: errMain } = await supabase
-        .from(tableMain)
-        .delete()
-        .eq("id", id);
+      await supabase.from(tableMensal).delete().eq(fkCol, id);
+      const { error: errMain } = await supabase.from(tableMain).delete().eq("id", id);
       if (errMain) throw errMain;
 
       fetchData();
     } catch (err) {
-      console.error("Erro ao excluir indicador:", err);
-      alert("Erro ao excluir indicador. Veja o console para detalhes.");
+      alert("Erro ao excluir indicador.");
     }
   };
 
-  // ✅ normalização (peso numérico) + unidade padronizada
   const updateRowProp = async (id, field, value) => {
     const table = tipo === "metas" ? "metas_farol" : "rotinas_indicadores";
-
     let normalizedValue = value;
 
     if (field === "peso") {
@@ -218,7 +225,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
       }
     }
 
-    // ✅ unidade padronizada (vale pros dois)
     if (field === "unidade") {
       normalizedValue = String(value ?? "").trim().toLowerCase();
     }
@@ -234,8 +240,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
         .eq("id", id);
       if (error) throw error;
     } catch (err) {
-      console.error("Erro ao atualizar indicador:", err);
-      alert("Erro ao atualizar indicador. Veja o console para detalhes.");
+      console.error("Erro update:", err);
     }
   };
 
@@ -279,8 +284,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
     try {
       await upsertValorMensal(table, fkColumn, itemId, mesId, valorNum);
     } catch (err) {
-      console.error("Erro ao salvar meta mensal:", err);
-      alert("Erro ao salvar a meta mensal. Veja o console para detalhes.");
+      console.error("Erro saveMonthlyTarget:", err);
     }
   };
 
@@ -301,37 +305,62 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
 
     try {
       const promises = [];
-
       items.forEach((item) => {
         MESES.forEach((mes) => {
           const rawVal = item.valores_mensais[mes.id];
           if (rawVal === "" || rawVal === undefined) return;
-
           const parsed = parseFloat(String(rawVal).replace(",", "."));
           const valorNum = isNaN(parsed) ? null : parsed;
-
           promises.push(upsertValorMensal(table, fkColumn, item.id, mes.id, valorNum));
         });
       });
 
       if (promises.length === 0) {
-        alert("Nenhum valor preenchido para salvar.");
+        alert("Nenhum valor para salvar.");
         setSaving(false);
         return;
       }
 
       await Promise.all(promises);
-
-      alert("Metas/rotinas salvas com sucesso.");
+      alert("Salvo com sucesso.");
       fetchData();
     } catch (err) {
-      console.error("Erro ao salvar metas/rotinas:", err);
-      alert("Erro ao salvar metas/rotinas. Veja o console para detalhes.");
+      alert("Erro ao salvar: " + err.message);
     } finally {
       setSaving(false);
     }
   };
 
+  // -----------------------------------------------------------
+  // 🔒 RENDERIZAÇÃO CONDICIONAL DE ACESSO
+  // -----------------------------------------------------------
+  if (autorizado === null) {
+    return null; // Carregando...
+  }
+
+  if (autorizado === false) {
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 backdrop-blur-sm font-sans animate-in fade-in zoom-in duration-200">
+        <div className="bg-white rounded-2xl p-8 shadow-2xl text-center max-w-sm border border-red-100 relative">
+          <div className="mx-auto w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-5 shadow-sm">
+            <ShieldAlert size={40} strokeWidth={1.5} />
+          </div>
+          <h2 className="text-xl font-black text-slate-800 mb-2">Acesso Restrito</h2>
+          <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+            Esta área de configuração é exclusiva para <b>Gestores</b> e <b>Administradores</b>.
+          </p>
+          <button
+            onClick={onClose}
+            className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl font-bold transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2"
+          >
+            <X size={18} /> Fechar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ✅ CONTEÚDO NORMAL (SÓ RENDERIZA SE AUTORIZADO)
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm font-sans">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-[95vw] h-[90vh] flex flex-col border border-gray-200">
@@ -394,14 +423,10 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                 <thead className="bg-gray-100 text-gray-600 uppercase font-bold sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="p-3 w-64 border-r">Indicador</th>
-
-                    {/* ✅ Metas e Rotinas agora usam a MESMA estrutura: Peso + UNID + Resp + Tipo */}
                     <th className="p-3 w-16 text-center border-r">Peso</th>
                     <th className="p-3 w-28 text-center border-r">Unid.</th>
                     <th className="p-3 w-24 text-center border-r">Resp.</th>
                     <th className="p-3 w-16 text-center border-r">Tipo</th>
-
-                    {/* ✅ metas mensais (inclui Acum=13). Média 25 NÃO entra aqui. */}
                     {MESES.map((m) => (
                       <th
                         key={m.id}
@@ -411,7 +436,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         {m.label}
                       </th>
                     ))}
-
                     <th className="p-3 text-center w-10"></th>
                   </tr>
                 </thead>
@@ -433,7 +457,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         />
                       </td>
 
-                      {/* Peso */}
                       <td className="p-1 border-r">
                         <input
                           type="number"
@@ -443,7 +466,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         />
                       </td>
 
-                      {/* ✅ UNID dropdown (agora também para rotinas) */}
                       <td className="p-1 border-r">
                         <select
                           value={String(item.unidade || "").trim().toLowerCase()}
@@ -459,7 +481,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         </select>
                       </td>
 
-                      {/* Responsável */}
                       <td className="p-1 border-r">
                         <input
                           value={item.responsavel || ""}
@@ -468,7 +489,6 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
                         />
                       </td>
 
-                      {/* Tipo de comparação */}
                       <td className="p-1 border-r">
                         <select
                           value={item.tipo_comparacao}
@@ -508,8 +528,7 @@ const ConfiguracaoGeral = ({ onClose, areasContexto }) => {
           )}
         </div>
 
-        {/* Rodapé - Novo Indicador + Salvar */}
-        <div className="p-4 bg-white border-t rounded-b-xl flex justify_between items-center gap-4">
+        <div className="p-4 bg-white border-t rounded-b-xl flex justify-between items-center gap-4">
           <div className="flex gap-3">
             <button
               onClick={handleAdd}
