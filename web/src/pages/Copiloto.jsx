@@ -31,7 +31,6 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
    Helpers
 ========================= */
 
-// Pega data/hora local em formato ISO sem o "Z" (para salvar no banco como "local")
 function nowIso() {
   const now = new Date();
   const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
@@ -42,7 +41,6 @@ function todayISODate() {
   return nowIso().slice(0, 10);
 }
 
-// ✅ CORREÇÃO: Exibe a data ignorando a conversão de fuso do navegador
 function toBR(dt) {
   try {
     if (!dt) return "-";
@@ -130,13 +128,13 @@ export default function Copiloto() {
   const [novaAcao, setNovaAcao] = useState({
     descricao: "",
     observacao: "",
-    responsavelId: "", // TEXT -> login (preferencial)
+    responsavelId: "",
     vencimento: "",
   });
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
   const [creatingAcao, setCreatingAcao] = useState(false);
 
-  // ✅ Responsáveis vêm do SUPABASE INOVE
+  // ✅ Responsáveis
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
@@ -161,19 +159,55 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Lifecycle
+      Lifecycle & CTRL+V LISTENER
   ========================= */
+  
+  // ✅ NOVO: Ouvinte de "Colar" (Ctrl+V)
+  useEffect(() => {
+    const handlePaste = (e) => {
+      // Só permite colar se: 
+      // 1. Tiver reunião selecionada
+      // 2. Estiver na aba de ações
+      // 3. Não estiver com o modal de detalhes aberto (para não colar lá sem querer)
+      if (!selecionada?.id || tab !== "acoes" || acaoSelecionada) return;
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        // Verifica se é imagem
+        if (items[i].type.indexOf("image") !== -1) {
+          const blob = items[i].getAsFile();
+          // Gera nome único para o print
+          const file = new File([blob], `print_${Date.now()}.png`, { type: blob.type });
+          files.push(file);
+        }
+      }
+
+      if (files.length > 0) {
+        // Se achou imagem, adiciona às evidências
+        setNovasEvidenciasAcao((prev) => [...(prev || []), ...files]);
+        
+        // Opcional: Feedback visual ou console
+        console.log("📸 Print colado com sucesso!", files);
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [selecionada, tab, acaoSelecionada]);
+
+
   useEffect(() => {
     isMountedRef.current = true;
 
     fetchReunioes();
 
-    // 1) Responsáveis + usuário logado
     (async () => {
       try {
         safeSet(() => setLoadingResponsaveis(true));
 
-        // Tenta ler do storage primeiro
         const storedUser = localStorage.getItem("usuario_externo");
         if (storedUser) {
              safeSet(() => setCurrentUser(JSON.parse(storedUser)));
@@ -217,7 +251,6 @@ export default function Copiloto() {
     setTab("acoes");
     setAcaoTab("reuniao");
 
-    // reset criação
     setNovaAcao({
       descricao: "",
       observacao: "",
@@ -560,7 +593,6 @@ export default function Copiloto() {
 
       const responsavelNome = buildNomeSobrenome(respRow);
 
-      // ✅ IDENTIFICAÇÃO DO CRIADOR (via localStorage)
       let criadorFinalId = null;
       let criadorFinalNome = "Sistema";
 
@@ -1172,9 +1204,9 @@ export default function Copiloto() {
                     </label>
 
                     <div className="mt-2 flex items-center gap-3">
-                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer text-sm font-black">
-                        <UploadCloud size={16} />
-                        Anexar arquivos
+                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer text-sm font-black transition-colors hover:border-blue-300">
+                        <UploadCloud size={16} className="text-blue-600" />
+                        <span>Clique, arraste ou <span className="text-blue-600">Cole (Ctrl+V)</span></span>
                         <input
                           type="file"
                           multiple
