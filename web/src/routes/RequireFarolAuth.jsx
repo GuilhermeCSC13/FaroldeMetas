@@ -1,4 +1,3 @@
-// src/routes/RequireFarolAuth.jsx
 import { useEffect } from "react";
 import { Outlet, useLocation, useNavigate, Navigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
@@ -20,11 +19,12 @@ export default function RequireFarolAuth() {
   const params = new URLSearchParams(location.search);
   const userDataParam = params.get("userData");
 
-  // 🔴 GUARDA DE INTEGRIDADE:
-  // Se existir "userData" na URL, NÃO renderize a rota protegida ainda.
-  // Mande para o Landing (Raiz) processar esse login novo primeiro.
-  // Isso impede que o "Guilherme" (cache) seja mostrado quando o "Josue" (URL) está chegando.
+  // 🔴 CORREÇÃO CRÍTICA:
+  // Se existir "userData" na URL, NÃO deixe entrar na rota protegida (ex: /inicio)
+  // mesmo que tenha alguém logado no storage.
+  // Mande para o Landing (/) processar a troca de usuário primeiro.
   if (userDataParam) {
+    // Redireciona para a raiz mantendo os parâmetros de URL para o LandingFarol ler
     return <Navigate to={`/${location.search}`} replace />;
   }
 
@@ -33,27 +33,22 @@ export default function RequireFarolAuth() {
       // 1. Verifica localStorage
       if (hasStoredExternalUser()) return;
 
-      // 2. Verifica Supabase Auth
+      // 2. Verifica Supabase
       try {
         const { data } = await supabase.auth.getSession();
         if (data?.session) return;
       } catch {}
 
-      // 3. Se falhar tudo, manda para o Landing com parâmetro 'next'
-      const currentPath = location.pathname + location.search;
+      // 3. Se não tiver login, redireciona para o Landing
       const sp = new URLSearchParams();
-      if (currentPath && currentPath !== "/") {
-        sp.set("next", currentPath);
+      if (location.pathname !== "/") {
+        sp.set("next", location.pathname + location.search);
       }
-
-      // Redireciona para o Landing
       navigate(`/?${sp.toString()}`, { replace: true });
     };
 
     run();
   }, [location, navigate]);
 
-  // Enquanto verifica, renderiza o Outlet (ou um loading simples se preferir)
-  // Mas o useEffect acima vai chutar se não estiver autenticado.
   return <Outlet />;
 }
