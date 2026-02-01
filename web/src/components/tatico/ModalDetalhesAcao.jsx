@@ -69,6 +69,7 @@ const ModalDetalhesAcao = ({
   // ESTADOS LOCAIS
   // ---------------------------------------------------------------------------
   const [statusLocal, setStatusLocal] = useState(status || "Aberta");
+  const [usuarioLogado, setUsuarioLogado] = useState(null); // ✅ Estado para o usuário logado
 
   const [obsAcao, setObsAcao] = useState("");
   const [resultado, setResultado] = useState("");
@@ -93,13 +94,21 @@ const ModalDetalhesAcao = ({
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
   const [delSenha, setDelSenha] = useState("");
-  const [deleting, setDeleting] = useState(false); // Validando e Excluindo
+  const [deleting, setDeleting] = useState(false);
 
   // ---------------------------------------------------------------------------
   // INIT / LOAD
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!acao || !aberto) return;
+
+    // ✅ Carrega o usuário logado do cache
+    try {
+        const stored = localStorage.getItem("usuario_externo");
+        if (stored) setUsuarioLogado(JSON.parse(stored));
+    } catch (e) {
+        console.error("Erro ao ler usuario_externo", e);
+    }
 
     setStatusLocal(status || acao.status || "Aberta");
     setObsAcao(acao.observacao || "");
@@ -171,6 +180,22 @@ const ModalDetalhesAcao = ({
   }, [acao, aberto, status]);
 
   // ---------------------------------------------------------------------------
+  // LÓGICA DE EXIBIÇÃO: CRIADO POR (Melhorada)
+  // ---------------------------------------------------------------------------
+  const nomeCriador = useMemo(() => {
+    // 1. Se já veio no objeto da ação, usa
+    if (acao.criado_por_nome) return acao.criado_por_nome;
+    
+    // 2. Se tem só o ID, tenta achar na lista de usuários carregada
+    if (acao.criado_por && listaResponsaveis.length > 0) {
+        const found = listaResponsaveis.find(u => u.id === acao.criado_por);
+        if (found) return buildNomeSobrenome(found);
+    }
+    
+    return null;
+  }, [acao, listaResponsaveis]);
+
+  // ---------------------------------------------------------------------------
   // SUGESTÕES RESPONSÁVEL
   // ---------------------------------------------------------------------------
   const sugestoes = useMemo(() => {
@@ -228,11 +253,15 @@ const ModalDetalhesAcao = ({
   };
 
   // ---------------------------------------------------------------------------
-  // SALVAR
+  // SALVAR (Com injeção automática de quem fechou)
   // ---------------------------------------------------------------------------
-  const handleSalvar = async () => {
+  const handleSalvar = async (overrideStatus = null) => {
     if (!acao) return;
     setSaving(true);
+    
+    // Se passar um status forçado (ex: "Concluída" via botão finalizar), usa ele
+    const statusDestino = overrideStatus || statusLocal;
+
     try {
       const novasUrlsAcao =
         novosArquivosAcao.length > 0 ? await uploadArquivos(novosArquivosAcao) : [];
@@ -258,6 +287,17 @@ const ModalDetalhesAcao = ({
         data_vencimento: vencimento || null,
       };
 
+      // ✅ SE ESTIVER CONCLUINDO, GRAVA QUEM FEZ ISSO
+      if (statusDestino === "Concluída") {
+          payload.status = "Concluída";
+          // Só grava se ainda não tiver data, para preservar histórico se editar depois
+          if (!acao.data_fechamento) { 
+              payload.data_fechamento = new Date().toISOString();
+              // Usa o usuário logado que pegamos no localStorage
+              payload.fechado_por_nome = usuarioLogado?.nome || usuarioLogado?.login || "Usuário do Sistema";
+          }
+      }
+
       if (!acao.fotos_acao && !acao.fotos_conclusao) {
         payload.fotos = payload.fotos_acao;
       }
@@ -282,7 +322,6 @@ const ModalDetalhesAcao = ({
   // EXCLUIR (SOFT DELETE COM VALIDAÇÃO)
   // ---------------------------------------------------------------------------
   const handleExcluirClick = () => {
-    // Abre a área de validação
     setShowDeleteAuth(true);
   };
 
@@ -291,12 +330,11 @@ const ModalDetalhesAcao = ({
     setDeleting(true);
 
     try {
-      // 1. Validar Usuário na tabela usuarios_aprovadores
       const { data: usuario, error: errAuth } = await supabaseInove
         .from("usuarios_aprovadores")
         .select("id, login, senha, nome_completo, ativo")
         .eq("login", delLogin)
-        .eq("senha", delSenha) // Validação direta conforme solicitado
+        .eq("senha", delSenha)
         .eq("ativo", true)
         .maybeSingle();
 
@@ -308,14 +346,12 @@ const ModalDetalhesAcao = ({
         return;
       }
 
-      // 2. Realizar Soft Delete (Update status -> "Excluída")
+      // ✅ Update: Grava quem excluiu se tiver coluna para isso (opcional)
       const { error: errUpdate } = await supabase
         .from("acoes")
         .update({
             status: "Excluída",
-            // Opcional: salvar quem excluiu se tiver colunas para isso, ex:
-            // excluido_por: usuario.nome_completo,
-            // data_exclusao: new Date().toISOString()
+            // excluido_por: usuario.nome_completo // Descomente se tiver a coluna
         })
         .eq("id", acao.id);
 
@@ -347,6 +383,7 @@ const ModalDetalhesAcao = ({
         .update({ 
             status: "Aberta", 
             data_conclusao: null,
+            data_fechamento: null, // Limpa a data também
             fechado_por_nome: null,
             fechado_por_aprovador_id: null
         })
@@ -376,7 +413,9 @@ const ModalDetalhesAcao = ({
       alert("Para finalizar, registre o que foi realizado e anexe pelo menos uma evidência.");
       return;
     }
-    await handleSalvar();
+    // ✅ Passa "Concluída" explicitamente para o handleSalvar gravar o usuário logado
+    await handleSalvar("Concluída");
+    
     if (typeof onConcluir === "function") await onConcluir();
     setStatusLocal("Concluída");
   };
@@ -503,15 +542,15 @@ const ModalDetalhesAcao = ({
                    </span>
                 </div>
 
-                {/* Criação */}
+                {/* Criação - AGORA USA O NOME CALCULADO */}
                 <div className="flex flex-col">
                    <span className="text-[11px] font-bold text-gray-400 uppercase mb-1">Criação</span>
                    <span className="text-sm text-gray-700 flex items-center gap-1">
                      <Calendar size={14} /> {dataCriacao}
                    </span>
-                   {acao.criado_por_nome && (
+                   {nomeCriador && (
                      <span className="text-[10px] text-blue-600 font-medium mt-0.5 flex items-center gap-1">
-                        <User size={10} /> Criado por: {acao.criado_por_nome}
+                        <User size={10} /> Criado por: {nomeCriador}
                      </span>
                    )}
                 </div>
@@ -630,12 +669,12 @@ const ModalDetalhesAcao = ({
                      <div className="text-right">
                          {acao.fechado_por_nome && (
                             <span className="text-[10px] text-blue-600 font-bold block">
-                                Fechado por: {acao.fechado_por_nome}
+                               Fechado por: {acao.fechado_por_nome}
                             </span>
                          )}
                          {dataFechamento && (
                             <span className="text-[10px] text-gray-400 block">
-                                Em: {dataFechamento}
+                               Em: {dataFechamento}
                             </span>
                          )}
                      </div>
@@ -710,7 +749,7 @@ const ModalDetalhesAcao = ({
                 </span>
              )}
             <button
-              onClick={handleSalvar}
+              onClick={() => handleSalvar(null)}
               disabled={saving || inputsDesabilitados}
               className="mt-2 self-start px-4 py-2 rounded text-xs font-semibold border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             >
@@ -730,7 +769,6 @@ const ModalDetalhesAcao = ({
               </button>
             )}
 
-            {/* BOTÃO EXCLUIR MODIFICADO */}
             <button
               onClick={handleExcluirClick}
               disabled={saving || reabrindo}
