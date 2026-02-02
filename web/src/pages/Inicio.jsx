@@ -1,5 +1,5 @@
 // src/pages/Inicio.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
@@ -32,20 +32,58 @@ function isoDateSP() {
   return `${y}-${m}-${d}`;
 }
 
+function spTimeHHMM() {
+  // HH:mm no fuso SP
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${hh}:${mm}`;
+}
+
+function minutesFromHHMM(hhmm) {
+  const [hh, mm] = String(hhmm || "00:00").split(":");
+  const h = Number(hh);
+  const m = Number(mm);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  return h * 60 + m;
+}
+
+// ✅ Slots fixos
+// - antes 08:00 -> PRE_0800 (opcional, mas ajuda a não ficar reprocessando de madrugada)
+// - 08:00–11:59 -> 0800
+// - 12:00–16:29 -> 1200
+// - 16:30+ -> 1630
+function getSlotSP() {
+  const hhmm = spTimeHHMM();
+  const min = minutesFromHHMM(hhmm);
+
+  const m0800 = 8 * 60; // 480
+  const m1200 = 12 * 60; // 720
+  const m1630 = 16 * 60 + 30; // 990
+
+  if (min < m0800) return "PRE_0800";
+  if (min < m1200) return "0800";
+  if (min < m1630) return "1200";
+  return "1630";
+}
+
 function normalizePautaText(pauta) {
   if (!pauta) return "";
-  // pauta pode vir como string grande, markdown, etc.
-  // normalize sem "inventar": só limpa espaços extremos
   return String(pauta).trim();
 }
 
 // Converte um "YYYY-MM-DDTHH:mm:ss" (sem offset) em UTC ISO com "Z"
 // assumindo que o input está no fuso SP (-03:00).
 function spLocalToUtcIsoZ(localIsoNoOffset) {
-  // localIsoNoOffset: "2026-02-02T00:00:00"
-  // SP = UTC-3 => UTC = local + 3h
-  const dt = new Date(`${localIsoNoOffset}-03:00`); // força interpretar como SP
-  return dt.toISOString(); // retorna em UTC com Z
+  const dt = new Date(`${localIsoNoOffset}-03:00`);
+  return dt.toISOString();
 }
 
 const Inicio = () => {
@@ -61,9 +99,11 @@ const Inicio = () => {
     reunioesHoje: 0,
   });
 
+  // evita disparos duplicados em paralelo
+  const generatingRef = useRef(false);
+
   useEffect(() => {
-    // ✅ Guard mínimo: se entrou direto em /inicio sem autenticação,
-    // manda para "/" (LandingFarol).
+    // ✅ Guard mínimo
     const guard = async () => {
       const storedUser = localStorage.getItem("usuario_externo");
       const {
@@ -75,21 +115,40 @@ const Inicio = () => {
         return;
       }
 
-      carregarDados();
+      carregarDados({ reason: "enter" });
     };
 
     guard();
+
+    // ✅ Enquanto a página estiver aberta, checa mudança de slot e reprocessa
+    const interval = setInterval(() => {
+      const hojeSP = isoDateSP();
+      const slot = getSlotSP();
+
+      const cachedDate = localStorage.getItem("farol_ia_date");
+      const cachedSlot = localStorage.getItem("farol_ia_slot");
+
+      // se virou o dia ou virou o slot -> recarrega
+      if (cachedDate !== hojeSP || cachedSlot !== slot) {
+        carregarDados({ reason: "slot-change" });
+      }
+    }, 30_000); // 30s
+
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const carregarDados = async () => {
+  const carregarDados = async ({ reason } = { reason: "manual" }) => {
+    if (generatingRef.current) return;
+
     setLoadingIA(true);
 
     const hojeSP = isoDateSP();
+    const slot = getSlotSP();
+
     const inicioSpLocal = `${hojeSP}T00:00:00`;
     const fimSpLocal = `${hojeSP}T23:59:59`;
 
-    // Para filtrar corretamente no banco (timestamptz), convertemos o intervalo SP -> UTC
     const startUTC = spLocalToUtcIsoZ(inicioSpLocal);
     const endUTC = spLocalToUtcIsoZ(fimSpLocal);
 
@@ -101,7 +160,7 @@ const Inicio = () => {
 
     if (errAcoes) console.error("Erro ao contar ações abertas:", errAcoes);
 
-    // 2) Agenda HOJE (SP) + pauta (ATA IA na coluna pauta)
+    // 2) Agenda HOJE (SP) + pauta
     const { data: agendaHoje, error: errAgenda } = await supabase
       .from("reunioes")
       .select("id, titulo, data_hora, status, pauta")
@@ -117,10 +176,11 @@ const Inicio = () => {
       acoesAbertas: acoesCount || 0,
       reunioesHoje: reunioesHojeCount || 0,
       agendaHoje: agendaHoje || [],
-      // campos extras para prompt (SP)
       data_sp: hojeSP,
       inicio_sp: inicioSpLocal,
       fim_sp: fimSpLocal,
+      slot_sp: slot,
+      reason,
     };
 
     setStats({
@@ -128,11 +188,12 @@ const Inicio = () => {
       reunioesHoje: estatisticas.reunioesHoje,
     });
 
-    // 3) Cache ou nova geração
+    // 3) Cache por (data + slot)
     const cacheDate = localStorage.getItem("farol_ia_date");
+    const cacheSlot = localStorage.getItem("farol_ia_slot");
     const cacheText = localStorage.getItem("farol_ia_text");
 
-    if (cacheDate === hojeSP && cacheText) {
+    if (cacheDate === hojeSP && cacheSlot === slot && cacheText) {
       setResumoIA(cacheText);
       setIaStatus("active");
       setLoadingIA(false);
@@ -144,6 +205,9 @@ const Inicio = () => {
   };
 
   const gerarResumoIA = async (dados) => {
+    if (generatingRef.current) return;
+    generatingRef.current = true;
+
     setIaStatus("checking");
 
     try {
@@ -160,7 +224,7 @@ const Inicio = () => {
         console.error("Erro ao buscar prompt inicio_resumo:", promptErr);
       }
 
-      // fallback (caso não exista na tabela)
+      // fallback
       const fallbackTemplate = `Você é um Diretor de Operações Sênior. Gere um resumo tático do dia, baseado EXCLUSIVAMENTE nos dados fornecidos.
 
 REGRAS OBRIGATÓRIAS:
@@ -172,6 +236,7 @@ REGRAS OBRIGATÓRIAS:
 DADOS DO DIA (SP):
 - Data: {data_sp}
 - Janela: {inicio_sp} até {fim_sp}
+- Slot de atualização: {slot_sp}
 
 AGENDA DE HOJE (SP) [lista de reuniões]:
 {agendaHoje}
@@ -192,7 +257,7 @@ FORMATO:
 
       const promptTemplate = promptData?.prompt_text || fallbackTemplate;
 
-      // 2) Monta strings para o prompt
+      // 2) Strings para o prompt
       const agendaHojeStr = JSON.stringify(dados.agendaHoje || []);
 
       const realizadas = (dados.agendaHoje || []).filter((r) =>
@@ -214,6 +279,7 @@ FORMATO:
         .replace(/{data_sp}/g, String(dados.data_sp || ""))
         .replace(/{inicio_sp}/g, String(dados.inicio_sp || ""))
         .replace(/{fim_sp}/g, String(dados.fim_sp || ""))
+        .replace(/{slot_sp}/g, String(dados.slot_sp || ""))
         .replace(/{agendaHoje}/g, agendaHojeStr)
         .replace(/{atasIAHoje}/g, atasIAHojeStr);
 
@@ -225,7 +291,9 @@ FORMATO:
       setIaStatus("active");
       setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
 
+      // ✅ Cache por slot
       localStorage.setItem("farol_ia_date", String(dados.data_sp || ""));
+      localStorage.setItem("farol_ia_slot", String(dados.slot_sp || ""));
       localStorage.setItem("farol_ia_text", texto);
     } catch (error) {
       console.error("Erro IA:", error);
@@ -234,15 +302,16 @@ FORMATO:
       );
       setIaStatus("inactive");
     } finally {
+      generatingRef.current = false;
       setLoadingIA(false);
     }
   };
 
   const forcarAtualizacao = () => {
-    setLoadingIA(true);
     localStorage.removeItem("farol_ia_date");
+    localStorage.removeItem("farol_ia_slot");
     localStorage.removeItem("farol_ia_text");
-    carregarDados();
+    carregarDados({ reason: "force" });
   };
 
   return (
@@ -254,6 +323,9 @@ FORMATO:
             <h1 className="text-3xl font-bold text-gray-900">Painel de Comando</h1>
             <p className="text-gray-500 text-sm mt-1">
               Visão Estratégica & Tática Unificada
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Atualizações automáticas: 08:00 • 12:00 • 16:30 (SP)
             </p>
           </div>
 
@@ -365,7 +437,6 @@ FORMATO:
                     {resumoIA.split("\n").map((line, idx) => {
                       if (!line.trim()) return null;
 
-                      // suporta "###" etc
                       if (line.trim().startsWith("#")) {
                         return (
                           <h3
@@ -430,10 +501,7 @@ FORMATO:
                   <p className="text-xs text-gray-500">Ver calendário</p>
                 </div>
               </div>
-              <ArrowRight
-                className="text-gray-300 group-hover:text-blue-600 transition-colors"
-                size={18}
-              />
+              <ArrowRight className="text-gray-300 group-hover:text-blue-600 transition-colors" size={18} />
             </button>
 
             <button
@@ -449,10 +517,7 @@ FORMATO:
                   <p className="text-xs text-gray-500">Histórico de decisões</p>
                 </div>
               </div>
-              <ArrowRight
-                className="text-gray-300 group-hover:text-purple-600 transition-colors"
-                size={18}
-              />
+              <ArrowRight className="text-gray-300 group-hover:text-purple-600 transition-colors" size={18} />
             </button>
 
             <button
@@ -468,10 +533,7 @@ FORMATO:
                   <p className="text-xs text-gray-500">IA Copiloto</p>
                 </div>
               </div>
-              <ArrowRight
-                className="text-gray-300 group-hover:text-red-600 transition-colors"
-                size={18}
-              />
+              <ArrowRight className="text-gray-300 group-hover:text-red-600 transition-colors" size={18} />
             </button>
           </div>
         </div>
