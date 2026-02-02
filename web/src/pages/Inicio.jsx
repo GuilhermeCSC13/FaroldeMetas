@@ -14,48 +14,43 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-/**
- * Helpers de data (SP) + bounds UTC
- * Problema original: data_hora é timestamptz (UTC), mas o filtro "hoje" era feito como se fosse local.
- */
-function getTodaySP_YYYY_MM_DD() {
+// ==========================
+// Helpers (SP timezone)
+// ==========================
+function isoDateSP() {
+  // YYYY-MM-DD no fuso America/Sao_Paulo
+  const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(new Date());
-
+  }).formatToParts(now);
   const y = parts.find((p) => p.type === "year")?.value;
   const m = parts.find((p) => p.type === "month")?.value;
   const d = parts.find((p) => p.type === "day")?.value;
-  return `${y}-${m}-${d}`; // YYYY-MM-DD
+  return `${y}-${m}-${d}`;
 }
 
-function getSPDayBoundsUTC(yyyy_mm_dd) {
-  // Cria datas com offset -03:00 e converte para ISO UTC
-  const startUTC = new Date(`${yyyy_mm_dd}T00:00:00-03:00`).toISOString();
-  const endUTC = new Date(`${yyyy_mm_dd}T23:59:59-03:00`).toISOString();
-  return { startUTC, endUTC };
+function normalizePautaText(pauta) {
+  if (!pauta) return "";
+  // pauta pode vir como string grande, markdown, etc.
+  // normalize sem "inventar": só limpa espaços extremos
+  return String(pauta).trim();
 }
 
-function safeJson(v) {
-  try {
-    return JSON.stringify(v ?? []);
-  } catch {
-    return "[]";
-  }
-}
-
-function normalizePautaText(txt, maxChars = 1200) {
-  const s = String(txt || "").trim();
-  if (!s) return "";
-  // corta para não estourar prompt/token
-  return s.length > maxChars ? s.slice(0, maxChars) + "…" : s;
+// Converte um "YYYY-MM-DDTHH:mm:ss" (sem offset) em UTC ISO com "Z"
+// assumindo que o input está no fuso SP (-03:00).
+function spLocalToUtcIsoZ(localIsoNoOffset) {
+  // localIsoNoOffset: "2026-02-02T00:00:00"
+  // SP = UTC-3 => UTC = local + 3h
+  const dt = new Date(`${localIsoNoOffset}-03:00`); // força interpretar como SP
+  return dt.toISOString(); // retorna em UTC com Z
 }
 
 const Inicio = () => {
   const navigate = useNavigate();
+
   const [resumoIA, setResumoIA] = useState("Conectando aos satélites táticos...");
   const [loadingIA, setLoadingIA] = useState(true);
   const [iaStatus, setIaStatus] = useState("checking"); // checking | active | inactive
@@ -67,7 +62,8 @@ const Inicio = () => {
   });
 
   useEffect(() => {
-    // ✅ Guard mínimo (mantido)
+    // ✅ Guard mínimo: se entrou direto em /inicio sem autenticação,
+    // manda para "/" (LandingFarol).
     const guard = async () => {
       const storedUser = localStorage.getItem("usuario_externo");
       const {
@@ -89,11 +85,15 @@ const Inicio = () => {
   const carregarDados = async () => {
     setLoadingIA(true);
 
-    // Hoje em SP (não UTC)
-    const hojeSP = getTodaySP_YYYY_MM_DD();
-    const { startUTC, endUTC } = getSPDayBoundsUTC(hojeSP);
+    const hojeSP = isoDateSP();
+    const inicioSpLocal = `${hojeSP}T00:00:00`;
+    const fimSpLocal = `${hojeSP}T23:59:59`;
 
-    // 1) KPIs: ações abertas
+    // Para filtrar corretamente no banco (timestamptz), convertemos o intervalo SP -> UTC
+    const startUTC = spLocalToUtcIsoZ(inicioSpLocal);
+    const endUTC = spLocalToUtcIsoZ(fimSpLocal);
+
+    // 1) KPIs
     const { count: acoesCount, error: errAcoes } = await supabase
       .from("acoes")
       .select("*", { count: "exact", head: true })
@@ -101,34 +101,26 @@ const Inicio = () => {
 
     if (errAcoes) console.error("Erro ao contar ações abertas:", errAcoes);
 
-    // 2) Agenda de hoje (corrigido por bounds UTC equivalentes ao dia SP)
+    // 2) Agenda HOJE (SP) + pauta (ATA IA na coluna pauta)
     const { data: agendaHoje, error: errAgenda } = await supabase
       .from("reunioes")
-      .select("id, titulo, data_hora, status, cor, tipo_reuniao_id, tipo_reuniao_legacy")
+      .select("id, titulo, data_hora, status, pauta")
       .gte("data_hora", startUTC)
       .lte("data_hora", endUTC)
       .order("data_hora", { ascending: true });
 
-    if (errAgenda) console.error("Erro ao buscar agenda do dia:", errAgenda);
+    if (errAgenda) console.error("Erro ao buscar agenda hoje:", errAgenda);
 
-    // 3) Últimas reuniões realizadas + ATAs IA (coluna pauta)
-    const { data: ultimasRealizadas, error: errUltimas } = await supabase
-      .from("reunioes")
-      .select("id, titulo, data_hora, status, pauta")
-      .eq("status", "Realizada")
-      .order("data_hora", { ascending: false })
-      .limit(2);
-
-    if (errUltimas) console.error("Erro ao buscar últimas realizadas:", errUltimas);
+    const reunioesHojeCount = (agendaHoje || []).length;
 
     const estatisticas = {
       acoesAbertas: acoesCount || 0,
-      reunioesHoje: (agendaHoje || []).length,
+      reunioesHoje: reunioesHojeCount || 0,
       agendaHoje: agendaHoje || [],
-      ultimasRealizadas: ultimasRealizadas || [],
-      hojeSP,
-      startUTC,
-      endUTC,
+      // campos extras para prompt (SP)
+      data_sp: hojeSP,
+      inicio_sp: inicioSpLocal,
+      fim_sp: fimSpLocal,
     };
 
     setStats({
@@ -136,7 +128,7 @@ const Inicio = () => {
       reunioesHoje: estatisticas.reunioesHoje,
     });
 
-    // 4) Cache ou nova geração
+    // 3) Cache ou nova geração
     const cacheDate = localStorage.getItem("farol_ia_date");
     const cacheText = localStorage.getItem("farol_ia_text");
 
@@ -144,19 +136,20 @@ const Inicio = () => {
       setResumoIA(cacheText);
       setIaStatus("active");
       setLoadingIA(false);
-      setLastUpdate(new Date().toLocaleTimeString());
-    } else {
-      await gerarResumoIA(estatisticas);
+      setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+      return;
     }
+
+    await gerarResumoIA(estatisticas);
   };
 
   const gerarResumoIA = async (dados) => {
     setIaStatus("checking");
+
     try {
       const model = getGeminiFlash();
 
       // 1) Busca prompt no Supabase (app_prompts)
-      let promptTemplate = "";
       const { data: promptData, error: promptErr } = await supabase
         .from("app_prompts")
         .select("prompt_text")
@@ -167,47 +160,62 @@ const Inicio = () => {
         console.error("Erro ao buscar prompt inicio_resumo:", promptErr);
       }
 
-      promptTemplate =
-        promptData?.prompt_text ||
-        `Aja como um Diretor de Operações Sênior analisando o Farol Tático.
+      // fallback (caso não exista na tabela)
+      const fallbackTemplate = `Você é um Diretor de Operações Sênior. Gere um resumo tático do dia, baseado EXCLUSIVAMENTE nos dados fornecidos.
 
-DADOS (DATA: {data_sp}):
-- Janela do dia (SP): {inicio_sp} até {fim_sp}
-- Agenda de hoje (SP): {agendaHoje}
-- Ações abertas: {acoesAbertas}
+REGRAS OBRIGATÓRIAS:
+- NÃO invente fatos, números, causas, riscos ou consequências.
+- NÃO use linguagem jurídica/sensível. É PROIBIDO mencionar: "risco trabalhista", "passivo", "processo", "conformidade legal", ou equivalentes.
+- Se faltar informação, escreva "não foi informado" ou "sem registro na pauta".
+- Use português direto, operacional e objetivo.
 
-ATAS IA (últimas reuniões realizadas):
-{atasIARecentes}
+DADOS DO DIA (SP):
+- Data: {data_sp}
+- Janela: {inicio_sp} até {fim_sp}
+
+AGENDA DE HOJE (SP) [lista de reuniões]:
+{agendaHoje}
+
+ATAS IA (pauta) DAS REUNIÕES DE HOJE:
+{atasIAHoje}
 
 MISSÃO:
-Escreva um resumo executivo curto (máx 4 linhas), direto e prático.
+1) Liste as reuniões de HOJE separando em:
+   A) "Já realizadas hoje" (status Realizada) – para cada uma, faça um resumo do que foi falado (com base na pauta/ata IA).
+   B) "Ainda hoje" (não realizadas) – liste em ordem de horário com título.
 
-DIRETRIZES:
-- NÃO invente dados.
-- Use apenas o que estiver nos dados acima.
-- Aponte riscos, pontos de atenção e foco imediato.
-- Use markdown simples (negrito **texto**).`;
+2) Finalize com "Foco do dia" (2 a 4 bullets) somente se estiver explicitamente indicado nas pautas; caso contrário, escreva "Foco do dia: não informado nas pautas".
 
-      // 2) Monta variáveis do prompt
-      const agendaHojeStr = safeJson(dados.agendaHoje || []);
-      const inicioSP = `${dados.hojeSP} 00:00`;
-      const fimSP = `${dados.hojeSP} 23:59`;
+FORMATO:
+- Máximo 10 a 12 linhas (pode usar bullets).
+- Pode usar negrito **texto** para destacar títulos.`;
 
-      // ATAs IA: vem da coluna pauta (você confirmou)
-      const atasIARecentesStr = (dados.ultimasRealizadas || [])
-        .map((r) => {
-          const pauta = normalizePautaText(r.pauta, 1500);
-          return `- ${r.titulo || "(Sem título)"} (${String(r.data_hora || "").slice(0, 19)}):\n${pauta || "(sem pauta/ata IA)"}\n`;
-        })
-        .join("\n");
+      const promptTemplate = promptData?.prompt_text || fallbackTemplate;
+
+      // 2) Monta strings para o prompt
+      const agendaHojeStr = JSON.stringify(dados.agendaHoje || []);
+
+      const realizadas = (dados.agendaHoje || []).filter((r) =>
+        String(r.status || "").toLowerCase().includes("realiz")
+      );
+
+      const atasIAHojeStr =
+        realizadas.length > 0
+          ? realizadas
+              .map((r) => {
+                const titulo = r.titulo || "(Sem título)";
+                const pauta = normalizePautaText(r.pauta);
+                return `- ${titulo}:\n${pauta || "(sem registro na pauta)"}`;
+              })
+              .join("\n\n")
+          : "(sem atas IA registradas hoje)";
 
       const finalPrompt = promptTemplate
-        .replace(/{data_sp}/g, dados.hojeSP)
-        .replace(/{inicio_sp}/g, inicioSP)
-        .replace(/{fim_sp}/g, fimSP)
+        .replace(/{data_sp}/g, String(dados.data_sp || ""))
+        .replace(/{inicio_sp}/g, String(dados.inicio_sp || ""))
+        .replace(/{fim_sp}/g, String(dados.fim_sp || ""))
         .replace(/{agendaHoje}/g, agendaHojeStr)
-        .replace(/{acoesAbertas}/g, String(dados.acoesAbertas ?? 0))
-        .replace(/{atasIARecentes}/g, atasIARecentesStr);
+        .replace(/{atasIAHoje}/g, atasIAHojeStr);
 
       // 3) Gera
       const result = await model.generateContent(finalPrompt);
@@ -215,9 +223,9 @@ DIRETRIZES:
 
       setResumoIA(texto);
       setIaStatus("active");
-      setLastUpdate(new Date().toLocaleTimeString());
+      setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
 
-      localStorage.setItem("farol_ia_date", dados.hojeSP);
+      localStorage.setItem("farol_ia_date", String(dados.data_sp || ""));
       localStorage.setItem("farol_ia_text", texto);
     } catch (error) {
       console.error("Erro IA:", error);
@@ -293,9 +301,7 @@ DIRETRIZES:
               Pendências
             </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">
-                {stats.acoesAbertas}
-              </span>
+              <span className="text-4xl font-bold text-gray-800">{stats.acoesAbertas}</span>
               <span className="text-xs text-red-500 font-medium">ações abertas</span>
             </div>
           </div>
@@ -311,9 +317,7 @@ DIRETRIZES:
               Agenda Hoje
             </p>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">
-                {stats.reunioesHoje}
-              </span>
+              <span className="text-4xl font-bold text-gray-800">{stats.reunioesHoje}</span>
               <span className="text-xs text-blue-500 font-medium">eventos</span>
             </div>
           </div>
@@ -334,13 +338,14 @@ DIRETRIZES:
                     </div>
                     <div>
                       <h2 className="text-lg font-bold text-white tracking-wide">
-                        Análise Executiva
+                        Resumo do Dia
                       </h2>
                       <p className="text-xs text-slate-400">
-                        Gemini Flash • Monitoramento Ativo
+                        Gemini Flash • Agenda + ATAs IA (pauta)
                       </p>
                     </div>
                   </div>
+
                   <button
                     onClick={forcarAtualizacao}
                     className="text-slate-400 hover:text-white transition-colors"
@@ -353,21 +358,24 @@ DIRETRIZES:
                 {loadingIA ? (
                   <div className="flex flex-col items-center justify-center py-10 text-blue-200/50">
                     <Loader2 size={32} className="animate-spin mb-3" />
-                    <p className="text-sm animate-pulse">
-                      Processando dados operacionais...
-                    </p>
+                    <p className="text-sm animate-pulse">Processando agenda e atas...</p>
                   </div>
                 ) : (
                   <div className="text-slate-300 text-sm leading-relaxed space-y-3">
                     {resumoIA.split("\n").map((line, idx) => {
-                      if (line.startsWith("#")) {
+                      if (!line.trim()) return null;
+
+                      // suporta "###" etc
+                      if (line.trim().startsWith("#")) {
                         return (
-                          <h3 key={idx} className="text-white font-bold text-base mt-4 mb-2">
-                            {line.replace(/^#+\s/, "")}
+                          <h3
+                            key={idx}
+                            className="text-white font-bold text-base mt-4 mb-2"
+                          >
+                            {line.replace(/^#+\s*/, "")}
                           </h3>
                         );
                       }
-                      if (!line.trim()) return null;
 
                       return (
                         <p key={idx}>
@@ -392,10 +400,12 @@ DIRETRIZES:
 
               <div className="relative z-10 mt-6 pt-6 border-t border-white/5 flex gap-4 text-xs text-slate-400 font-mono">
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" /> CRM Conectado
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Ações sincronizadas
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Agenda Sincronizada
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                  Agenda do dia (SP)
                 </span>
               </div>
             </div>
@@ -420,7 +430,10 @@ DIRETRIZES:
                   <p className="text-xs text-gray-500">Ver calendário</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-blue-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-blue-600 transition-colors"
+                size={18}
+              />
             </button>
 
             <button
@@ -436,7 +449,10 @@ DIRETRIZES:
                   <p className="text-xs text-gray-500">Histórico de decisões</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-purple-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-purple-600 transition-colors"
+                size={18}
+              />
             </button>
 
             <button
@@ -452,7 +468,10 @@ DIRETRIZES:
                   <p className="text-xs text-gray-500">IA Copiloto</p>
                 </div>
               </div>
-              <ArrowRight className="text-gray-300 group-hover:text-red-600 transition-colors" size={18} />
+              <ArrowRight
+                className="text-gray-300 group-hover:text-red-600 transition-colors"
+                size={18}
+              />
             </button>
           </div>
         </div>
