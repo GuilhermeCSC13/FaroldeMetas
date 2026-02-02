@@ -1,4 +1,3 @@
-// src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
@@ -17,7 +16,6 @@ import {
   subWeeks,
   parseISO,
   addMinutes,
-  isValid
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -28,7 +26,6 @@ import {
   List,
   X,
   Save,
-  Trash2, // Mantido apenas se for usar ícone em outro lugar, senão pode remover
   ShieldAlert
 } from "lucide-react";
 import { salvarReuniao, atualizarReuniao } from "../services/agendaService";
@@ -36,16 +33,25 @@ import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
 
-// Função para extrair hora limpa (LITERAL)
+// ✅ 1. FUNÇÃO "LITERAL" PARA EXTRAIR HORA (IGNORA FUSO)
 function extractTime(dateString) {
   if (!dateString) return "";
   const str = String(dateString);
-  if (str.includes("T")) return str.split("T")[1].substring(0, 5);
-  if (str.includes(":")) return str.substring(0, 5);
+
+  // Se for ISO completa (tem T), pega o trecho da hora
+  if (str.includes("T")) {
+    return str.split("T")[1].substring(0, 5); 
+  }
+
+  // Se já for hora simples (09:00:00)
+  if (str.includes(":")) {
+    return str.substring(0, 5);
+  }
+
   return "";
 }
 
-// Formatar intervalo visual
+// ✅ 2. FORMATAR INTERVALO VISUAL
 function formatTimeRange(reuniao) {
   try {
     const horaIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "--:--";
@@ -171,18 +177,18 @@ export default function CentralReunioes() {
   };
 
   const handleEdit = (reuniao) => {
-    const dataPart = String(reuniao.data_hora).split('T')[0];
+    const dt = parseDataLocal(reuniao.data_hora);
     const hhmmIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "09:00";
     let hhmmFim = extractTime(reuniao.horario_fim);
     
     if (!hhmmFim) {
-       hhmmFim = "10:00"; 
+        hhmmFim = "10:00"; 
     }
 
     setFormData({
       titulo: reuniao.titulo || "",
       tipo_reuniao_id: reuniao.tipo_reuniao_id || "",
-      data: dataPart,
+      data: format(dt, "yyyy-MM-dd"),
       hora_inicio: hhmmIni,
       hora_fim: hhmmFim,
       cor: reuniao.cor || "#3B82F6",
@@ -223,9 +229,11 @@ export default function CentralReunioes() {
     
     try {
       if (editingReuniao) {
-        const aplicar = editingReuniao.status === 'Realizada' 
+        // Se já foi realizada, salva direto. Se não, pergunta.
+        const aplicar = formData.status === 'Realizada' 
             ? false 
             : window.confirm("Deseja aplicar as mudanças para reuniões futuras desta série?");
+            
         const { error } = await atualizarReuniao(editingReuniao.id, dados, aplicar);
         if (error) throw error;
       } else {
@@ -241,7 +249,6 @@ export default function CentralReunioes() {
     }
   };
 
-  // ✅ Abre o modal de segurança
   const handleDeleteClick = () => {
     setShowDeleteAuth(true);
     setDelLogin("");
@@ -345,10 +352,11 @@ export default function CentralReunioes() {
     <Layout>
       <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden relative">
         
-        {/* OVERLAY EXCLUSÃO */}
+        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) - CORRIGIDO Z-INDEX */}
         {showDeleteAuth && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
-            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
+          <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center relative">
+              <button onClick={() => setShowDeleteAuth(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={18} /></button>
               <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
                 <ShieldAlert size={24} />
               </div>
@@ -366,7 +374,6 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* HEADER E VIEWS */}
         <div className="flex justify-between items-center mb-6">
           <div><h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1></div>
           <div className="flex gap-2">
@@ -408,7 +415,6 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* ... (View List e Calendar mantidos iguais para economizar espaço) ... */}
         {view === "list" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-6">
             {Object.entries(reunioesAgrupadas).sort(([a], [b]) => a.localeCompare(b)).map(([day, meetings]) => (
@@ -464,7 +470,7 @@ export default function CentralReunioes() {
         )}
       </div>
 
-      {/* MODAL PRINCIPAL */}
+      {/* MODAL DETALHES */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
@@ -480,13 +486,12 @@ export default function CentralReunioes() {
                 setFormData={setFormData} 
                 editingReuniao={editingReuniao} 
                 tipos={tipos} 
-                isRealizada={formData.status === "Realizada"} 
+                isRealizada={formData.status === "Realizada"}
                 onDeleteRequest={handleDeleteClick} 
               />
             </form>
 
             <div className="bg-slate-50 p-5 border-t flex justify-end gap-3 shrink-0">
-              {/* Botão de excluir agora fica dentro do DetalhesReuniao por pedido, removido daqui */}
               <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-slate-500 font-bold" type="button">Cancelar</button>
               <button type="submit" form="form-reuniao" className="px-10 py-2 bg-blue-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 active:scale-95 transition-all"><Save size={18} /> Salvar Alterações</button>
             </div>
