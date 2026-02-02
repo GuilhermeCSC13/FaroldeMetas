@@ -23,6 +23,8 @@ import {
   Clock,
   Image,
   MessageSquare,
+  Paperclip,
+  Download,
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -31,17 +33,31 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
    Helpers
 ========================= */
 
+// ISO local (sem Z) — usado para updated_at/created_at
 function nowIso() {
   const now = new Date();
-  const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
-  return localDate.toISOString().slice(0, 19); 
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 19);
 }
 
 function todayISODate() {
   return nowIso().slice(0, 10);
 }
 
-function toBR(dt) {
+// ✅ Data BR (dd/MM/aaaa) usando UTC para evitar shift
+function toBRDate(dt) {
+  try {
+    if (!dt) return "-";
+    const d = new Date(dt);
+    if (Number.isNaN(d.getTime())) return "-";
+    return d.toLocaleDateString("pt-BR", { timeZone: "UTC" });
+  } catch {
+    return "-";
+  }
+}
+
+// ✅ DateTime BR (dd/MM/aaaa HH:mm) usando UTC para evitar shift
+function toBRDateTime(dt) {
   try {
     if (!dt) return "-";
     return new Date(dt).toLocaleString("pt-BR", { timeZone: "UTC" });
@@ -53,6 +69,7 @@ function toBR(dt) {
 function norm(s) {
   return String(s || "").trim().toUpperCase();
 }
+
 function secondsToMMSS(s) {
   const mm = Math.floor((s || 0) / 60)
     .toString()
@@ -62,6 +79,7 @@ function secondsToMMSS(s) {
     .padStart(2, "0");
   return `${mm}:${ss}`;
 }
+
 function buildNomeSobrenome(u) {
   if (!u) return "";
   const nomeCompleto = String(u?.nome_completo || "").trim();
@@ -73,9 +91,11 @@ function buildNomeSobrenome(u) {
   if (nome) return nome;
   return u.email || "-";
 }
+
 function sanitizeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9.]/g, "");
 }
+
 function fileKind(file) {
   const t = String(file?.type || "").toLowerCase();
   const n = String(file?.name || "").toLowerCase();
@@ -87,6 +107,45 @@ function fileKind(file) {
   if (n.endsWith(".xls") || n.endsWith(".xlsx")) return "xls";
   if (n.endsWith(".ppt") || n.endsWith(".pptx")) return "ppt";
   return "file";
+}
+
+// ✅ Helper robusto para extrair HH:mm (igual ao padrão do código anterior)
+function extractTime(dateString) {
+  if (!dateString) return "";
+  const s = String(dateString);
+  if (s.length <= 8 && s.includes(":")) return s.substring(0, 5);
+
+  try {
+    const d = new Date(dateString);
+    if (!Number.isNaN(d.getTime())) {
+      // HH:mm em UTC para não deslocar
+      return d.toLocaleTimeString("pt-BR", {
+        timeZone: "UTC",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
+function meetingInicioFimLabel(r) {
+  const data = toBRDate(r?.data_hora);
+  const ini = extractTime(r?.horario_inicio) || extractTime(r?.data_hora);
+  const fim = extractTime(r?.horario_fim);
+  // Ex.: 02/02/2026 • Início 09:00 • Término 10:00
+  if (!r?.data_hora && !ini && !fim) return "-";
+  const parts = [];
+  if (data && data !== "-") parts.push(data);
+  if (ini) parts.push(`Início ${ini}`);
+  if (fim) parts.push(`Término ${fim}`);
+  return parts.join(" • ") || "-";
+}
+
+function safeArray(v) {
+  return Array.isArray(v) ? v : [];
 }
 
 /* =========================
@@ -108,7 +167,7 @@ export default function Copiloto() {
   const [nomeTipoReuniao, setNomeTipoReuniao] = useState("");
 
   // tabs direita
-  const [tab, setTab] = useState("acoes"); // acoes | ata_principal | ata_manual
+  const [tab, setTab] = useState("acoes"); // acoes | ata_principal | ata_manual | materiais
 
   // Atas
   const [ataPrincipal, setAtaPrincipal] = useState("");
@@ -119,9 +178,7 @@ export default function Copiloto() {
   const [loadingAcoes, setLoadingAcoes] = useState(false);
   const [acoesDaReuniao, setAcoesDaReuniao] = useState([]);
   const [acoesPendentesTipo, setAcoesPendentesTipo] = useState([]);
-  const [acoesConcluidasDesdeUltima, setAcoesConcluidasDesdeUltima] = useState(
-    []
-  );
+  const [acoesConcluidasDesdeUltima, setAcoesConcluidasDesdeUltima] = useState([]);
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
   // ✅ Criação de Ação
@@ -138,7 +195,7 @@ export default function Copiloto() {
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
-  // ✅ Usuário Logado
+  // ✅ Usuário Logado (visual)
   const [currentUser, setCurrentUser] = useState(null);
 
   // ✅ Responsável autocomplete
@@ -161,14 +218,10 @@ export default function Copiloto() {
   /* =========================
       Lifecycle & CTRL+V LISTENER
   ========================= */
-  
-  // ✅ NOVO: Ouvinte de "Colar" (Ctrl+V)
+
+  // ✅ Colar print (Ctrl+V) — sem debug/console
   useEffect(() => {
     const handlePaste = (e) => {
-      // Só permite colar se: 
-      // 1. Tiver reunião selecionada
-      // 2. Estiver na aba de ações
-      // 3. Não estiver com o modal de detalhes aberto (para não colar lá sem querer)
       if (!selecionada?.id || tab !== "acoes" || acaoSelecionada) return;
 
       const items = e.clipboardData?.items;
@@ -176,28 +229,21 @@ export default function Copiloto() {
 
       const files = [];
       for (let i = 0; i < items.length; i++) {
-        // Verifica se é imagem
         if (items[i].type.indexOf("image") !== -1) {
           const blob = items[i].getAsFile();
-          // Gera nome único para o print
           const file = new File([blob], `print_${Date.now()}.png`, { type: blob.type });
           files.push(file);
         }
       }
 
       if (files.length > 0) {
-        // Se achou imagem, adiciona às evidências
         setNovasEvidenciasAcao((prev) => [...(prev || []), ...files]);
-        
-        // Opcional: Feedback visual ou console
-        console.log("📸 Print colado com sucesso!", files);
       }
     };
 
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
   }, [selecionada, tab, acaoSelecionada]);
-
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -210,14 +256,12 @@ export default function Copiloto() {
 
         const storedUser = localStorage.getItem("usuario_externo");
         if (storedUser) {
-             safeSet(() => setCurrentUser(JSON.parse(storedUser)));
+          safeSet(() => setCurrentUser(JSON.parse(storedUser)));
         }
 
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
-          .select(
-            "id, nome, sobrenome, nome_completo, login, email, ativo, nivel, status_cadastro"
-          )
+          .select("id, nome, sobrenome, nome_completo, login, email, ativo, nivel, status_cadastro")
           .eq("ativo", true)
           .order("nome_completo", { ascending: true });
 
@@ -369,30 +413,25 @@ export default function Copiloto() {
       await stopRecording();
 
       if (selecionada?.id) {
-        await supabase
-          .from("reunioes")
-          .update({ status: "Realizada" })
-          .eq("id", selecionada.id);
+        await supabase.from("reunioes").update({ status: "Realizada" }).eq("id", selecionada.id);
       }
 
       if (selecionada?.id) {
         const bucket = current?.storageBucket || "gravacoes";
         const prefix = current?.storagePrefix || `reunioes/${selecionada.id}`;
 
-        const { error: qErr } = await supabase
-          .from("reuniao_processing_queue")
-          .insert([
-            {
-              reuniao_id: selecionada.id,
-              job_type: "BACKFILL_COMPILE_ATA",
-              status: "PENDENTE",
-              attempts: 0,
-              next_run_at: nowIso(),
-              storage_bucket: bucket,
-              storage_prefix: prefix,
-              result: {}, 
-            },
-          ]);
+        const { error: qErr } = await supabase.from("reuniao_processing_queue").insert([
+          {
+            reuniao_id: selecionada.id,
+            job_type: "BACKFILL_COMPILE_ATA",
+            status: "PENDENTE",
+            attempts: 0,
+            next_run_at: nowIso(),
+            storage_bucket: bucket,
+            storage_prefix: prefix,
+            result: {},
+          },
+        ]);
 
         if (qErr) {
           console.error("enqueue reuniao_processing_queue:", qErr);
@@ -435,10 +474,7 @@ export default function Copiloto() {
 
     if (!data?.id) return alert("Senha inválida.");
 
-    const { error: e2 } = await supabase
-      .from("reunioes")
-      .update({ status: "Pendente" })
-      .eq("id", selecionada.id);
+    const { error: e2 } = await supabase.from("reunioes").update({ status: "Pendente" }).eq("id", selecionada.id);
 
     if (e2) {
       console.error("reabrir reuniao:", e2);
@@ -457,23 +493,15 @@ export default function Copiloto() {
     const urls = [];
 
     for (const file of files) {
-      const fileName = `acao-${acaoId}-${Date.now()}-${sanitizeFileName(
-        file.name
-      )}`;
+      const fileName = `acao-${acaoId}-${Date.now()}-${sanitizeFileName(file.name)}`;
 
-      const { error } = await supabase.storage
-        .from("evidencias")
-        .upload(fileName, file, { upsert: false });
-
+      const { error } = await supabase.storage.from("evidencias").upload(fileName, file, { upsert: false });
       if (error) {
         console.error("Erro upload evidência:", error);
         continue;
       }
 
-      const { data: urlData } = supabase.storage
-        .from("evidencias")
-        .getPublicUrl(fileName);
-
+      const { data: urlData } = supabase.storage.from("evidencias").getPublicUrl(fileName);
       if (urlData?.publicUrl) urls.push(urlData.publicUrl);
     }
 
@@ -585,9 +613,7 @@ export default function Copiloto() {
 
     try {
       const respRow =
-        (listaResponsaveis || []).find(
-          (u) => String(u.login || "") === responsavelId
-        ) ||
+        (listaResponsaveis || []).find((u) => String(u.login || "") === responsavelId) ||
         (listaResponsaveis || []).find((u) => String(u.id) === responsavelId) ||
         null;
 
@@ -598,13 +624,13 @@ export default function Copiloto() {
 
       const storedUser = localStorage.getItem("usuario_externo");
       if (storedUser) {
-          try {
-              const u = JSON.parse(storedUser);
-              criadorFinalId = u.id;
-              criadorFinalNome = buildNomeSobrenome(u) || u.login || u.email || "Usuário";
-          } catch(e) {
-              console.error("Erro ao ler criador do localStorage", e);
-          }
+        try {
+          const u = JSON.parse(storedUser);
+          criadorFinalId = u.id;
+          criadorFinalNome = buildNomeSobrenome(u) || u.login || u.email || "Usuário";
+        } catch (e) {
+          console.error("Erro ao ler criador do localStorage", e);
+        }
       }
 
       const payloadCriacao = {
@@ -623,20 +649,17 @@ export default function Copiloto() {
         criado_por_nome: criadorFinalNome,
 
         data_vencimento: vencimento,
-        data_abertura: todayISODate(), 
+        data_abertura: todayISODate(),
 
-        created_at: nowIso(), 
-        data_criacao: nowIso(), 
+        created_at: nowIso(),
+        data_criacao: nowIso(),
 
         fotos_acao: [],
         fotos: [],
         evidencia_url: null,
       };
 
-      const { data, error } = await supabase
-        .from("acoes")
-        .insert([payloadCriacao])
-        .select("*");
+      const { data, error } = await supabase.from("acoes").insert([payloadCriacao]).select("*");
 
       if (error) {
         console.error("salvarAcao insert:", error);
@@ -650,9 +673,7 @@ export default function Copiloto() {
       const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
 
       if (!urls.length) {
-        alert(
-          "Atenção: A ação foi criada, mas falhou o upload da evidência. Edite a ação para tentar novamente."
-        );
+        alert("Atenção: A ação foi criada, mas falhou o upload da evidência. Edite a ação para tentar novamente.");
       } else {
         const payloadUpdate = {
           fotos_acao: urls,
@@ -660,16 +681,11 @@ export default function Copiloto() {
           evidencia_url: urls[0] || null,
         };
 
-        const { error: e2 } = await supabase
-          .from("acoes")
-          .update(payloadUpdate)
-          .eq("id", acaoId);
+        const { error: e2 } = await supabase.from("acoes").update(payloadUpdate).eq("id", acaoId);
 
         if (e2) {
           console.error("salvarAcao update evidencias:", e2);
-          alert(
-            "Ação criada, mas houve erro ao vincular os arquivos: " + e2.message
-          );
+          alert("Ação criada, mas houve erro ao vincular os arquivos: " + e2.message);
         }
       }
 
@@ -692,18 +708,17 @@ export default function Copiloto() {
 
   /* =========================
       Responsável autocomplete
-  ========================= */
+      ✅ Ajuste: não mostrar dropdown “debug/auto-complete” sem query
+========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
-    if (!q) return [];
+    if (q.length < 2) return []; // ✅ só sugere com 2+ chars
     return (listaResponsaveis || [])
       .filter((u) => {
         const nome = buildNomeSobrenome(u).toLowerCase();
         const login = String(u?.login || "").toLowerCase();
         const email = String(u?.email || "").toLowerCase();
-        return (
-          nome.includes(q) || login.includes(q) || (email && email.includes(q))
-        );
+        return nome.includes(q) || login.includes(q) || (email && email.includes(q));
       })
       .slice(0, 10);
   }, [responsavelQuery, listaResponsaveis]);
@@ -762,9 +777,7 @@ export default function Copiloto() {
   ========================= */
   const reunioesFiltradas = useMemo(() => {
     const q = (busca || "").toLowerCase();
-    return (reunioes || []).filter((r) =>
-      (r.titulo || "").toLowerCase().includes(q)
-    );
+    return (reunioes || []).filter((r) => (r.titulo || "").toLowerCase().includes(q));
   }, [reunioes, busca]);
 
   const statusLabel = (r) => {
@@ -774,23 +787,17 @@ export default function Copiloto() {
 
   const statusBadgeClass = (lbl) => {
     const v = norm(lbl);
-    if (v === "REALIZADA")
-      return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
-    if (v === "EM ANDAMENTO")
-      return "bg-blue-600/15 text-blue-700 border border-blue-200";
-    if (v === "AGENDADA")
-      return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    if (v === "PENDENTE")
-      return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v === "REALIZADA") return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
+    if (v === "EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border border-blue-200";
+    if (v === "AGENDADA") return "bg-slate-600/10 text-slate-700 border border-slate-200";
+    if (v === "PENDENTE") return "bg-slate-600/10 text-slate-700 border border-slate-200";
     return "bg-slate-600/10 text-slate-700 border border-slate-200";
   };
 
   const listaAtiva =
-    acaoTab === "reuniao"
-      ? acoesDaReuniao
-      : acaoTab === "backlog"
-      ? acoesPendentesTipo
-      : acoesConcluidasDesdeUltima;
+    acaoTab === "reuniao" ? acoesDaReuniao : acaoTab === "backlog" ? acoesPendentesTipo : acoesConcluidasDesdeUltima;
+
+  const materiaisReuniao = safeArray(selecionada?.materiais);
 
   return (
     <Layout>
@@ -816,6 +823,7 @@ export default function Copiloto() {
               <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
               <input
                 type="date"
+                autoComplete="off"
                 className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
                 value={dataFiltro}
                 onChange={(e) => setDataFiltro(e.target.value)}
@@ -826,6 +834,7 @@ export default function Copiloto() {
               <Search size={16} className="absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="Buscar..."
                 className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
                 value={busca}
@@ -854,8 +863,10 @@ export default function Copiloto() {
                       <div className="font-black text-xs truncate">
                         {r.titulo || "Sem título"}
                       </div>
+
+                      {/* ✅ Ajuste: mostrar Data + Início + Término */}
                       <div className="text-[11px] text-slate-500 mt-1">
-                        {toBR(r.data_hora)}
+                        {meetingInicioFimLabel(r)}
                       </div>
                     </div>
 
@@ -908,10 +919,7 @@ export default function Copiloto() {
             ) : (
               <button
                 onClick={onStart}
-                disabled={
-                  !selecionada ||
-                  String(selecionada?.status || "").trim() === "Realizada"
-                }
+                disabled={!selecionada || String(selecionada?.status || "").trim() === "Realizada"}
                 className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-sm"
                 title={
                   String(selecionada?.status || "").trim() === "Realizada"
@@ -935,8 +943,10 @@ export default function Copiloto() {
                 <div className="text-xl font-black tracking-tight truncate">
                   {selecionada?.titulo || "Selecione uma reunião à esquerda"}
                 </div>
+
+                {/* ✅ Ajuste: mostrar Data + Início + Término */}
                 <div className="mt-1 text-xs text-slate-500">
-                  {selecionada?.data_hora ? toBR(selecionada.data_hora) : "-"}
+                  {selecionada?.id ? meetingInicioFimLabel(selecionada) : "-"}
                 </div>
 
                 {selecionada?.id && (
@@ -959,18 +969,17 @@ export default function Copiloto() {
               </div>
 
               <div className="flex items-center gap-2">
-                {selecionada?.id &&
-                  String(selecionada?.status || "").trim() === "Realizada" && (
-                    <button
-                      onClick={() => setShowUnlock(true)}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
-                      type="button"
-                      title="Reabrir reunião (exige senha do Administrador)"
-                    >
-                      <Lock size={16} />
-                      Reabrir (ADM)
-                    </button>
-                  )}
+                {selecionada?.id && String(selecionada?.status || "").trim() === "Realizada" && (
+                  <button
+                    onClick={() => setShowUnlock(true)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
+                    type="button"
+                    title="Reabrir reunião (exige senha do Administrador)"
+                  >
+                    <Lock size={16} />
+                    Reabrir (ADM)
+                  </button>
+                )}
 
                 {selecionada?.id && (
                   <button
@@ -993,11 +1002,7 @@ export default function Copiloto() {
 
           {/* Tabs principais */}
           <div className="flex flex-wrap gap-2 mb-4">
-            <TabButton
-              active={tab === "acoes"}
-              onClick={() => setTab("acoes")}
-              icon={<ClipboardList size={16} />}
-            >
+            <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
               Ações
             </TabButton>
 
@@ -1016,39 +1021,37 @@ export default function Copiloto() {
             >
               Ata Manual
             </TabButton>
+
+            {/* ✅ NOVO: Material da Reunião (após Ata Manual) */}
+            <TabButton
+              active={tab === "materiais"}
+              onClick={() => setTab("materiais")}
+              icon={<Paperclip size={16} />}
+            >
+              Material da Reunião
+            </TabButton>
           </div>
 
           {/* Conteúdo */}
           {!selecionada?.id ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-sm text-slate-600">
-              Selecione uma reunião na coluna da esquerda para visualizar ações e
-              atas.
+              Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
             </div>
           ) : tab === "acoes" ? (
             <div className="space-y-4">
               {/* Subtabs ações */}
               <div className="bg-white border border-slate-200 rounded-2xl p-4">
                 <div className="flex flex-wrap gap-2">
-                  <Pill
-                    active={acaoTab === "reuniao"}
-                    onClick={() => setAcaoTab("reuniao")}
-                  >
+                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
                     Da reunião ({(acoesDaReuniao || []).length})
                   </Pill>
 
-                  <Pill
-                    active={acaoTab === "backlog"}
-                    onClick={() => setAcaoTab("backlog")}
-                  >
+                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
                     Pendências do tipo ({(acoesPendentesTipo || []).length})
                   </Pill>
 
-                  <Pill
-                    active={acaoTab === "desde_ultima"}
-                    onClick={() => setAcaoTab("desde_ultima")}
-                  >
-                    Concluídas desde a última (
-                    {(acoesConcluidasDesdeUltima || []).length})
+                  <Pill active={acaoTab === "desde_ultima"} onClick={() => setAcaoTab("desde_ultima")}>
+                    Concluídas desde a última ({(acoesConcluidasDesdeUltima || []).length})
                   </Pill>
                 </div>
               </div>
@@ -1073,16 +1076,10 @@ export default function Copiloto() {
                 <div className="space-y-3">
                   {(listaAtiva || []).length > 0 ? (
                     (listaAtiva || []).map((a) => (
-                      <AcaoCard
-                        key={a.id}
-                        acao={a}
-                        onClick={() => setAcaoSelecionada(a)}
-                      />
+                      <AcaoCard key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
                     ))
                   ) : (
-                    <div className="text-sm text-slate-500">
-                      Nenhuma ação encontrada nesta aba.
-                    </div>
+                    <div className="text-sm text-slate-500">Nenhuma ação encontrada nesta aba.</div>
                   )}
                 </div>
               </div>
@@ -1097,10 +1094,7 @@ export default function Copiloto() {
                     <div className="text-sm font-black">Criar nova ação</div>
                     <div className="text-xs text-slate-500">
                       Criado por:{" "}
-                      <strong>
-                        {/* Exibe o usuário atual se disponível no state, apenas visualmente */}
-                        {currentUser ? buildNomeSobrenome(currentUser) : "..."}
-                      </strong>
+                      <strong>{currentUser ? buildNomeSobrenome(currentUser) : "..."}</strong>
                     </div>
                   </div>
                 </div>
@@ -1112,10 +1106,9 @@ export default function Copiloto() {
                     </label>
                     <input
                       type="text"
+                      autoComplete="off"
                       value={novaAcao.descricao}
-                      onChange={(e) =>
-                        setNovaAcao((p) => ({ ...p, descricao: e.target.value }))
-                      }
+                      onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       placeholder="Ex: Ajustar o relatório financeiro"
                     />
@@ -1126,13 +1119,9 @@ export default function Copiloto() {
                       Observação (Detalhes da Ação)
                     </label>
                     <textarea
+                      autoComplete="off"
                       value={novaAcao.observacao}
-                      onChange={(e) =>
-                        setNovaAcao((p) => ({
-                          ...p,
-                          observacao: e.target.value,
-                        }))
-                      }
+                      onChange={(e) => setNovaAcao((p) => ({ ...p, observacao: e.target.value }))}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                       rows={3}
                       placeholder="Descreva detalhadamente o que precisa ser feito..."
@@ -1140,37 +1129,35 @@ export default function Copiloto() {
                   </div>
 
                   <div className="relative">
-                    <label className="text-xs font-extrabold text-slate-600">
-                      Responsável
-                    </label>
+                    <label className="text-xs font-extrabold text-slate-600">Responsável</label>
                     <input
                       value={responsavelQuery}
+                      autoComplete="off"
                       onChange={(e) => {
                         setResponsavelQuery(e.target.value);
                         setRespOpen(true);
                       }}
                       onFocus={() => setRespOpen(true)}
+                      onBlur={() => setTimeout(() => setRespOpen(false), 120)}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                      placeholder={
-                        loadingResponsaveis
-                          ? "Carregando..."
-                          : "Digite o nome..."
-                      }
+                      placeholder={loadingResponsaveis ? "Carregando..." : "Digite o nome..."}
                       disabled={loadingResponsaveis}
                     />
 
+                    {/* ✅ Ajuste: só mostra se tiver query >=2 */}
                     {respOpen && responsaveisFiltrados.length > 0 && (
                       <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
                         {responsaveisFiltrados.map((u) => (
                           <button
                             key={u.id}
                             type="button"
-                            onClick={() => selecionarResponsavel(u)}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selecionarResponsavel(u);
+                            }}
                             className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
                           >
-                            <div className="font-semibold">
-                              {buildNomeSobrenome(u)}
-                            </div>
+                            <div className="font-semibold">{buildNomeSobrenome(u)}</div>
                             <div className="text-xs text-slate-500">
                               {u?.login ? `Login: ${u.login}` : null}
                               {u?.email ? ` • ${u.email}` : null}
@@ -1182,31 +1169,23 @@ export default function Copiloto() {
                   </div>
 
                   <div>
-                    <label className="text-xs font-extrabold text-slate-600">
-                      Vencimento
-                    </label>
+                    <label className="text-xs font-extrabold text-slate-600">Vencimento</label>
                     <input
                       type="date"
+                      autoComplete="off"
                       value={novaAcao.vencimento}
-                      onChange={(e) =>
-                        setNovaAcao((p) => ({
-                          ...p,
-                          vencimento: e.target.value,
-                        }))
-                      }
+                      onChange={(e) => setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))}
                       className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                     />
                   </div>
 
                   <div className="lg:col-span-2">
-                    <label className="text-xs font-extrabold text-slate-600">
-                      Evidências
-                    </label>
+                    <label className="text-xs font-extrabold text-slate-600">Evidências</label>
 
                     <div className="mt-2 flex items-center gap-3">
                       <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer text-sm font-black transition-colors hover:border-blue-300">
                         <UploadCloud size={16} className="text-blue-600" />
-                        <span>Clique, arraste ou <span className="text-blue-600">Cole (Ctrl+V)</span></span>
+                        <span>Clique, arraste ou Cole (Ctrl+V)</span>
                         <input
                           type="file"
                           multiple
@@ -1223,11 +1202,7 @@ export default function Copiloto() {
                     {previews.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-3">
                         {previews.map((p) => (
-                          <MiniaturaArquivo
-                            key={p.id}
-                            preview={p}
-                            onRemove={() => removerEvidencia(p.id)}
-                          />
+                          <MiniaturaArquivo key={p.id} preview={p} onRemove={() => removerEvidencia(p.id)} />
                         ))}
                       </div>
                     )}
@@ -1241,23 +1216,14 @@ export default function Copiloto() {
                     disabled={creatingAcao}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {creatingAcao ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Save size={16} />
-                    )}
+                    {creatingAcao ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     {creatingAcao ? "Salvando..." : "Salvar ação"}
                   </button>
 
                   <button
                     type="button"
                     onClick={() => {
-                      setNovaAcao({
-                        descricao: "",
-                        observacao: "",
-                        responsavelId: "",
-                        vencimento: "",
-                      });
+                      setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
                       setResponsavelQuery("");
                       setNovasEvidenciasAcao([]);
                       setRespOpen(false);
@@ -1278,11 +1244,10 @@ export default function Copiloto() {
               </div>
 
               <div className="text-sm text-slate-700 whitespace-pre-wrap">
-                {ataPrincipal ||
-                  "Sem ata principal configurada para este tipo de reunião."}
+                {ataPrincipal || "Sem ata principal configurada para este tipo de reunião."}
               </div>
             </div>
-          ) : (
+          ) : tab === "ata_manual" ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
@@ -1329,6 +1294,7 @@ export default function Copiloto() {
                 <textarea
                   value={ataManual}
                   onChange={(e) => setAtaManual(e.target.value)}
+                  autoComplete="off"
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
                   rows={14}
                   placeholder="Escreva a ata manual..."
@@ -1336,6 +1302,56 @@ export default function Copiloto() {
               ) : (
                 <div className="text-sm text-slate-700 whitespace-pre-wrap">
                   {ataManual || "Nenhuma ata manual ainda."}
+                </div>
+              )}
+            </div>
+          ) : (
+            // ✅ NOVO: Material da Reunião
+            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Paperclip size={18} className="text-slate-600" />
+                <div className="font-black">Material da Reunião</div>
+                <div className="text-xs text-slate-500 ml-2">
+                  ({materiaisReuniao.length} item(ns))
+                </div>
+              </div>
+
+              {materiaisReuniao.length === 0 ? (
+                <div className="text-sm text-slate-500">Nenhum material anexado nesta reunião.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {materiaisReuniao.map((m, idx) => (
+                    <div
+                      key={`${idx}-${m?.url || m?.name || "mat"}`}
+                      className="flex items-center justify-between border border-slate-200 rounded-xl p-3 bg-slate-50"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-black text-slate-800 truncate" title={m?.name || "Arquivo"}>
+                          {m?.name || "Arquivo"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate" title={m?.type || ""}>
+                          {m?.type || "—"}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {m?.url ? (
+                          <a
+                            href={m.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
+                            title="Abrir/baixar"
+                          >
+                            <Download size={16} />
+                            Abrir
+                          </a>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Sem URL</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1355,10 +1371,7 @@ export default function Copiloto() {
           onConcluir={async () => {
             await supabase
               .from("acoes")
-              .update({
-                status: "Concluída",
-                data_conclusao: new Date().toISOString(),
-              })
+              .update({ status: "Concluída", data_conclusao: new Date().toISOString() })
               .eq("id", acaoSelecionada.id);
 
             await fetchAcoes(selecionada);
@@ -1373,6 +1386,7 @@ export default function Copiloto() {
             <div className="font-black mb-2">Senha do Administrador</div>
             <input
               type="password"
+              autoComplete="off"
               value={senhaAdm}
               onChange={(e) => setSenhaAdm(e.target.value)}
               className="w-full border rounded-xl p-3"
@@ -1530,22 +1544,12 @@ function AcaoCard({ acao, onClick }) {
           {excluded ? (
             <Trash2 size={14} className="text-gray-400" />
           ) : (
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                done ? "bg-emerald-500" : "bg-blue-500"
-              }`}
-            />
+            <div className={`w-2.5 h-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-blue-500"}`} />
           )}
         </div>
 
         <div className="flex-1">
-          <div
-            className={`text-sm font-semibold ${
-              done || excluded
-                ? "line-through text-slate-400"
-                : "text-slate-900"
-            }`}
-          >
+          <div className={`text-sm font-semibold ${done || excluded ? "line-through text-slate-400" : "text-slate-900"}`}>
             {acao?.descricao || "-"}
             {excluded && (
               <span className="ml-2 text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded uppercase font-black no-underline inline-block border border-red-200">
@@ -1568,7 +1572,7 @@ function AcaoCard({ acao, onClick }) {
 
             {acao?.data_conclusao ? (
               <span className="text-green-600 flex items-center gap-1">
-                <Check size={10} /> {toBR(acao.data_conclusao)}
+                <Check size={10} /> {toBRDateTime(acao.data_conclusao)}
               </span>
             ) : null}
 
