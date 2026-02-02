@@ -4,6 +4,10 @@ import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
+
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 import {
   Calendar,
   User,
@@ -28,8 +32,8 @@ import {
   StickyNote,
   ShieldAlert,
   Paperclip, // ✅ Ícone anexo
-  FileText,  // ✅ Ícone arquivo
-  Download   // ✅ Ícone download
+  FileText, // ✅ Ícone arquivo
+  Download, // ✅ Ícone download
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -43,7 +47,7 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
-    if(durationDb) setDuration(durationDb);
+    if (durationDb) setDuration(durationDb);
   }, [src, durationDb]);
 
   const togglePlay = () => {
@@ -84,7 +88,9 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
     if (!time || isNaN(time)) return "00:00";
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
-    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+    return `${minutes.toString().padStart(2, "0")}:${seconds
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -103,7 +109,11 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
         onClick={togglePlay}
         className="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all"
       >
-        {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
+        {isPlaying ? (
+          <Pause size={14} fill="currentColor" />
+        ) : (
+          <Play size={14} fill="currentColor" className="ml-0.5" />
+        )}
       </button>
 
       <span className="text-xs font-mono text-slate-500 w-10 text-right">
@@ -119,19 +129,19 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
           onChange={handleSeek}
           className="absolute w-full h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer"
           style={{
-            background: `linear-gradient(to right, #3b82f6 ${progressPercent}%, #cbd5e1 ${progressPercent}%)`
+            background: `linear-gradient(to right, #3b82f6 ${progressPercent}%, #cbd5e1 ${progressPercent}%)`,
           }}
         />
         <style jsx>{`
-          input[type=range]::-webkit-slider-thumb {
+          input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             height: 12px;
             width: 12px;
             border-radius: 50%;
             background: #3b82f6;
             cursor: pointer;
-            margin-top: 0px; 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            margin-top: 0px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
           }
         `}</style>
       </div>
@@ -140,7 +150,10 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
         {formatTime(duration)}
       </span>
 
-      <button onClick={toggleMute} className="text-slate-400 hover:text-slate-600">
+      <button
+        onClick={toggleMute}
+        className="text-slate-400 hover:text-slate-600"
+      >
         {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
       </button>
     </div>
@@ -157,7 +170,7 @@ export default function CentralAtas() {
 
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
-  
+
   const [ataManual, setAtaManual] = useState("");
 
   const [isEditing, setIsEditing] = useState(false);
@@ -216,9 +229,13 @@ export default function CentralAtas() {
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
 
-    const precisaAtualizar = 
-      (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
-      (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
+    const precisaAtualizar =
+      stGravacao === "PROCESSANDO" ||
+      stGravacao === "PENDENTE" ||
+      stGravacao === "GRAVANDO" ||
+      stGravacao === "PRONTO_PROCESSAR" ||
+      stAtaIa === "PROCESSANDO" ||
+      stAtaIa === "PENDENTE";
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
@@ -237,27 +254,33 @@ export default function CentralAtas() {
         .single();
 
       if (!error && data) {
-        setSelectedAta(prev => {
-           if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
-           return prev;
+        setSelectedAta((prev) => {
+          if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
+          return prev;
         });
-        setAtas(prev => prev.map(r => r.id === data.id ? { ...r, ...data } : r));
-        
+        setAtas((prev) =>
+          prev.map((r) => (r.id === data.id ? { ...r, ...data } : r))
+        );
+
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
         const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
-        
-        const aindaProcessando = 
-            (stGravacao === "PROCESSANDO" || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR") ||
-            (stAtaIa === "PROCESSANDO" || stAtaIa === "PENDENTE");
-            
+
+        const aindaProcessando =
+          stGravacao === "PROCESSANDO" ||
+          stGravacao === "PENDENTE" ||
+          stGravacao === "GRAVANDO" ||
+          stGravacao === "PRONTO_PROCESSAR" ||
+          stAtaIa === "PROCESSANDO" ||
+          stAtaIa === "PENDENTE";
+
         if (!aindaProcessando) {
-             stopPolling();
-             hydrateMediaUrls(data);
-             carregarDetalhes(data);
-             if (data.pauta) setEditedPauta(data.pauta);
-             if (!isEditing) {
-               setAtaManual(data.ata_manual || "");
-             }
+          stopPolling();
+          hydrateMediaUrls(data);
+          carregarDetalhes(data);
+          if (data.pauta) setEditedPauta(data.pauta);
+          if (!isEditing) {
+            setAtaManual(data.ata_manual || "");
+          }
         }
       }
     } catch (e) {
@@ -265,17 +288,26 @@ export default function CentralAtas() {
     }
   };
 
-  const getSignedOrPublicUrl = async (bucket, filePath, expiresInSec = 60 * 60) => {
+  const getSignedOrPublicUrl = async (
+    bucket,
+    filePath,
+    expiresInSec = 60 * 60
+  ) => {
     if (!bucket || !filePath) return null;
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
     if (pub?.publicUrl) return pub.publicUrl;
-    const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiresInSec);
+    const { data: signed } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(filePath, expiresInSec);
     return signed?.signedUrl || null;
   };
 
   const hydrateMediaUrls = async (ata) => {
     try {
-      const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
+      const videoUrl = await getSignedOrPublicUrl(
+        ata.gravacao_bucket,
+        ata.gravacao_path
+      );
       const audioPath = ata.gravacao_audio_path || ata.gravacao_path;
       const audioBucket = ata.gravacao_audio_bucket || ata.gravacao_bucket;
       const audioUrl = await getSignedOrPublicUrl(audioBucket, audioPath);
@@ -342,34 +374,50 @@ export default function CentralAtas() {
   };
 
   const handleNovaAcao = async () => {
-      if (!selectedAta?.id) return;
-      const { data, error } = await supabase.from('acoes').insert([{
+    if (!selectedAta?.id) return;
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert([
+        {
           reuniao_id: selectedAta.id,
-          status: 'Aberta',
-          descricao: 'Nova Ação',
-          data_criacao: new Date().toISOString()
-      }]).select().single();
+          status: "Aberta",
+          descricao: "Nova Ação",
+          data_criacao: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single();
 
-      if (error) {
-          alert("Erro ao iniciar ação: " + error.message);
-          return;
-      }
-      setAcaoParaModal(data);
+    if (error) {
+      alert("Erro ao iniciar ação: " + error.message);
+      return;
+    }
+    setAcaoParaModal(data);
   };
 
   const handleSaveAta = async () => {
     const { error } = await supabase
-        .from("reunioes")
-        .update({ 
-            pauta: editedPauta, 
-            ata_manual: ataManual 
-        })
-        .eq("id", selectedAta.id);
+      .from("reunioes")
+      .update({
+        pauta: editedPauta,
+        ata_manual: ataManual,
+      })
+      .eq("id", selectedAta.id);
 
     if (!error) {
       setIsEditing(false);
-      setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, ata_manual: ataManual }));
-      setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: editedPauta, ata_manual: ataManual } : a)));
+      setSelectedAta((prev) => ({
+        ...prev,
+        pauta: editedPauta,
+        ata_manual: ataManual,
+      }));
+      setAtas((prev) =>
+        prev.map((a) =>
+          a.id === selectedAta.id
+            ? { ...a, pauta: editedPauta, ata_manual: ataManual }
+            : a
+        )
+      );
       alert("Ata salva com sucesso!");
     } else {
       alert("Erro ao salvar ata: " + error.message);
@@ -378,7 +426,8 @@ export default function CentralAtas() {
 
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
-    if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
+    if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?"))
+      return;
 
     setIsGenerating(true);
     try {
@@ -393,16 +442,18 @@ export default function CentralAtas() {
         try {
           const base64data = reader.result.split(",")[1];
           const model = getGeminiFlash();
-          
+
           const titulo = selectedAta.titulo || "Ata da Reunião";
-          const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
+          const dataBR = selectedAta.data_hora
+            ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR")
+            : "";
 
           // 1. Busca Prompt
           let promptTemplate = "";
           const { data: promptData } = await supabase
-            .from('app_prompts')
-            .select('prompt_text')
-            .eq('slug', 'ata_reuniao')
+            .from("app_prompts")
+            .select("prompt_text")
+            .eq("slug", "ata_reuniao")
             .single();
 
           if (promptData?.prompt_text) {
@@ -417,17 +468,17 @@ export default function CentralAtas() {
 
           // 2. Gera
           const result = await model.generateContent([
-            finalPrompt, 
-            { inlineData: { data: base64data, mimeType: "video/webm" } }
+            finalPrompt,
+            { inlineData: { data: base64data, mimeType: "video/webm" } },
           ]);
           const texto = result.response.text();
 
           // 3. Salva
           const { error: saveErr } = await supabase
             .from("reunioes")
-            .update({ 
-                pauta: texto,
-                ata_ia_status: 'PRONTA' 
+            .update({
+              pauta: texto,
+              ata_ia_status: "PRONTA",
             })
             .eq("id", selectedAta.id);
 
@@ -435,10 +486,18 @@ export default function CentralAtas() {
 
           // 4. Atualiza Interface
           setEditedPauta(texto);
-          setIsEditing(false); 
-          
-          setSelectedAta(prev => ({ ...prev, pauta: texto, ata_ia_status: 'PRONTA' }));
-          setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, pauta: texto, ata_ia_status: 'PRONTA' } : a));
+          setIsEditing(false);
+
+          setSelectedAta((prev) => ({
+            ...prev,
+            pauta: texto,
+            ata_ia_status: "PRONTA",
+          }));
+          setAtas((prev) =>
+            prev.map((a) =>
+              a.id === selectedAta.id ? { ...a, pauta: texto, ata_ia_status: "PRONTA" } : a
+            )
+          );
 
           alert("Ata gerada e salva automaticamente!");
         } catch (err) {
@@ -458,26 +517,28 @@ export default function CentralAtas() {
   const handleUploadMaterial = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    
+
     setUploadingMaterial(true);
     try {
       const novosMateriais = [];
 
       for (const file of files) {
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${selectedAta.id}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
+        const fileExt = file.name.split(".").pop();
+        const fileName = `${selectedAta.id}-${Date.now()}-${Math.random()
+          .toString(36)
+          .substr(2, 5)}.${fileExt}`;
         const filePath = `anexos/${fileName}`;
 
         // 1. Upload para o Storage
         const { error: uploadErr } = await supabase.storage
-          .from('materiais') // ⚠️ Precisa criar este bucket no Supabase (já enviei o SQL)
+          .from("materiais") // ⚠️ Precisa criar este bucket no Supabase (já enviei o SQL)
           .upload(filePath, file);
 
         if (uploadErr) throw uploadErr;
 
         // 2. Pegar URL Pública
         const { data: urlData } = supabase.storage
-          .from('materiais')
+          .from("materiais")
           .getPublicUrl(filePath);
 
         if (urlData?.publicUrl) {
@@ -485,7 +546,7 @@ export default function CentralAtas() {
             name: file.name,
             url: urlData.publicUrl,
             type: file.type, // 'image/png', 'application/pdf', etc.
-            path: filePath
+            path: filePath,
           });
         }
       }
@@ -495,18 +556,21 @@ export default function CentralAtas() {
       const listaFinal = [...listaAtual, ...novosMateriais];
 
       const { error: updateErr } = await supabase
-        .from('reunioes')
+        .from("reunioes")
         .update({ materiais: listaFinal })
-        .eq('id', selectedAta.id);
+        .eq("id", selectedAta.id);
 
       if (updateErr) throw updateErr;
 
       // 4. Atualizar Estado Local
-      setSelectedAta(prev => ({ ...prev, materiais: listaFinal }));
-      setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, materiais: listaFinal } : a));
-      
-      alert("Material anexado com sucesso!");
+      setSelectedAta((prev) => ({ ...prev, materiais: listaFinal }));
+      setAtas((prev) =>
+        prev.map((a) =>
+          a.id === selectedAta.id ? { ...a, materiais: listaFinal } : a
+        )
+      );
 
+      alert("Material anexado com sucesso!");
     } catch (err) {
       console.error("Erro upload:", err);
       alert("Erro ao enviar arquivo: " + err.message);
@@ -518,23 +582,26 @@ export default function CentralAtas() {
   };
 
   const handleDeleteMaterial = async (indexToDelete) => {
-    if(!window.confirm("Deseja remover este anexo?")) return;
+    if (!window.confirm("Deseja remover este anexo?")) return;
 
     try {
       const listaAtual = selectedAta.materiais || [];
       const novaLista = listaAtual.filter((_, i) => i !== indexToDelete);
 
       const { error } = await supabase
-        .from('reunioes')
+        .from("reunioes")
         .update({ materiais: novaLista })
-        .eq('id', selectedAta.id);
+        .eq("id", selectedAta.id);
 
-      if(error) throw error;
+      if (error) throw error;
 
-      setSelectedAta(prev => ({ ...prev, materiais: novaLista }));
-      setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, materiais: novaLista } : a));
-
-    } catch(err) {
+      setSelectedAta((prev) => ({ ...prev, materiais: novaLista }));
+      setAtas((prev) =>
+        prev.map((a) =>
+          a.id === selectedAta.id ? { ...a, materiais: novaLista } : a
+        )
+      );
+    } catch (err) {
       alert("Erro ao excluir anexo: " + err.message);
     }
   };
@@ -573,12 +640,14 @@ export default function CentralAtas() {
       }
 
       // 3. Excluir a reunião
-      const { error: errDel } = await supabase.from("reunioes").delete().eq("id", selectedAta.id);
+      const { error: errDel } = await supabase
+        .from("reunioes")
+        .delete()
+        .eq("id", selectedAta.id);
       if (errDel) throw errDel;
 
       alert("Ata excluída com sucesso.");
       window.location.reload(); // Recarrega para limpar o estado
-
     } catch (error) {
       console.error("Erro exclusão:", error);
       alert("Erro ao excluir: " + error.message);
@@ -589,15 +658,15 @@ export default function CentralAtas() {
   const atasFiltradas = useMemo(() => {
     const termo = busca.toLowerCase();
     return atas.filter((a) => {
-        const titulo = (a.titulo || "").toLowerCase();
-        const tipo = (a.tipo_reuniao || "").toLowerCase();
-        const data = a.data_hora ? new Date(a.data_hora).toLocaleDateString("pt-BR") : "";
-        return titulo.includes(termo) || tipo.includes(termo) || data.includes(termo);
+      const titulo = (a.titulo || "").toLowerCase();
+      const tipo = (a.tipo_reuniao || "").toLowerCase();
+      const data = a.data_hora ? new Date(a.data_hora).toLocaleDateString("pt-BR") : "";
+      return titulo.includes(termo) || tipo.includes(termo) || data.includes(termo);
     });
   }, [atas, busca]);
 
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
-  
+
   const badgeClass = (tone) =>
     ({
       green: "bg-green-100 text-green-700 border-green-200",
@@ -609,7 +678,6 @@ export default function CentralAtas() {
   return (
     <Layout>
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
-        
         {/* OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
         {showDeleteAuth && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
@@ -625,33 +693,33 @@ export default function CentralAtas() {
               <div className="space-y-3 text-left">
                 <div>
                   <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     autoFocus
                     className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
                     value={delLogin}
-                    onChange={e => setDelLogin(e.target.value)}
+                    onChange={(e) => setDelLogin(e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
-                  <input 
-                    type="password" 
+                  <input
+                    type="password"
                     className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
                     value={delSenha}
-                    onChange={e => setDelSenha(e.target.value)}
+                    onChange={(e) => setDelSenha(e.target.value)}
                   />
                 </div>
               </div>
 
               <div className="flex gap-3 mt-6">
-                <button 
+                <button
                   onClick={() => setShowDeleteAuth(false)}
                   className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
                 >
                   Cancelar
                 </button>
-                <button 
+                <button
                   onClick={confirmarExclusao}
                   disabled={deleting}
                   className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
@@ -685,13 +753,26 @@ export default function CentralAtas() {
                 key={ata.id}
                 onClick={() => setSelectedAta(ata)}
                 className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col gap-1 ${
-                  selectedAta?.id === ata.id ? "bg-blue-50 border-l-4 border-l-blue-600" : "border-l-4 border-l-transparent"
+                  selectedAta?.id === ata.id
+                    ? "bg-blue-50 border-l-4 border-l-blue-600"
+                    : "border-l-4 border-l-transparent"
                 }`}
               >
-                <h3 className={`font-bold text-sm ${selectedAta?.id === ata.id ? "text-blue-800" : "text-slate-700"}`}>{ata.titulo}</h3>
+                <h3
+                  className={`font-bold text-sm ${
+                    selectedAta?.id === ata.id ? "text-blue-800" : "text-slate-700"
+                  }`}
+                >
+                  {ata.titulo}
+                </h3>
                 <span className="text-xs text-slate-500 flex items-center gap-1">
-                  <Calendar size={12} /> {ata.data_hora ? new Date(ata.data_hora).toLocaleDateString() : "-"}
-                  {ata.tipo_reuniao && <span className="text-[10px] bg-slate-100 px-1 rounded ml-1">{ata.tipo_reuniao}</span>}
+                  <Calendar size={12} />{" "}
+                  {ata.data_hora ? new Date(ata.data_hora).toLocaleDateString() : "-"}
+                  {ata.tipo_reuniao && (
+                    <span className="text-[10px] bg-slate-100 px-1 rounded ml-1">
+                      {ata.tipo_reuniao}
+                    </span>
+                  )}
                 </span>
               </button>
             ))}
@@ -724,17 +805,23 @@ export default function CentralAtas() {
                               : badgeClass("gray")
                           }`}
                         >
-                          {(iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") && <Loader2 size={10} className="animate-spin" />}
+                          {(iaStatusNorm === "PROCESSANDO" || iaStatusNorm === "PENDENTE") && (
+                            <Loader2 size={10} className="animate-spin" />
+                          )}
                           IA: {selectedAta.ata_ia_status}
                         </span>
                       )}
                     </div>
 
-                    <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
+                    <h1 className="text-3xl font-bold text-slate-900 mb-2">
+                      {selectedAta.titulo}
+                    </h1>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
                       <span className="flex items-center gap-1">
                         <Calendar size={16} />{" "}
-                        {selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString() : "-"}
+                        {selectedAta.data_hora
+                          ? new Date(selectedAta.data_hora).toLocaleDateString()
+                          : "-"}
                       </span>
                       <span className="flex items-center gap-1">
                         <User size={16} /> {selectedAta.responsavel || "IA"}
@@ -779,10 +866,10 @@ export default function CentralAtas() {
 
                   {mediaUrls.video ? (
                     <div className="space-y-2">
-                      <video 
-                        key={mediaUrls.video} 
-                        controls 
-                        className="w-full rounded-xl bg-black" 
+                      <video
+                        key={mediaUrls.video}
+                        controls
+                        className="w-full rounded-xl bg-black"
                         preload="metadata"
                       >
                         <source src={mediaUrls.video} type="video/webm" />
@@ -800,12 +887,22 @@ export default function CentralAtas() {
                     </div>
                   ) : (
                     <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
-                      {String(selectedAta.gravacao_status || "").toUpperCase().includes("PROCESSANDO") || 
-                       String(selectedAta.gravacao_status || "").toUpperCase().includes("PENDENTE") ||
-                       String(selectedAta.gravacao_status || "").toUpperCase().includes("PRONTO_PROCESSAR")
-                        ? <><Loader2 size={14} className="animate-spin text-blue-500" /> Processando vídeo...</>
-                        : "Vídeo não disponível ainda."
-                      }
+                      {String(selectedAta.gravacao_status || "")
+                        .toUpperCase()
+                        .includes("PROCESSANDO") ||
+                      String(selectedAta.gravacao_status || "")
+                        .toUpperCase()
+                        .includes("PENDENTE") ||
+                      String(selectedAta.gravacao_status || "")
+                        .toUpperCase()
+                        .includes("PRONTO_PROCESSAR") ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin text-blue-500" />{" "}
+                          Processando vídeo...
+                        </>
+                      ) : (
+                        "Vídeo não disponível ainda."
+                      )}
                     </div>
                   )}
                 </div>
@@ -815,14 +912,14 @@ export default function CentralAtas() {
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Áudio e Transcrição
                   </div>
-                  
+
                   <div className="flex items-center gap-4">
                     <div className="flex-1">
                       {mediaUrls.audio ? (
-                        <CustomAudioPlayer 
+                        <CustomAudioPlayer
                           key={mediaUrls.audio}
-                          src={mediaUrls.audio} 
-                          durationDb={selectedAta.duracao_segundos} 
+                          src={mediaUrls.audio}
+                          durationDb={selectedAta.duracao_segundos}
                         />
                       ) : (
                         <span className="text-xs text-slate-400 bg-slate-50 border border-slate-200 p-2 rounded block">
@@ -837,7 +934,11 @@ export default function CentralAtas() {
                         disabled={isGenerating}
                         className="h-10 text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50 hover:bg-indigo-200 transition-colors"
                       >
-                        {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
+                        {isGenerating ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Cpu size={14} />
+                        )}
                         Gerar Resumo IA
                       </button>
                     )}
@@ -850,12 +951,26 @@ export default function CentralAtas() {
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
                       <Paperclip size={14} /> Materiais e Anexos
                     </div>
-                    
+
                     {/* Botão de Upload Escondido */}
-                    <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? 'opacity-50 pointer-events-none' : ''}`}>
-                      {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    <label
+                      className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${
+                        uploadingMaterial ? "opacity-50 pointer-events-none" : ""
+                      }`}
+                    >
+                      {uploadingMaterial ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Plus size={14} />
+                      )}
                       {uploadingMaterial ? "Enviando..." : "Anexar Material"}
-                      <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handleUploadMaterial}
+                        disabled={uploadingMaterial}
+                      />
                     </label>
                   </div>
 
@@ -863,24 +978,54 @@ export default function CentralAtas() {
                     {selectedAta.materiais && selectedAta.materiais.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         {selectedAta.materiais.map((item, idx) => {
-                          const isImage = item.type?.startsWith('image');
+                          const isImage = item.type?.startsWith("image");
                           return (
-                            <div key={idx} className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow"
+                            >
                               <div className="flex items-center gap-3 overflow-hidden">
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isImage ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
-                                  {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
+                                <div
+                                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isImage
+                                      ? "bg-purple-100 text-purple-600"
+                                      : "bg-blue-100 text-blue-600"
+                                  }`}
+                                >
+                                  {isImage ? (
+                                    <ImageIcon size={16} />
+                                  ) : (
+                                    <FileText size={16} />
+                                  )}
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-xs font-bold text-slate-700 truncate" title={item.name}>{item.name}</p>
-                                  <p className="text-[10px] text-slate-400 uppercase">Anexo</p>
+                                  <p
+                                    className="text-xs font-bold text-slate-700 truncate"
+                                    title={item.name}
+                                  >
+                                    {item.name}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 uppercase">
+                                    Anexo
+                                  </p>
                                 </div>
                               </div>
-                              
+
                               <div className="flex items-center gap-1">
-                                <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Baixar / Visualizar">
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                  title="Baixar / Visualizar"
+                                >
                                   <Download size={16} />
                                 </a>
-                                <button onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Remover">
+                                <button
+                                  onClick={() => handleDeleteMaterial(idx)}
+                                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                  title="Remover"
+                                >
                                   <Trash2 size={16} />
                                 </button>
                               </div>
@@ -896,6 +1041,7 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
+                {/* ✅ RENDER PROFISSIONAL DO MARKDOWN (CORREÇÃO DO ** e #) */}
                 <div className="prose prose-slate max-w-none">
                   {isEditing ? (
                     <textarea
@@ -904,9 +1050,12 @@ export default function CentralAtas() {
                       onChange={(e) => setEditedPauta(e.target.value)}
                     />
                   ) : (
-                    <div className="text-slate-700 text-sm whitespace-pre-line leading-relaxed">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      className="text-slate-700 text-sm leading-relaxed"
+                    >
                       {selectedAta.pauta || "Sem resumo."}
-                    </div>
+                    </ReactMarkdown>
                   )}
                 </div>
               </div>
@@ -917,7 +1066,8 @@ export default function CentralAtas() {
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                      <div className="w-2 h-2 bg-green-500 rounded-full"></div> Ações Definidas
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>{" "}
+                      Ações Definidas
                     </h3>
                     <button
                       onClick={handleNovaAcao}
@@ -939,11 +1089,19 @@ export default function CentralAtas() {
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                            <div className={`mt-1.5 w-2 h-2 rounded-full ${acao.status === "Concluída" ? "bg-green-500" : "bg-blue-500"}`} />
+                          <div
+                            className={`mt-1.5 w-2 h-2 rounded-full ${
+                              acao.status === "Concluída"
+                                ? "bg-green-500"
+                                : "bg-blue-500"
+                            }`}
+                          />
                           <div className="flex-1">
                             <p
                               className={`text-sm font-medium ${
-                                acao.status === "Concluída" ? "line-through text-slate-400" : "text-slate-800"
+                                acao.status === "Concluída"
+                                  ? "line-through text-slate-400"
+                                  : "text-slate-800"
                               }`}
                             >
                               {acao.descricao}
@@ -954,7 +1112,8 @@ export default function CentralAtas() {
                               </span>
                               {acao.data_vencimento && (
                                 <span className="text-[10px] text-red-500 flex items-center gap-1">
-                                  <Clock size={10} /> {new Date(acao.data_vencimento).toLocaleDateString()}
+                                  <Clock size={10} />{" "}
+                                  {new Date(acao.data_vencimento).toLocaleDateString()}
                                 </span>
                               )}
                               {acao.fotos && acao.fotos.length > 0 && (
@@ -968,7 +1127,9 @@ export default function CentralAtas() {
                       </div>
                     ))}
                     {acoesCriadas.length === 0 && (
-                      <p className="text-center text-xs text-slate-400 py-4 italic">Nenhuma ação criada.</p>
+                      <p className="text-center text-xs text-slate-400 py-4 italic">
+                        Nenhuma ação criada.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -976,7 +1137,8 @@ export default function CentralAtas() {
                 {/* COLUNA 2 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
-                    <div className="w-2 h-2 bg-amber-500 rounded-full"></div> Pendências Anteriores
+                    <div className="w-2 h-2 bg-amber-500 rounded-full"></div>{" "}
+                    Pendências Anteriores
                   </h3>
                   <div className="flex-1 space-y-2">
                     {acoesAnteriores.map((acao) => (
@@ -986,18 +1148,25 @@ export default function CentralAtas() {
                         className="p-3 bg-amber-50/30 border border-amber-100 rounded-lg cursor-pointer hover:bg-amber-50 transition-colors"
                       >
                         <div className="flex items-start gap-3">
-                          <div className={`mt-1.5 w-2 h-2 rounded-full bg-amber-500`} />
+                          <div className="mt-1.5 w-2 h-2 rounded-full bg-amber-500" />
                           <div>
-                            <p className="text-sm font-medium text-slate-800">{acao.descricao}</p>
+                            <p className="text-sm font-medium text-slate-800">
+                              {acao.descricao}
+                            </p>
                             <p className="text-[10px] text-amber-600 mt-1">
-                              Origem: {acao.data_criacao ? new Date(acao.data_criacao).toLocaleDateString() : "-"}
+                              Origem:{" "}
+                              {acao.data_criacao
+                                ? new Date(acao.data_criacao).toLocaleDateString()
+                                : "-"}
                             </p>
                           </div>
                         </div>
                       </div>
                     ))}
                     {acoesAnteriores.length === 0 && (
-                      <p className="text-center text-xs text-slate-400 py-4 italic">Tudo em dia!</p>
+                      <p className="text-center text-xs text-slate-400 py-4 italic">
+                        Tudo em dia!
+                      </p>
                     )}
                   </div>
                 </div>
@@ -1035,8 +1204,14 @@ export default function CentralAtas() {
             onAfterSave={() => carregarDetalhes(selectedAta)}
             onAfterDelete={() => carregarDetalhes(selectedAta)}
             onConcluir={async () => {
-                await supabase.from("acoes").update({ status: "Concluída", data_conclusao: new Date().toISOString() }).eq("id", acaoParaModal.id);
-                carregarDetalhes(selectedAta);
+              await supabase
+                .from("acoes")
+                .update({
+                  status: "Concluída",
+                  data_conclusao: new Date().toISOString(),
+                })
+                .eq("id", acaoParaModal.id);
+              carregarDetalhes(selectedAta);
             }}
           />
         )}
