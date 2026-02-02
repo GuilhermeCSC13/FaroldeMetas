@@ -1,19 +1,29 @@
 // src/components/tatico/DetalhesReuniao.jsx
 import React, { useMemo, useEffect, useState } from "react";
-import { Calendar, Clock, AlignLeft, FileText, Paperclip, Loader2, Plus, Trash2, Download, ImageIcon } from "lucide-react";
+import { 
+  Calendar, 
+  Clock, 
+  AlignLeft, 
+  FileText, 
+  Paperclip, 
+  Loader2, 
+  Plus, 
+  Trash2, 
+  Download, 
+  ImageIcon, 
+  ShieldAlert, 
+  User, 
+  X 
+} from "lucide-react";
 import { format, isValid } from "date-fns";
-import { supabase } from "../../supabaseClient";
+import { supabase, supabaseInove } from "../../supabaseClient";
 
-// Helper robusto para extrair HH:mm de qualquer formato (ISO ou HH:mm:ss)
+// Helper robusto para extrair HH:mm
 function extractTime(dateString) {
   if (!dateString) return "";
-
-  // Se já for apenas hora (ex: "09:00" ou "09:00:00")
   if (String(dateString).length <= 8 && String(dateString).includes(":")) {
     return String(dateString).substring(0, 5);
   }
-
-  // Se for data completa ISO
   try {
     const date = new Date(dateString);
     if (isValid(date)) {
@@ -25,6 +35,17 @@ function extractTime(dateString) {
   return "";
 }
 
+// Helper para nome completo
+function buildNomeSobrenome(u) {
+  const nome = String(u?.nome || "").trim();
+  const sobrenome = String(u?.sobrenome || "").trim();
+  const nomeCompleto = String(u?.nome_completo || "").trim();
+  if (nome && sobrenome) return `${nome} ${sobrenome}`;
+  if (nomeCompleto) return nomeCompleto;
+  if (nome) return nome;
+  return "-";
+}
+
 export default function DetalhesReuniao({
   formData,
   setFormData,
@@ -32,6 +53,17 @@ export default function DetalhesReuniao({
   tipos = [],
 }) {
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
+  
+  // Estados para Responsáveis (Sugestões)
+  const [listaResponsaveis, setListaResponsaveis] = useState([]);
+  const [showSugestoesResp, setShowSugestoesResp] = useState(false);
+
+  // Estados para Exclusão Segura
+  const [showAuth, setShowAuth] = useState(false);
+  const [authLogin, setAuthLogin] = useState("");
+  const [authSenha, setAuthSenha] = useState("");
+  const [validatingAuth, setValidatingAuth] = useState(false);
+  const [materialIndexToDelete, setMaterialIndexToDelete] = useState(null);
 
   const handleChange = (name, value) =>
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -40,18 +72,25 @@ export default function DetalhesReuniao({
     return tipos.find((t) => String(t.id) === String(formData.tipo_reuniao_id)) || null;
   }, [tipos, formData.tipo_reuniao_id]);
 
-  // ✅ Efeito para carregar dados INICIAIS apenas quando a reunião muda
+  // Carregar lista de responsáveis do Inove
+  useEffect(() => {
+    const fetchResponsaveis = async () => {
+      const { data } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, nome, sobrenome, nome_completo, ativo")
+        .eq("ativo", true)
+        .order("nome");
+      setListaResponsaveis(data || []);
+    };
+    fetchResponsaveis();
+  }, []);
+
+  // Efeito para carregar dados iniciais
   useEffect(() => {
     if (editingReuniao) {
-      // Prioridade 1: O que já está no banco (horario_inicio)
-      // Prioridade 2: O que está no data_hora (legado)
-      // Prioridade 3: Default "09:00"
       const horaIni = extractTime(editingReuniao.horario_inicio) || extractTime(editingReuniao.data_hora) || "09:00";
-      
       const horaFim = extractTime(editingReuniao.horario_fim) || "10:00";
 
-      // Só atualiza se o formulário estiver vazio (para não sobrescrever edição em andamento)
-      // OU se for a primeira carga (formData.id !== editingReuniao.id)
       setFormData(prev => ({
           ...prev,
           hora_inicio: prev.hora_inicio || horaIni,
@@ -67,6 +106,7 @@ export default function DetalhesReuniao({
     handleChange("ata", guia);
   };
 
+  // Upload de Material
   const handleUploadMaterial = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -74,7 +114,6 @@ export default function DetalhesReuniao({
     setUploadingMaterial(true);
     try {
       const novosMateriais = [];
-
       for (const file of files) {
         const fileExt = file.name.split('.').pop();
         const baseId = editingReuniao?.id || "nova"; 
@@ -85,7 +124,6 @@ export default function DetalhesReuniao({
         if (uploadErr) throw uploadErr;
 
         const { data: urlData } = supabase.storage.from('materiais').getPublicUrl(filePath);
-
         if (urlData?.publicUrl) {
           novosMateriais.push({
             name: file.name,
@@ -95,10 +133,8 @@ export default function DetalhesReuniao({
           });
         }
       }
-
       const listaAtual = formData.materiais || [];
       handleChange("materiais", [...listaAtual, ...novosMateriais]);
-      
     } catch (err) {
       console.error("Erro upload:", err);
       alert("Erro ao enviar arquivo: " + err.message);
@@ -108,15 +144,128 @@ export default function DetalhesReuniao({
     }
   };
 
-  const handleDeleteMaterial = (indexToDelete) => {
-    if(!window.confirm("Remover este anexo da lista?")) return;
-    const listaAtual = formData.materiais || [];
-    const novaLista = listaAtual.filter((_, i) => i !== indexToDelete);
-    handleChange("materiais", novaLista);
+  // --- LÓGICA DE EXCLUSÃO SEGURA ---
+  const handleRequestDelete = (index) => {
+    setMaterialIndexToDelete(index);
+    setAuthLogin("");
+    setAuthSenha("");
+    setShowAuth(true);
+  };
+
+  const confirmDeleteMaterial = async () => {
+    if (!authLogin || !authSenha) return alert("Informe Login e Senha.");
+    setValidatingAuth(true);
+
+    try {
+      // 1. Validar Credenciais
+      const { data: usuario, error } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("nivel, ativo")
+        .eq("login", authLogin)
+        .eq("senha", authSenha)
+        .eq("ativo", true)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!usuario) {
+        alert("Credenciais inválidas.");
+        setValidatingAuth(false);
+        return;
+      }
+
+      // 2. Validar Nível (Gestor ou Adm)
+      if (usuario.nivel !== 'Gestor' && usuario.nivel !== 'Administrador') {
+        alert("Permissão negada. Apenas Gestores e Administradores podem excluir anexos.");
+        setValidatingAuth(false);
+        return;
+      }
+
+      // 3. Executar Exclusão
+      const listaAtual = formData.materiais || [];
+      const novaLista = listaAtual.filter((_, i) => i !== materialIndexToDelete);
+      handleChange("materiais", novaLista);
+      
+      setShowAuth(false);
+      setMaterialIndexToDelete(null);
+
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao validar: " + err.message);
+    } finally {
+      setValidatingAuth(false);
+    }
+  };
+
+  // --- LÓGICA DE SELEÇÃO DE RESPONSÁVEL ---
+  const filteredResponsaveis = useMemo(() => {
+    const termo = (formData.responsavel || "").toLowerCase();
+    return listaResponsaveis.filter(u => 
+      buildNomeSobrenome(u).toLowerCase().includes(termo)
+    ).slice(0, 8); // Limita a 8 sugestões
+  }, [listaResponsaveis, formData.responsavel]);
+
+  const selectResponsavel = (u) => {
+    handleChange("responsavel", buildNomeSobrenome(u));
+    setShowSugestoesResp(false);
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 relative">
+      
+      {/* MODAL DE AUTENTICAÇÃO (OVERLAY) */}
+      {showAuth && (
+        <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-xl animate-in fade-in duration-200 border border-slate-200 shadow-xl h-full">
+          <div className="w-full max-w-xs text-center">
+            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600">
+              <ShieldAlert size={20} />
+            </div>
+            <h4 className="text-base font-bold text-slate-800 mb-1">Autorização Necessária</h4>
+            <p className="text-xs text-slate-500 mb-4">Apenas <b>Gestores</b> ou <b>ADM</b> podem remover anexos.</p>
+            
+            <div className="space-y-2 text-left">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Login</label>
+                <input 
+                  type="text" 
+                  autoFocus
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                  value={authLogin}
+                  onChange={e => setAuthLogin(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Senha</label>
+                <input 
+                  type="password" 
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                  value={authSenha}
+                  onChange={e => setAuthSenha(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-4">
+              <button 
+                type="button"
+                onClick={() => setShowAuth(false)}
+                className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button"
+                onClick={confirmDeleteMaterial}
+                disabled={validatingAuth}
+                className="flex-1 py-2 rounded-lg bg-red-600 text-white font-bold text-xs hover:bg-red-700 disabled:opacity-50"
+              >
+                {validatingAuth ? "Verificando..." : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LADO ESQUERDO: CONFIGURAÇÃO */}
       <div className="lg:col-span-5 space-y-8">
         <section className="space-y-4">
           <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">
@@ -176,14 +325,37 @@ export default function DetalhesReuniao({
               </div>
             </div>
 
-            <div>
+            {/* SELEÇÃO DE RESPONSÁVEL INTELIGENTE */}
+            <div className="relative">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Organizador</label>
-              <input
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none"
-                value={formData.responsavel}
-                onChange={(e) => handleChange("responsavel", e.target.value)}
-                placeholder="Responsável"
-              />
+              <div className="relative">
+                <User className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                <input
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                  value={formData.responsavel}
+                  onChange={(e) => {
+                    handleChange("responsavel", e.target.value);
+                    setShowSugestoesResp(true);
+                  }}
+                  onFocus={() => setShowSugestoesResp(true)}
+                  onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)}
+                  placeholder="Buscar responsável..."
+                />
+              </div>
+              {showSugestoesResp && filteredResponsaveis.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                  {filteredResponsaveis.map(u => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => selectResponsavel(u)}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
+                    >
+                      {buildNomeSobrenome(u)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -295,7 +467,12 @@ export default function DetalhesReuniao({
                           <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Baixar">
                             <Download size={16} />
                           </a>
-                          <button type="button" onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Remover">
+                          <button 
+                            type="button" 
+                            onClick={() => handleRequestDelete(idx)} 
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" 
+                            title="Remover"
+                          >
                             <Trash2 size={16} />
                           </button>
                         </div>
