@@ -43,8 +43,27 @@ async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
   throw lastErr;
 }
 
+// --- VISUAL LOGGER ---
+const VisualLogger = ({ logs }) => {
+  if (logs.length === 0) return null;
+  return (
+    <div style={{
+      position: 'fixed', bottom: 10, left: 10, width: '400px', maxHeight: '300px',
+      overflowY: 'auto', backgroundColor: 'rgba(0,0,0,0.85)', color: '#0f0',
+      fontSize: '10px', fontFamily: 'monospace', padding: '10px', zIndex: 99999,
+      pointerEvents: 'none', borderRadius: '8px', border: '1px solid #333'
+    }}>
+      <div style={{fontWeight:'bold', borderBottom:'1px solid #555', marginBottom:5}}>GRAVAÇÃO (AUTO-CONCLUDE)</div>
+      {logs.slice().reverse().map((l, i) => (
+        <div key={i} style={{marginBottom: 2, color: l.includes('❌') || l.includes('⚠️') ? '#ff5555' : l.includes('✅') ? '#55ff55' : '#ccc'}}>
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export function RecordingProvider({ children }) {
-  // Logs mantidos no estado, mas sem componente visual para renderizá-los
   const [logs, setLogs] = useState([]);
   const addLog = (msg) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`].slice(-50));
 
@@ -155,7 +174,7 @@ export function RecordingProvider({ children }) {
     if (!queueDrainPromiseRef.current) {
       let resolve;
       const p = new Promise((r) => (resolve = r));
-      queueDrainPromiseRef.current = { promise, resolve, reject: null };
+      queueDrainPromiseRef.current = { promise: p, resolve };
     }
     runUploadWorker();
     await queueDrainPromiseRef.current.promise;
@@ -340,6 +359,8 @@ export function RecordingProvider({ children }) {
       const duracao = startTimeRef.current ? Math.floor((Date.now() - startTimeRef.current) / 1000) : timer;
       
       // ✅ ATUALIZAÇÃO MÁGICA: Define direto como CONCLUIDO e aponta para o path da parte 1
+      // Isso assume gravações curtas ou que o player consegue tocar partes (mas players normais só tocam 1 arquivo)
+      // Se tiver mais de 1 parte, este hack só vai tocar a primeira, mas pelo menos sai do "Processando..."
       const firstPartPath = buildPartPath(reuniaoId, sessionId, 1);
 
       addLog("📝 Salvando como CONCLUIDO (Sem backend)...");
@@ -349,6 +370,7 @@ export function RecordingProvider({ children }) {
           status: "Realizada",
           duracao_segundos: duracao,
           gravacao_fim: nowIso(),
+          // Se tiver backend real depois, mude para PRONTO_PROCESSAR
           gravacao_status: "CONCLUIDO", 
           gravacao_path: firstPartPath, // Aponta direto para o arquivo 1
           gravacao_bucket: STORAGE_BUCKET,
@@ -386,6 +408,7 @@ export function RecordingProvider({ children }) {
   return (
     <RecordingContext.Provider value={value}>
       {children}
+      <VisualLogger logs={logs} />
     </RecordingContext.Provider>
   );
 }
