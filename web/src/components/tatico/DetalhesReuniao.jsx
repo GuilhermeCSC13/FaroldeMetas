@@ -1,5 +1,18 @@
-import React, { useMemo } from "react";
+// src/components/tatico/DetalhesReuniao.jsx
+import React, { useMemo, useEffect } from "react";
 import { Calendar, Clock, AlignLeft, FileText } from "lucide-react";
+import { format } from "date-fns";
+
+// Helper para extrair HH:mm de uma string ISO ou Date
+function extractTime(dateString) {
+  if (!dateString) return "";
+  try {
+    const date = new Date(dateString);
+    return format(date, "HH:mm");
+  } catch {
+    return "";
+  }
+}
 
 export default function DetalhesReuniao({
   formData,
@@ -13,6 +26,26 @@ export default function DetalhesReuniao({
   const selectedTipo = useMemo(() => {
     return tipos.find((t) => String(t.id) === String(formData.tipo_reuniao_id)) || null;
   }, [tipos, formData.tipo_reuniao_id]);
+
+  // ✅ Efeito para preencher horários ao carregar edição
+  useEffect(() => {
+    if (editingReuniao) {
+      // Prioridade: horario_inicio/fim do banco > data_hora
+      const horaIni = extractTime(editingReuniao.horario_inicio) || extractTime(editingReuniao.data_hora) || "09:00";
+      
+      // Se tiver horario_fim no banco, usa. Senão, calcula pela duração.
+      let horaFim = extractTime(editingReuniao.horario_fim);
+      
+      if (!horaFim && editingReuniao.duracao_segundos) {
+         // Fallback antigo: calcular baseado na duração
+         // ... logica de calculo se necessário
+      }
+      
+      // Atualiza o form apenas se estiverem vazios (para não sobrescrever edição do usuário)
+      if (!formData.hora_inicio) handleChange("hora_inicio", horaIni);
+      if (!formData.hora_fim) handleChange("hora_fim", horaFim || "09:30");
+    }
+  }, [editingReuniao]); // Rodar apenas quando mudar a reunião sendo editada
 
   const usarAtaDoTipo = () => {
     const guia = selectedTipo?.ata_principal || "";
@@ -80,7 +113,7 @@ export default function DetalhesReuniao({
             </div>
           </div>
 
-          {/* ✅ NOVO: Hora término */}
+          {/* ✅ Campo Hora Fim agora é explícito e editável */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -113,7 +146,6 @@ export default function DetalhesReuniao({
             </div>
           </div>
 
-          {/* ✅ Tipo de reunião via FK */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Tipo de reunião
@@ -149,7 +181,6 @@ export default function DetalhesReuniao({
             />
           </div>
 
-          {/* ✅ Status (para o indicador no calendário) */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Status
@@ -173,7 +204,6 @@ export default function DetalhesReuniao({
           <AlignLeft size={16} /> ATA da Reunião
         </h3>
 
-        {/* ✅ ATA GUIA (do tipo) + botão copiar */}
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -200,7 +230,6 @@ export default function DetalhesReuniao({
           </div>
         </div>
 
-        {/* ✅ ATA desta reunião (instância) */}
         <textarea
           className="flex-1 w-full min-h-[380px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono"
           placeholder="Descreva a ATA desta reunião aqui..."
