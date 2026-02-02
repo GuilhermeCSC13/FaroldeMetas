@@ -1,7 +1,7 @@
 // src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
-import { supabase } from "../supabaseClient";
+import { supabase, supabaseInove } from "../supabaseClient"; // ✅ Importar supabaseInove
 import {
   format,
   startOfMonth,
@@ -17,6 +17,7 @@ import {
   subWeeks,
   parseISO,
   addMinutes,
+  isValid
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -28,36 +29,30 @@ import {
   X,
   Save,
   Trash2,
+  ShieldAlert // ✅ Ícone de segurança
 } from "lucide-react";
 import { salvarReuniao, atualizarReuniao } from "../services/agendaService";
 import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
-const SENHA_EXCLUSAO = "KM2026";
-
-// ✅ 1. FUNÇÃO "LITERAL" PARA EXTRAIR HORA
-// Pega exatamente o que está escrito no banco, ignorando fuso horário do navegador
+// Função para extrair hora limpa
 function extractTime(dateString) {
   if (!dateString) return "";
-
-  const str = String(dateString);
-
-  // Se for formato ISO (2026-01-20T09:00:00+00:00)
-  if (str.includes("T")) {
-    // Pega a parte depois do T (09:00:00...) e corta os 5 primeiros chars
-    return str.split("T")[1].substring(0, 5);
+  if (String(dateString).length <= 8 && String(dateString).includes(":")) {
+    return String(dateString).substring(0, 5);
   }
-
-  // Se já for formato de hora (09:00:00)
-  if (str.includes(":")) {
-    return str.substring(0, 5);
+  try {
+    const date = new Date(dateString);
+    if (isValid(date)) {
+      return format(date, "HH:mm");
+    }
+  } catch (e) {
+    console.warn("Data inválida:", dateString);
   }
-
   return "";
 }
 
 function parseDataLocal(dataString) {
   if (!dataString) return new Date();
-  // Cria a data baseada na string, forçando interpretação local simples
   try {
     const raw = String(dataString).substring(0, 19);
     return new Date(raw);
@@ -88,31 +83,21 @@ function calcDuracaoSegundos(inicioHHMM, fimHHMM) {
   }
 }
 
-function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
-  if (!duracaoSegundos || !inicioDate) return "09:15";
-  const fim = addMinutes(inicioDate, Math.round(duracaoSegundos / 60));
-  return format(fim, "HH:mm");
-}
-
-// ✅ 2. FORMATAR INTERVALO VISUAL (Conserta visualização)
+// Formatar intervalo visual
 function formatTimeRange(reuniao) {
   try {
-    // Usa a nova extractTime que ignora fuso
     const horaIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "--:--";
     let horaFim = extractTime(reuniao.horario_fim);
 
-    // Se não tiver fim, calcula visualmente
     if (!horaFim || horaFim === "") {
+        const dtBase = parseDataLocal(reuniao.data_hora);
         if (reuniao.duracao_segundos) {
-            // Cálculo simples de horas e minutos para somar na string
-            const [h, m] = horaIni.split(':').map(Number);
-            const totalMin = h * 60 + m + (reuniao.duracao_segundos / 60);
-            const novoH = Math.floor(totalMin / 60).toString().padStart(2, '0');
-            const novoM = (totalMin % 60).toString().padStart(2, '0');
-            horaFim = `${novoH}:${novoM}`;
+            const dtFim = addMinutes(dtBase, reuniao.duracao_segundos / 60);
+            horaFim = format(dtFim, "HH:mm");
+        } else {
+            horaFim = ""; 
         }
     }
-
     return horaFim ? `${horaIni} - ${horaFim}` : horaIni;
   } catch {
     return "--:--";
@@ -127,6 +112,12 @@ export default function CentralReunioes() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingReuniao, setEditingReuniao] = useState(null);
+
+  // Estados para Exclusão Segura
+  const [showDeleteAuth, setShowDeleteAuth] = useState(false);
+  const [delLogin, setDelLogin] = useState("");
+  const [delSenha, setDelSenha] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const [formData, setFormData] = useState({
     titulo: "",
@@ -152,16 +143,8 @@ export default function CentralReunioes() {
   }, [currentDate]);
 
   const fetchTipos = async () => {
-    const { data, error } = await supabase
-      .from("tipos_reuniao")
-      .select("*")
-      .order("nome");
-
-    if (error) {
-      console.error(error);
-      alert("Erro ao carregar tipos de reunião.");
-      return;
-    }
+    const { data, error } = await supabase.from("tipos_reuniao").select("*").order("nome");
+    if (error) { console.error(error); alert("Erro ao carregar tipos."); return; }
     setTipos(data || []);
   };
 
@@ -170,17 +153,14 @@ export default function CentralReunioes() {
       .from("reunioes")
       .select(`*, tipos_reuniao:tipo_reuniao_id ( id, nome, ata_principal, cor )`)
       .order("data_hora");
-
     if (error) console.error(error);
     setReunioes(data || []);
   };
 
-  const getTipoById = (id) =>
-    tipos.find((t) => String(t.id) === String(id)) || null;
+  const getTipoById = (id) => tipos.find((t) => String(t.id) === String(id)) || null;
 
   const onDateClick = (day) => {
     setEditingReuniao(null);
-
     setFormData({
       titulo: "",
       tipo_reuniao_id: "",
@@ -193,21 +173,23 @@ export default function CentralReunioes() {
       status: "Agendada",
       materiais: []
     });
-
     setIsModalOpen(true);
   };
 
-  // ✅ 3. PREPARAR DADOS PARA O MODAL
   const handleEdit = (reuniao) => {
     const dt = parseDataLocal(reuniao.data_hora);
-    
-    // Usa a extractTime para garantir que o input receba "09:00"
     const hhmmIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "09:00";
     let hhmmFim = extractTime(reuniao.horario_fim);
     
-    // Fallback se não tiver hora fim
+    // Se não tiver fim, calcula ou define padrão
     if (!hhmmFim) {
-       hhmmFim = "10:00"; 
+       // Se tiver duração, calcula. Se não, chuta 1h.
+       if (reuniao.duracao_segundos) {
+          const fimDate = addMinutes(dt, reuniao.duracao_segundos / 60);
+          hhmmFim = format(fimDate, "HH:mm");
+       } else {
+          hhmmFim = "10:00";
+       }
     }
 
     setFormData({
@@ -229,18 +211,12 @@ export default function CentralReunioes() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || "Geral";
 
-    // ✅ Monta a string ISO completa manualmente para garantir consistência
     const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
     const horaFimIso = `${formData.data}T${formData.hora_fim}:00`;
-
-    const duracao_segundos = calcDuracaoSegundos(
-      formData.hora_inicio,
-      formData.hora_fim
-    );
+    const duracao_segundos = calcDuracaoSegundos(formData.hora_inicio, formData.hora_fim);
 
     const dados = {
       titulo: formData.titulo,
@@ -260,16 +236,15 @@ export default function CentralReunioes() {
     
     try {
       if (editingReuniao) {
-        const aplicar = window.confirm(
-          "Deseja aplicar as mudanças para reuniões futuras desta série?"
-        );
+        // Se já foi realizada, não pergunta de aplicar a futuras, salva direto (geralmente)
+        // Mas mantendo a lógica padrão:
+        const aplicar = window.confirm("Deseja aplicar as mudanças para reuniões futuras desta série?");
         const { error } = await atualizarReuniao(editingReuniao.id, dados, aplicar);
         if (error) throw error;
       } else {
         const { error } = await salvarReuniao(dados, "unica");
         if (error) throw error;
       }
-
       setIsModalOpen(false);
       setEditingReuniao(null);
       await fetchReunioes();
@@ -279,23 +254,59 @@ export default function CentralReunioes() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!editingReuniao) return;
-    if (window.prompt("Digite a senha para confirmar exclusão:") !== SENHA_EXCLUSAO) return;
+  // ✅ INICIAR PROCESSO DE EXCLUSÃO
+  const handleDeleteClick = () => {
+    setShowDeleteAuth(true);
+    setDelLogin("");
+    setDelSenha("");
+  };
 
-    const { error } = await supabase
-      .from("reunioes")
-      .delete()
-      .eq("id", editingReuniao.id);
+  // ✅ CONFIRMAR EXCLUSÃO COM SEGURANÇA
+  const confirmarExclusao = async () => {
+    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
+    setDeleting(true);
 
-    if (error) {
+    try {
+      // 1. Validar Usuário (INOVE)
+      const { data: usuario, error: errAuth } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, login, senha, nivel, ativo")
+        .eq("login", delLogin)
+        .eq("senha", delSenha)
+        .eq("ativo", true)
+        .maybeSingle();
+
+      if (errAuth) throw errAuth;
+
+      if (!usuario) {
+        alert("Credenciais inválidas.");
+        setDeleting(false);
+        return;
+      }
+
+      // 2. Apenas Gestor ou Adm
+      if (usuario.nivel !== "Administrador" && usuario.nivel !== "Gestor") {
+        alert("Permissão negada. Apenas Gestores e Administradores podem excluir reuniões.");
+        setDeleting(false);
+        return;
+      }
+
+      // 3. Excluir
+      const { error: errDel } = await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
+      if (errDel) throw errDel;
+
+      alert("Reunião excluída com sucesso.");
+      setShowDeleteAuth(false);
+      setIsModalOpen(false);
+      setEditingReuniao(null);
+      fetchReunioes();
+
+    } catch (error) {
+      console.error("Erro exclusão:", error);
       alert("Erro ao excluir: " + error.message);
-      return;
+    } finally {
+      setDeleting(false);
     }
-
-    setIsModalOpen(false);
-    setEditingReuniao(null);
-    fetchReunioes();
   };
 
   const calendarDays = eachDayOfInterval({
@@ -308,7 +319,6 @@ export default function CentralReunioes() {
     end: endOfWeek(currentDate),
   });
 
-  // --- ARRASTAR E SOLTAR ---
   const handleDragStart = (e, reuniao) => {
     setDraggingReuniao(reuniao);
     e.dataTransfer.effectAllowed = "move";
@@ -319,36 +329,22 @@ export default function CentralReunioes() {
   const handleDropOnDay = async (e, day) => {
     e.preventDefault();
     if (!draggingReuniao) return;
-
     try {
-      // Pega hora original usando extractTime para evitar bugs de fuso
       const horaOrig = extractTime(draggingReuniao.horario_inicio) || "09:00";
       const novaDataHora = `${format(day, "yyyy-MM-dd")}T${horaOrig}:00`;
-
+      
       let novoFim = null;
       const horaFimOrig = extractTime(draggingReuniao.horario_fim);
-      if (horaFimOrig) {
-          novoFim = `${format(day, "yyyy-MM-dd")}T${horaFimOrig}:00`;
-      }
+      if (horaFimOrig) { novoFim = `${format(day, "yyyy-MM-dd")}T${horaFimOrig}:00`; }
 
-      const { error } = await supabase
-        .from("reunioes")
-        .update({ 
+      const { error } = await supabase.from("reunioes").update({ 
             data_hora: novaDataHora,
             horario_inicio: novaDataHora,
             horario_fim: novoFim
-        })
-        .eq("id", draggingReuniao.id);
-
+        }).eq("id", draggingReuniao.id);
       if (error) throw error;
-      
       await fetchReunioes();
-    } catch (err) {
-      console.error(err);
-      alert("Erro ao mover: " + (err?.message || ""));
-    } finally {
-      setDraggingReuniao(null);
-    }
+    } catch (err) { console.error(err); alert("Erro ao mover: " + (err?.message || "")); } finally { setDraggingReuniao(null); }
   };
 
   const reunioesAgrupadas = useMemo(() => {
@@ -360,56 +356,75 @@ export default function CentralReunioes() {
     }, {});
   }, [reunioes]);
 
-  const tipoLabel = (r) =>
-    r.tipos_reuniao?.nome || r.tipo_reuniao_legacy || "Geral";
+  const tipoLabel = (r) => r.tipos_reuniao?.nome || r.tipo_reuniao_legacy || "Geral";
 
   return (
     <Layout>
-      <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1>
-          </div>
+      <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden relative">
+        
+        {/* ✅ OVERLAY DE EXCLUSÃO */}
+        {showDeleteAuth && (
+          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                <ShieldAlert size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Área Restrita</h3>
+              <p className="text-sm text-slate-500 mb-6">
+                Exclusão permitida apenas para <b>Gestores</b> ou <b>Administradores</b>.
+              </p>
 
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delLogin}
+                    onChange={e => setDelLogin(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
+                  <input 
+                    type="password" 
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                    value={delSenha}
+                    onChange={e => setDelSenha(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={() => setShowDeleteAuth(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={confirmarExclusao}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ... (Header, Views Week/List/Calendar permanecem iguais) ... */}
+        <div className="flex justify-between items-center mb-6">
+          <div><h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1></div>
           <div className="flex gap-2">
             <div className="bg-white border p-1 rounded-lg flex shadow-sm">
-              <button
-                onClick={() => setView("week")}
-                className={`p-2 rounded ${
-                  view === "week" ? "bg-blue-100 text-blue-700" : "text-slate-500"
-                }`}
-                title="Semanal"
-              >
-                S
-              </button>
-
-              <button
-                onClick={() => setView("list")}
-                className={`p-2 rounded ${
-                  view === "list" ? "bg-blue-100 text-blue-700" : "text-slate-500"
-                }`}
-                title="Lista"
-              >
-                <List size={18} />
-              </button>
-
-              <button
-                onClick={() => setView("calendar")}
-                className={`p-2 rounded ${
-                  view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"
-                }`}
-                title="Calendário"
-              >
-                <CalIcon size={18} />
-              </button>
+              <button onClick={() => setView("week")} className={`p-2 rounded ${view === "week" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`} title="Semanal">S</button>
+              <button onClick={() => setView("list")} className={`p-2 rounded ${view === "list" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`} title="Lista"><List size={18} /></button>
+              <button onClick={() => setView("calendar")} className={`p-2 rounded ${view === "calendar" ? "bg-blue-100 text-blue-700" : "text-slate-500"}`} title="Calendário"><CalIcon size={18} /></button>
             </div>
-
-            <button
-              onClick={() => onDateClick(new Date())}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md active:scale-95 transition-all"
-            >
-              <Plus size={18} /> Nova
-            </button>
+            <button onClick={() => onDateClick(new Date())} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-md active:scale-95 transition-all"><Plus size={18} /> Nova</button>
           </div>
         </div>
 
@@ -417,77 +432,27 @@ export default function CentralReunioes() {
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-xl font-bold text-slate-700 capitalize">
-                {format(startOfWeek(currentDate), "dd MMM", { locale: ptBR })} -{" "}
-                {format(endOfWeek(currentDate), "dd MMM yyyy", { locale: ptBR })}
-              </h2>
+              <h2 className="text-xl font-bold text-slate-700 capitalize">{format(startOfWeek(currentDate), "dd MMM", { locale: ptBR })} - {format(endOfWeek(currentDate), "dd MMM yyyy", { locale: ptBR })}</h2>
               <div className="flex gap-2">
-                <button
-                  onClick={() => setCurrentDate(subWeeks(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronLeft />
-                </button>
-                <button
-                  onClick={() => setCurrentDate(addWeeks(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronRight />
-                </button>
+                <button onClick={() => setCurrentDate(subWeeks(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft /></button>
+                <button onClick={() => setCurrentDate(addWeeks(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
               </div>
             </div>
-
             <div className="grid grid-cols-7 flex-1">
               {weekDays.map((day) => (
-                <div 
-                    key={day.toString()} 
-                    className="border-r p-4 bg-white overflow-y-auto"
-                    onDragOver={handleDragOverDay}
-                    onDrop={(e) => handleDropOnDay(e, day)}
-                >
-                  <h3
-                    className={`text-sm font-bold mb-4 uppercase ${
-                      isSameDay(day, new Date()) ? "text-blue-600" : "text-slate-400"
-                    }`}
-                  >
-                    {format(day, "EEE dd/MM", { locale: ptBR })}
-                  </h3>
-
-                  {reunioes
-                    .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
-                    .map((m) => {
+                <div key={day.toString()} className="border-r p-4 bg-white overflow-y-auto" onDragOver={handleDragOverDay} onDrop={(e) => handleDropOnDay(e, day)}>
+                  <h3 className={`text-sm font-bold mb-4 uppercase ${isSameDay(day, new Date()) ? "text-blue-600" : "text-slate-400"}`}>{format(day, "EEE dd/MM", { locale: ptBR })}</h3>
+                  {reunioes.filter((r) => isSameDay(parseDataLocal(r.data_hora), day)).map((m) => {
                       const badge = statusBadge(m.status);
                       const timeRange = formatTimeRange(m);
-
                       return (
-                        <div
-                          key={m.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, m)}
-                          onClick={() => handleEdit(m)}
-                          className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2 bg-white"
-                          style={{ borderLeft: `4px solid ${m.cor}` }}
-                        >
+                        <div key={m.id} draggable onDragStart={(e) => handleDragStart(e, m)} onClick={() => handleEdit(m)} className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2 bg-white" style={{ borderLeft: `4px solid ${m.cor}` }}>
                           <div>
                             <p className="text-[10px] font-bold text-slate-400">{timeRange}</p>
                             <p className="text-xs font-bold text-slate-700 leading-tight">{m.titulo}</p>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">
-                              {tipoLabel(m)}
-                            </p>
+                            <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">{tipoLabel(m)}</p>
                           </div>
-
-                          <span
-                            className={`text-sm font-black ${
-                              badge.text === "✅"
-                                ? "text-green-600"
-                                : badge.text === "✖"
-                                ? "text-red-600"
-                                : "text-yellow-500"
-                            }`}
-                            title={badge.title}
-                          >
-                            {badge.text}
-                          </span>
+                          <span className={`text-sm font-black ${badge.text === "✅" ? "text-green-600" : badge.text === "✖" ? "text-red-600" : "text-yellow-500"}`} title={badge.title}>{badge.text}</span>
                         </div>
                       );
                     })}
@@ -500,48 +465,24 @@ export default function CentralReunioes() {
         {/* MODO LISTA */}
         {view === "list" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-6">
-            {Object.entries(reunioesAgrupadas)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([day, meetings]) => (
+            {Object.entries(reunioesAgrupadas).sort(([a], [b]) => a.localeCompare(b)).map(([day, meetings]) => (
                 <div key={day} className="mb-8">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">
-                    {format(parseISO(day), "dd 'de' MMMM", { locale: ptBR })}
-                  </h3>
-
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">{format(parseISO(day), "dd 'de' MMMM", { locale: ptBR })}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {meetings.map((m) => {
                       const badge = statusBadge(m.status);
                       const timeRange = formatTimeRange(m);
-
                       return (
-                        <div
-                          key={m.id}
-                          onClick={() => handleEdit(m)}
-                          className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4 justify-between"
-                        >
+                        <div key={m.id} onClick={() => handleEdit(m)} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4 justify-between">
                           <div className="flex items-center gap-4">
                             <div className="w-2 h-10 rounded-full" style={{ backgroundColor: m.cor }} />
                             <div>
                               <p className="text-xs font-bold text-blue-600">{timeRange}</p>
                               <h4 className="font-bold text-slate-800">{m.titulo}</h4>
-                              <p className="text-[10px] text-slate-500 uppercase font-bold">
-                                {tipoLabel(m)}
-                              </p>
+                              <p className="text-[10px] text-slate-500 uppercase font-bold">{tipoLabel(m)}</p>
                             </div>
                           </div>
-
-                          <span
-                            className={`text-sm font-black ${
-                              badge.text === "✅"
-                                ? "text-green-600"
-                                : badge.text === "✖"
-                                ? "text-red-600"
-                                : "text-yellow-500"
-                            }`}
-                            title={badge.title}
-                          >
-                            {badge.text}
-                          </span>
+                          <span className={`text-sm font-black ${badge.text === "✅" ? "text-green-600" : badge.text === "✖" ? "text-red-600" : "text-yellow-500"}`} title={badge.title}>{badge.text}</span>
                         </div>
                       );
                     })}
@@ -555,84 +496,23 @@ export default function CentralReunioes() {
         {view === "calendar" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-xl font-bold text-slate-700 capitalize">
-                {format(currentDate, "MMMM yyyy", { locale: ptBR })}
-              </h2>
+              <h2 className="text-xl font-bold text-slate-700 capitalize">{format(currentDate, "MMMM yyyy", { locale: ptBR })}</h2>
               <div className="flex gap-2">
-                <button
-                  onClick={() => setCurrentDate(subMonths(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronLeft />
-                </button>
-                <button
-                  onClick={() => setCurrentDate(addMonths(currentDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full"
-                >
-                  <ChevronRight />
-                </button>
+                <button onClick={() => setCurrentDate(subMonths(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft /></button>
+                <button onClick={() => setCurrentDate(addMonths(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
               </div>
             </div>
-
             <div className="grid grid-cols-7 flex-1 overflow-y-auto">
               {calendarDays.map((day) => (
-                <div
-                  key={day.toString()}
-                  onClick={() => onDateClick(day)}
-                  onDragOver={handleDragOverDay}
-                  onDrop={(e) => handleDropOnDay(e, day)}
-                  className={`border-r border-b min-h-[120px] p-2 hover:bg-blue-50/20 transition-colors ${
-                    !isSameMonth(day, currentDate) ? "opacity-30" : ""
-                  }`}
-                >
-                  <span
-                    className={`text-xs font-bold ${
-                      isSameDay(day, new Date())
-                        ? "bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center"
-                        : ""
-                    }`}
-                  >
-                    {format(day, "d")}
-                  </span>
-
-                  {reunioes
-                    .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
-                    .map((m) => {
+                <div key={day.toString()} onClick={() => onDateClick(day)} onDragOver={handleDragOverDay} onDrop={(e) => handleDropOnDay(e, day)} className={`border-r border-b min-h-[120px] p-2 hover:bg-blue-50/20 transition-colors ${!isSameMonth(day, currentDate) ? "opacity-30" : ""}`}>
+                  <span className={`text-xs font-bold ${isSameDay(day, new Date()) ? "bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center" : ""}`}>{format(day, "d")}</span>
+                  {reunioes.filter((r) => isSameDay(parseDataLocal(r.data_hora), day)).map((m) => {
                       const badge = statusBadge(m.status);
                       const timeRange = formatTimeRange(m);
-
                       return (
-                        <div
-                          key={m.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, m)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEdit(m);
-                          }}
-                          className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer flex items-center justify-between gap-2"
-                          style={{
-                            borderLeftColor: m.cor,
-                            backgroundColor: (m.cor || "#3B82F6") + "15",
-                          }}
-                          title={m.titulo}
-                        >
-                          <span className="truncate">
-                            {timeRange} {m.titulo}
-                          </span>
-
-                          <span
-                            className={`text-[10px] font-black ${
-                              badge.text === "✅"
-                                ? "text-green-600"
-                                : badge.text === "✖"
-                                ? "text-red-600"
-                                : "text-yellow-500"
-                            }`}
-                            title={badge.title}
-                          >
-                            {badge.text}
-                          </span>
+                        <div key={m.id} draggable onDragStart={(e) => handleDragStart(e, m)} onClick={(e) => { e.stopPropagation(); handleEdit(m); }} className="text-[10px] truncate p-1 mt-1 rounded border-l-2 font-medium cursor-pointer flex items-center justify-between gap-2" style={{ borderLeftColor: m.cor, backgroundColor: (m.cor || "#3B82F6") + "15" }} title={m.titulo}>
+                          <span className="truncate">{timeRange} {m.titulo}</span>
+                          <span className={`text-[10px] font-black ${badge.text === "✅" ? "text-green-600" : badge.text === "✖" ? "text-red-600" : "text-yellow-500"}`} title={badge.title}>{badge.text}</span>
                         </div>
                       );
                     })}
@@ -648,56 +528,25 @@ export default function CentralReunioes() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
             <div className="bg-white px-8 py-5 border-b flex justify-between items-center shrink-0">
-              <h2 className="text-xl font-bold text-slate-800">
-                {editingReuniao ? "Editar Reunião" : "Nova Reunião"}
-              </h2>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="p-2 hover:bg-slate-100 rounded-full"
-              >
-                <X size={20} className="text-slate-400" />
-              </button>
+              <h2 className="text-xl font-bold text-slate-800">{editingReuniao ? "Editar Reunião" : "Nova Reunião"}</h2>
+              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X size={20} className="text-slate-400" /></button>
             </div>
-
-            <form
-              id="form-reuniao"
-              onSubmit={handleSubmit}
-              className="flex-1 overflow-y-auto p-8 bg-white"
-            >
-              <DetalhesReuniao
-                formData={formData}
-                setFormData={setFormData}
-                editingReuniao={editingReuniao}
-                tipos={tipos}
+            
+            {/* ✅ Passando flag de travamento se já estiver realizada */}
+            <form id="form-reuniao" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 bg-white">
+              <DetalhesReuniao 
+                formData={formData} 
+                setFormData={setFormData} 
+                editingReuniao={editingReuniao} 
+                tipos={tipos} 
+                isRealizada={formData.status === "Realizada"} 
               />
             </form>
 
             <div className="bg-slate-50 p-5 border-t flex justify-end gap-3 shrink-0">
-              {editingReuniao && (
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  className="mr-auto text-red-500 font-bold flex items-center gap-2 px-4 hover:bg-red-50 rounded-lg"
-                >
-                  <Trash2 size={16} /> Excluir Reunião
-                </button>
-              )}
-
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="px-6 py-2 text-slate-500 font-bold"
-                type="button"
-              >
-                Cancelar
-              </button>
-
-              <button
-                type="submit"
-                form="form-reuniao"
-                className="px-10 py-2 bg-blue-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 active:scale-95 transition-all"
-              >
-                <Save size={18} /> Salvar Alterações
-              </button>
+              {editingReuniao && (<button type="button" onClick={handleDeleteClick} className="mr-auto text-red-500 font-bold flex items-center gap-2 px-4 hover:bg-red-50 rounded-lg"><Trash2 size={16} /> Excluir Reunião</button>)}
+              <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-slate-500 font-bold" type="button">Cancelar</button>
+              <button type="submit" form="form-reuniao" className="px-10 py-2 bg-blue-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 active:scale-95 transition-all"><Save size={18} /> Salvar Alterações</button>
             </div>
           </div>
         </div>
