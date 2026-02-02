@@ -26,7 +26,10 @@ import {
   Volume2,
   VolumeX,
   StickyNote,
-  ShieldAlert // ✅ Ícone para o modal de segurança
+  ShieldAlert,
+  Paperclip, // ✅ Ícone anexo
+  FileText,  // ✅ Ícone arquivo
+  Download   // ✅ Ícone download
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -164,11 +167,14 @@ export default function CentralAtas() {
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
 
-  // ✅ Estados para Exclusão Segura
+  // Estados para Exclusão Segura
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
   const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
+
+  // ✅ Estado de Upload
+  const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
   useEffect(() => {
     fetchAtas();
@@ -448,12 +454,95 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ FUNÇÃO DE ABERTURA DO MODAL DE EXCLUSÃO
+  // ✅ UPLOAD DE MATERIAIS
+  const handleUploadMaterial = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    setUploadingMaterial(true);
+    try {
+      const novosMateriais = [];
+
+      for (const file of files) {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${selectedAta.id}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
+        const filePath = `anexos/${fileName}`;
+
+        // 1. Upload para o Storage
+        const { error: uploadErr } = await supabase.storage
+          .from('materiais') // ⚠️ Precisa criar este bucket no Supabase (já enviei o SQL)
+          .upload(filePath, file);
+
+        if (uploadErr) throw uploadErr;
+
+        // 2. Pegar URL Pública
+        const { data: urlData } = supabase.storage
+          .from('materiais')
+          .getPublicUrl(filePath);
+
+        if (urlData?.publicUrl) {
+          novosMateriais.push({
+            name: file.name,
+            url: urlData.publicUrl,
+            type: file.type, // 'image/png', 'application/pdf', etc.
+            path: filePath
+          });
+        }
+      }
+
+      // 3. Atualizar Banco
+      const listaAtual = selectedAta.materiais || [];
+      const listaFinal = [...listaAtual, ...novosMateriais];
+
+      const { error: updateErr } = await supabase
+        .from('reunioes')
+        .update({ materiais: listaFinal })
+        .eq('id', selectedAta.id);
+
+      if (updateErr) throw updateErr;
+
+      // 4. Atualizar Estado Local
+      setSelectedAta(prev => ({ ...prev, materiais: listaFinal }));
+      setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, materiais: listaFinal } : a));
+      
+      alert("Material anexado com sucesso!");
+
+    } catch (err) {
+      console.error("Erro upload:", err);
+      alert("Erro ao enviar arquivo: " + err.message);
+    } finally {
+      setUploadingMaterial(false);
+      // Reset input value to allow re-uploading same file if needed
+      e.target.value = null;
+    }
+  };
+
+  const handleDeleteMaterial = async (indexToDelete) => {
+    if(!window.confirm("Deseja remover este anexo?")) return;
+
+    try {
+      const listaAtual = selectedAta.materiais || [];
+      const novaLista = listaAtual.filter((_, i) => i !== indexToDelete);
+
+      const { error } = await supabase
+        .from('reunioes')
+        .update({ materiais: novaLista })
+        .eq('id', selectedAta.id);
+
+      if(error) throw error;
+
+      setSelectedAta(prev => ({ ...prev, materiais: novaLista }));
+      setAtas(prev => prev.map(a => a.id === selectedAta.id ? { ...a, materiais: novaLista } : a));
+
+    } catch(err) {
+      alert("Erro ao excluir anexo: " + err.message);
+    }
+  };
+
   const handleDeleteClick = () => {
     setShowDeleteAuth(true);
   };
 
-  // ✅ FUNÇÃO DE VALIDAÇÃO E EXCLUSÃO
   const confirmarExclusao = async () => {
     if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
     setDeleting(true);
@@ -521,7 +610,7 @@ export default function CentralAtas() {
     <Layout>
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
         
-        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+        {/* OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
         {showDeleteAuth && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
@@ -670,7 +759,6 @@ export default function CentralAtas() {
                         >
                           <Edit3 size={20} />
                         </button>
-                        {/* ✅ Botão EXCLUIR atualizado */}
                         <button
                           onClick={handleDeleteClick}
                           className="p-2 text-slate-400 hover:text-red-600 rounded-lg bg-slate-50"
@@ -722,7 +810,7 @@ export default function CentralAtas() {
                   )}
                 </div>
 
-                {/* ÁUDIO - COM AUTO-SAVE NA IA */}
+                {/* ÁUDIO */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Áudio e Transcrição
@@ -752,6 +840,58 @@ export default function CentralAtas() {
                         {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
                         Gerar Resumo IA
                       </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* ✅ SEÇÃO DE MATERIAIS DE APOIO */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                      <Paperclip size={14} /> Materiais e Anexos
+                    </div>
+                    
+                    {/* Botão de Upload Escondido */}
+                    <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? 'opacity-50 pointer-events-none' : ''}`}>
+                      {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                      {uploadingMaterial ? "Enviando..." : "Anexar Material"}
+                      <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
+                    </label>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    {selectedAta.materiais && selectedAta.materiais.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {selectedAta.materiais.map((item, idx) => {
+                          const isImage = item.type?.startsWith('image');
+                          return (
+                            <div key={idx} className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+                              <div className="flex items-center gap-3 overflow-hidden">
+                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isImage ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                  {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-slate-700 truncate" title={item.name}>{item.name}</p>
+                                  <p className="text-[10px] text-slate-400 uppercase">Anexo</p>
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-1">
+                                <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Baixar / Visualizar">
+                                  <Download size={16} />
+                                </a>
+                                <button onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Remover">
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-4 text-slate-400 text-xs italic">
+                        Nenhum material anexado.
+                      </div>
                     )}
                   </div>
                 </div>
