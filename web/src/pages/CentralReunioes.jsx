@@ -1,7 +1,7 @@
 // src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
-import { supabase, supabaseInove } from "../supabaseClient"; // ✅ Importar supabaseInove
+import { supabase, supabaseInove } from "../supabaseClient";
 import {
   format,
   startOfMonth,
@@ -28,27 +28,42 @@ import {
   List,
   X,
   Save,
-  Trash2,
-  ShieldAlert // ✅ Ícone de segurança
+  Trash2, // Mantido apenas se for usar ícone em outro lugar, senão pode remover
+  ShieldAlert
 } from "lucide-react";
 import { salvarReuniao, atualizarReuniao } from "../services/agendaService";
 import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
-// Função para extrair hora limpa
+const SENHA_EXCLUSAO = "KM2026";
+
+// Função para extrair hora limpa (LITERAL)
 function extractTime(dateString) {
   if (!dateString) return "";
-  if (String(dateString).length <= 8 && String(dateString).includes(":")) {
-    return String(dateString).substring(0, 5);
-  }
-  try {
-    const date = new Date(dateString);
-    if (isValid(date)) {
-      return format(date, "HH:mm");
-    }
-  } catch (e) {
-    console.warn("Data inválida:", dateString);
-  }
+  const str = String(dateString);
+  if (str.includes("T")) return str.split("T")[1].substring(0, 5);
+  if (str.includes(":")) return str.substring(0, 5);
   return "";
+}
+
+// Formatar intervalo visual
+function formatTimeRange(reuniao) {
+  try {
+    const horaIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "--:--";
+    let horaFim = extractTime(reuniao.horario_fim);
+
+    if (!horaFim || horaFim === "") {
+        if (reuniao.duracao_segundos) {
+            const [h, m] = horaIni.split(':').map(Number);
+            const totalMin = h * 60 + m + (reuniao.duracao_segundos / 60);
+            const novoH = Math.floor(totalMin / 60) % 24;
+            const novoM = totalMin % 60;
+            horaFim = `${String(novoH).padStart(2, '0')}:${String(novoM).padStart(2, '0')}`;
+        }
+    }
+    return horaFim ? `${horaIni} - ${horaFim}` : horaIni;
+  } catch {
+    return "--:--";
+  }
 }
 
 function parseDataLocal(dataString) {
@@ -80,27 +95,6 @@ function calcDuracaoSegundos(inicioHHMM, fimHHMM) {
     return diff * 60;
   } catch {
     return null;
-  }
-}
-
-// Formatar intervalo visual
-function formatTimeRange(reuniao) {
-  try {
-    const horaIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "--:--";
-    let horaFim = extractTime(reuniao.horario_fim);
-
-    if (!horaFim || horaFim === "") {
-        const dtBase = parseDataLocal(reuniao.data_hora);
-        if (reuniao.duracao_segundos) {
-            const dtFim = addMinutes(dtBase, reuniao.duracao_segundos / 60);
-            horaFim = format(dtFim, "HH:mm");
-        } else {
-            horaFim = ""; 
-        }
-    }
-    return horaFim ? `${horaIni} - ${horaFim}` : horaIni;
-  } catch {
-    return "--:--";
   }
 }
 
@@ -177,25 +171,18 @@ export default function CentralReunioes() {
   };
 
   const handleEdit = (reuniao) => {
-    const dt = parseDataLocal(reuniao.data_hora);
+    const dataPart = String(reuniao.data_hora).split('T')[0];
     const hhmmIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "09:00";
     let hhmmFim = extractTime(reuniao.horario_fim);
     
-    // Se não tiver fim, calcula ou define padrão
     if (!hhmmFim) {
-       // Se tiver duração, calcula. Se não, chuta 1h.
-       if (reuniao.duracao_segundos) {
-          const fimDate = addMinutes(dt, reuniao.duracao_segundos / 60);
-          hhmmFim = format(fimDate, "HH:mm");
-       } else {
-          hhmmFim = "10:00";
-       }
+       hhmmFim = "10:00"; 
     }
 
     setFormData({
       titulo: reuniao.titulo || "",
       tipo_reuniao_id: reuniao.tipo_reuniao_id || "",
-      data: format(dt, "yyyy-MM-dd"),
+      data: dataPart,
       hora_inicio: hhmmIni,
       hora_fim: hhmmFim,
       cor: reuniao.cor || "#3B82F6",
@@ -236,9 +223,9 @@ export default function CentralReunioes() {
     
     try {
       if (editingReuniao) {
-        // Se já foi realizada, não pergunta de aplicar a futuras, salva direto (geralmente)
-        // Mas mantendo a lógica padrão:
-        const aplicar = window.confirm("Deseja aplicar as mudanças para reuniões futuras desta série?");
+        const aplicar = editingReuniao.status === 'Realizada' 
+            ? false 
+            : window.confirm("Deseja aplicar as mudanças para reuniões futuras desta série?");
         const { error } = await atualizarReuniao(editingReuniao.id, dados, aplicar);
         if (error) throw error;
       } else {
@@ -254,20 +241,18 @@ export default function CentralReunioes() {
     }
   };
 
-  // ✅ INICIAR PROCESSO DE EXCLUSÃO
+  // ✅ Abre o modal de segurança
   const handleDeleteClick = () => {
     setShowDeleteAuth(true);
     setDelLogin("");
     setDelSenha("");
   };
 
-  // ✅ CONFIRMAR EXCLUSÃO COM SEGURANÇA
   const confirmarExclusao = async () => {
     if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
     setDeleting(true);
 
     try {
-      // 1. Validar Usuário (INOVE)
       const { data: usuario, error: errAuth } = await supabaseInove
         .from("usuarios_aprovadores")
         .select("id, login, senha, nivel, ativo")
@@ -284,14 +269,12 @@ export default function CentralReunioes() {
         return;
       }
 
-      // 2. Apenas Gestor ou Adm
       if (usuario.nivel !== "Administrador" && usuario.nivel !== "Gestor") {
         alert("Permissão negada. Apenas Gestores e Administradores podem excluir reuniões.");
         setDeleting(false);
         return;
       }
 
-      // 3. Excluir
       const { error: errDel } = await supabase.from("reunioes").delete().eq("id", editingReuniao.id);
       if (errDel) throw errDel;
 
@@ -362,7 +345,7 @@ export default function CentralReunioes() {
     <Layout>
       <div className="flex flex-col h-screen p-6 bg-slate-50 font-sans overflow-hidden relative">
         
-        {/* ✅ OVERLAY DE EXCLUSÃO */}
+        {/* OVERLAY EXCLUSÃO */}
         {showDeleteAuth && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
@@ -370,52 +353,20 @@ export default function CentralReunioes() {
                 <ShieldAlert size={24} />
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-1">Área Restrita</h3>
-              <p className="text-sm text-slate-500 mb-6">
-                Exclusão permitida apenas para <b>Gestores</b> ou <b>Administradores</b>.
-              </p>
-
+              <p className="text-sm text-slate-500 mb-6">Exclusão permitida apenas para <b>Gestores</b> ou <b>Administradores</b>.</p>
               <div className="space-y-3 text-left">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
-                  <input 
-                    type="text" 
-                    autoFocus
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delLogin}
-                    onChange={e => setDelLogin(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
-                  <input 
-                    type="password" 
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delSenha}
-                    onChange={e => setDelSenha(e.target.value)}
-                  />
-                </div>
+                <div><label className="text-xs font-bold text-slate-600 uppercase">Login</label><input type="text" autoFocus className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500" value={delLogin} onChange={e => setDelLogin(e.target.value)} /></div>
+                <div><label className="text-xs font-bold text-slate-600 uppercase">Senha</label><input type="password" className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500" value={delSenha} onChange={e => setDelSenha(e.target.value)} /></div>
               </div>
-
               <div className="flex gap-3 mt-6">
-                <button 
-                  onClick={() => setShowDeleteAuth(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmarExclusao}
-                  disabled={deleting}
-                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
-                >
-                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
-                </button>
+                <button onClick={() => setShowDeleteAuth(false)} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50">Cancelar</button>
+                <button onClick={confirmarExclusao} disabled={deleting} className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50">{deleting ? "Verificando..." : "Confirmar Exclusão"}</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ... (Header, Views Week/List/Calendar permanecem iguais) ... */}
+        {/* HEADER E VIEWS */}
         <div className="flex justify-between items-center mb-6">
           <div><h1 className="text-2xl font-bold text-slate-800">Calendário Tático</h1></div>
           <div className="flex gap-2">
@@ -428,7 +379,6 @@ export default function CentralReunioes() {
           </div>
         </div>
 
-        {/* MODO SEMANAL */}
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b">
@@ -447,11 +397,7 @@ export default function CentralReunioes() {
                       const timeRange = formatTimeRange(m);
                       return (
                         <div key={m.id} draggable onDragStart={(e) => handleDragStart(e, m)} onClick={() => handleEdit(m)} className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2 bg-white" style={{ borderLeft: `4px solid ${m.cor}` }}>
-                          <div>
-                            <p className="text-[10px] font-bold text-slate-400">{timeRange}</p>
-                            <p className="text-xs font-bold text-slate-700 leading-tight">{m.titulo}</p>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">{tipoLabel(m)}</p>
-                          </div>
+                          <div><p className="text-[10px] font-bold text-slate-400">{timeRange}</p><p className="text-xs font-bold text-slate-700 leading-tight">{m.titulo}</p><p className="text-[10px] text-slate-500 uppercase font-bold mt-1">{tipoLabel(m)}</p></div>
                           <span className={`text-sm font-black ${badge.text === "✅" ? "text-green-600" : badge.text === "✖" ? "text-red-600" : "text-yellow-500"}`} title={badge.title}>{badge.text}</span>
                         </div>
                       );
@@ -462,7 +408,7 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* MODO LISTA */}
+        {/* ... (View List e Calendar mantidos iguais para economizar espaço) ... */}
         {view === "list" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-y-auto p-6">
             {Object.entries(reunioesAgrupadas).sort(([a], [b]) => a.localeCompare(b)).map(([day, meetings]) => (
@@ -476,11 +422,7 @@ export default function CentralReunioes() {
                         <div key={m.id} onClick={() => handleEdit(m)} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:shadow-md transition-all flex items-center gap-4 justify-between">
                           <div className="flex items-center gap-4">
                             <div className="w-2 h-10 rounded-full" style={{ backgroundColor: m.cor }} />
-                            <div>
-                              <p className="text-xs font-bold text-blue-600">{timeRange}</p>
-                              <h4 className="font-bold text-slate-800">{m.titulo}</h4>
-                              <p className="text-[10px] text-slate-500 uppercase font-bold">{tipoLabel(m)}</p>
-                            </div>
+                            <div><p className="text-xs font-bold text-blue-600">{timeRange}</p><h4 className="font-bold text-slate-800">{m.titulo}</h4><p className="text-[10px] text-slate-500 uppercase font-bold">{tipoLabel(m)}</p></div>
                           </div>
                           <span className={`text-sm font-black ${badge.text === "✅" ? "text-green-600" : badge.text === "✖" ? "text-red-600" : "text-yellow-500"}`} title={badge.title}>{badge.text}</span>
                         </div>
@@ -492,14 +434,13 @@ export default function CentralReunioes() {
           </div>
         )}
 
-        {/* MODO CALENDÁRIO */}
         {view === "calendar" && (
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b">
               <h2 className="text-xl font-bold text-slate-700 capitalize">{format(currentDate, "MMMM yyyy", { locale: ptBR })}</h2>
               <div className="flex gap-2">
                 <button onClick={() => setCurrentDate(subMonths(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft /></button>
-                <button onClick={() => setCurrentDate(addMonths(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
+                <button onClick={() => setCurrentDate(addWeeks(currentDate, 1))} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight /></button>
               </div>
             </div>
             <div className="grid grid-cols-7 flex-1 overflow-y-auto">
@@ -523,7 +464,7 @@ export default function CentralReunioes() {
         )}
       </div>
 
-      {/* MODAL */}
+      {/* MODAL PRINCIPAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
@@ -532,19 +473,20 @@ export default function CentralReunioes() {
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X size={20} className="text-slate-400" /></button>
             </div>
             
-            {/* ✅ Passando flag de travamento se já estiver realizada */}
             <form id="form-reuniao" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 bg-white">
+              {/* ✅ Passando flag isRealizada e a função onDeleteRequest */}
               <DetalhesReuniao 
                 formData={formData} 
                 setFormData={setFormData} 
                 editingReuniao={editingReuniao} 
                 tipos={tipos} 
                 isRealizada={formData.status === "Realizada"} 
+                onDeleteRequest={handleDeleteClick} 
               />
             </form>
 
             <div className="bg-slate-50 p-5 border-t flex justify-end gap-3 shrink-0">
-              {editingReuniao && (<button type="button" onClick={handleDeleteClick} className="mr-auto text-red-500 font-bold flex items-center gap-2 px-4 hover:bg-red-50 rounded-lg"><Trash2 size={16} /> Excluir Reunião</button>)}
+              {/* Botão de excluir agora fica dentro do DetalhesReuniao por pedido, removido daqui */}
               <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-slate-500 font-bold" type="button">Cancelar</button>
               <button type="submit" form="form-reuniao" className="px-10 py-2 bg-blue-600 text-white font-bold rounded-xl shadow-lg flex items-center gap-2 active:scale-95 transition-all"><Save size={18} /> Salvar Alterações</button>
             </div>
