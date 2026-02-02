@@ -65,7 +65,6 @@ export default function DetalhesReuniao({
   // Carregar lista de responsáveis do Inove
   useEffect(() => {
     const fetchResponsaveis = async () => {
-      // ✅ Busca apenas usuários ativos
       const { data, error } = await supabaseInove
         .from("usuarios_aprovadores")
         .select("id, nome, sobrenome, nome_completo, ativo")
@@ -78,15 +77,20 @@ export default function DetalhesReuniao({
     fetchResponsaveis();
   }, []);
 
+  // Efeito para carregar dados iniciais
   useEffect(() => {
     if (editingReuniao) {
       const horaIni = extractTime(editingReuniao.horario_inicio) || extractTime(editingReuniao.data_hora) || "09:00";
       const horaFim = extractTime(editingReuniao.horario_fim) || "10:00";
+      
+      // ✅ Garante que materiais sempre seja um array, mesmo se vier null do banco
+      const materiaisSeguros = Array.isArray(editingReuniao.materiais) ? editingReuniao.materiais : [];
+
       setFormData(prev => ({
           ...prev,
           hora_inicio: prev.hora_inicio || horaIni,
           hora_fim: prev.hora_fim || horaFim,
-          materiais: editingReuniao.materiais || []
+          materiais: prev.materiais && prev.materiais.length > 0 ? prev.materiais : materiaisSeguros
       }));
     }
   }, [editingReuniao, setFormData]);
@@ -97,9 +101,11 @@ export default function DetalhesReuniao({
     handleChange("ata", guia);
   };
 
+  // ✅ UPLOAD COM SALVAMENTO IMEDIATO NO BANCO
   const handleUploadMaterial = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    
     setUploadingMaterial(true);
     try {
       const novosMateriais = [];
@@ -109,23 +115,43 @@ export default function DetalhesReuniao({
         const fileName = `${baseId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
         const filePath = `anexos/${fileName}`;
         
-        // Upload para o bucket 'materiais'
+        // 1. Upload para o Storage
         const { error: uploadErr } = await supabase.storage.from('materiais').upload(filePath, file);
         if (uploadErr) throw uploadErr;
         
+        // 2. Gerar URL
         const { data: urlData } = supabase.storage.from('materiais').getPublicUrl(filePath);
         if (urlData?.publicUrl) {
-          novosMateriais.push({ name: file.name, url: urlData.publicUrl, type: file.type, path: filePath });
+          novosMateriais.push({ 
+            name: file.name, 
+            url: urlData.publicUrl, 
+            type: file.type, 
+            path: filePath 
+          });
         }
       }
-      const listaAtual = formData.materiais || [];
-      handleChange("materiais", [...listaAtual, ...novosMateriais]);
+
+      // 3. Atualizar Estado Local
+      const listaAtual = Array.isArray(formData.materiais) ? formData.materiais : [];
+      const listaFinal = [...listaAtual, ...novosMateriais];
+      handleChange("materiais", listaFinal);
+
+      // 4. ✅ SE FOR EDIÇÃO, SALVA NO BANCO IMEDIATAMENTE
+      if (editingReuniao?.id) {
+        const { error: dbError } = await supabase
+          .from('reunioes')
+          .update({ materiais: listaFinal })
+          .eq('id', editingReuniao.id);
+        
+        if (dbError) throw dbError;
+      }
+
     } catch (err) {
       console.error("Erro upload:", err);
       alert("Erro ao enviar arquivo: " + err.message);
     } finally {
       setUploadingMaterial(false);
-      e.target.value = null;
+      e.target.value = null; // Reseta o input
     }
   };
 
@@ -136,29 +162,57 @@ export default function DetalhesReuniao({
     setShowAuthMaterial(true);
   };
 
+  // ✅ EXCLUSÃO COM ATUALIZAÇÃO IMEDIATA NO BANCO
   const confirmDeleteMaterial = async () => {
     if (!authLoginMat || !authSenhaMat) return alert("Informe Login e Senha.");
     setValidatingAuthMat(true);
     try {
-      const { data: usuario, error } = await supabaseInove.from("usuarios_aprovadores").select("nivel, ativo").eq("login", authLoginMat).eq("senha", authSenhaMat).eq("ativo", true).maybeSingle();
+      const { data: usuario, error } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("nivel, ativo")
+        .eq("login", authLoginMat)
+        .eq("senha", authSenhaMat)
+        .eq("ativo", true)
+        .maybeSingle();
+
       if (error) throw error;
       if (!usuario) { alert("Credenciais inválidas."); return; }
       if (usuario.nivel !== 'Gestor' && usuario.nivel !== 'Administrador') { alert("Apenas Gestores/ADM podem excluir anexos."); return; }
       
-      const listaAtual = formData.materiais || [];
+      // Remove do array local
+      const listaAtual = Array.isArray(formData.materiais) ? formData.materiais : [];
       const novaLista = listaAtual.filter((_, i) => i !== materialToDelete);
+      
+      // Atualiza estado local
       handleChange("materiais", novaLista);
+
+      // ✅ SE FOR EDIÇÃO, ATUALIZA BANCO IMEDIATAMENTE
+      if (editingReuniao?.id) {
+        const { error: dbError } = await supabase
+          .from('reunioes')
+          .update({ materiais: novaLista })
+          .eq('id', editingReuniao.id);
+        
+        if (dbError) throw dbError;
+      }
+
       setShowAuthMaterial(false);
       setMaterialToDelete(null);
-    } catch (err) { alert("Erro: " + err.message); } finally { setValidatingAuthMat(false); }
+
+    } catch (err) { 
+      console.error(err);
+      alert("Erro: " + err.message); 
+    } finally { 
+      setValidatingAuthMat(false); 
+    }
   };
 
+  // Lógica de Responsáveis
   const filteredResponsaveis = useMemo(() => {
     const termo = (formData.responsavel || "").toLowerCase();
     return listaResponsaveis.filter(u => buildNomeSobrenome(u).toLowerCase().includes(termo)).slice(0, 8); 
   }, [listaResponsaveis, formData.responsavel]);
 
-  // ✅ CORREÇÃO: Função de seleção segura
   const selectResponsavel = (u) => {
     const nome = buildNomeSobrenome(u);
     handleChange("responsavel", nome);
@@ -170,8 +224,9 @@ export default function DetalhesReuniao({
       
       {/* Modal Auth Material (Z-INDEX ALTO) */}
       {showAuthMaterial && (
-        <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
-          <div className="w-full max-w-xs bg-white border border-slate-200 shadow-2xl rounded-xl p-6 text-center">
+        <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="w-full max-w-xs bg-white border border-slate-200 shadow-2xl rounded-xl p-6 text-center relative">
+            <button onClick={() => setShowAuthMaterial(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={18} /></button>
             <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600"><ShieldAlert size={20} /></div>
             <h4 className="text-base font-bold text-slate-800 mb-1">Autorização Necessária</h4>
             <div className="space-y-2 text-left my-4">
@@ -216,7 +271,6 @@ export default function DetalhesReuniao({
               <div className="relative"><Clock className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="time" disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60" value={formData.hora_fim} onChange={(e) => handleChange("hora_fim", e.target.value)} /></div>
             </div>
             
-            {/* SELEÇÃO DE RESPONSÁVEL COM CORREÇÃO DE FOCO */}
             <div className="relative">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Organizador</label>
               <div className="relative">
@@ -227,7 +281,6 @@ export default function DetalhesReuniao({
                   value={formData.responsavel}
                   onChange={(e) => { handleChange("responsavel", e.target.value); setShowSugestoesResp(true); }}
                   onFocus={() => setShowSugestoesResp(true)}
-                  // ✅ Pequeno delay no Blur para permitir o clique
                   onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)}
                   placeholder="Buscar responsável..."
                 />
@@ -238,7 +291,6 @@ export default function DetalhesReuniao({
                     <button 
                       key={u.id} 
                       type="button" 
-                      // ✅ onMouseDown dispara antes do onBlur do input
                       onMouseDown={(e) => { e.preventDefault(); selectResponsavel(u); }} 
                       className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
                     >
@@ -273,10 +325,14 @@ export default function DetalhesReuniao({
           </div>
         </section>
 
-        {/* BOTÃO EXCLUIR REUNIÃO */}
+        {/* ✅ BOTÃO EXCLUIR */}
         {editingReuniao && (
           <div className="pt-4 border-t border-slate-100 mt-auto">
-            <button type="button" onClick={onDeleteRequest} className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors">
+            <button
+              type="button"
+              onClick={onDeleteRequest}
+              className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors"
+            >
               <Trash2 size={16} /> Excluir Reunião (Área Restrita)
             </button>
           </div>
@@ -298,7 +354,7 @@ export default function DetalhesReuniao({
         <div className="mt-4 pt-4 border-t border-slate-100">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase"><Paperclip size={14} /> Anexos</div>
-              <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 flex items-center gap-2 transition-all ${uploadingMaterial ? 'opacity-50 pointer-events-none' : ''}`}>
+              <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? 'opacity-50 pointer-events-none' : ''}`}>
                 {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} {uploadingMaterial ? "Enviando..." : "Anexar"}
                 <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
               </label>
