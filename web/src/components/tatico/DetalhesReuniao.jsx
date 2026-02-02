@@ -1,7 +1,7 @@
 // src/components/tatico/DetalhesReuniao.jsx
 import React, { useMemo, useEffect, useState } from "react";
 import { 
-  Calendar, Clock, AlignLeft, FileText, Paperclip, Loader2, Plus, Trash2, Download, ImageIcon, ShieldAlert, User 
+  Calendar, Clock, AlignLeft, FileText, Paperclip, Loader2, Plus, Trash2, Download, ImageIcon, ShieldAlert, User, X 
 } from "lucide-react";
 import { format, isValid } from "date-fns";
 import { supabase, supabaseInove } from "../../supabaseClient";
@@ -23,6 +23,7 @@ function extractTime(dateString) {
   return "";
 }
 
+// Helper para nome completo
 function buildNomeSobrenome(u) {
   const nome = String(u?.nome || "").trim();
   const sobrenome = String(u?.sobrenome || "").trim();
@@ -39,7 +40,7 @@ export default function DetalhesReuniao({
   editingReuniao,
   tipos = [],
   isRealizada = false,
-  onDeleteRequest // ✅ Recebe a função de excluir do pai
+  onDeleteRequest
 }) {
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   
@@ -47,7 +48,7 @@ export default function DetalhesReuniao({
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [showSugestoesResp, setShowSugestoesResp] = useState(false);
 
-  // Estados para Exclusão de Material (Local)
+  // Estados para Exclusão de Material
   const [showAuthMaterial, setShowAuthMaterial] = useState(false);
   const [authLoginMat, setAuthLoginMat] = useState("");
   const [authSenhaMat, setAuthSenhaMat] = useState("");
@@ -61,9 +62,17 @@ export default function DetalhesReuniao({
     return tipos.find((t) => String(t.id) === String(formData.tipo_reuniao_id)) || null;
   }, [tipos, formData.tipo_reuniao_id]);
 
+  // Carregar lista de responsáveis do Inove
   useEffect(() => {
     const fetchResponsaveis = async () => {
-      const { data } = await supabaseInove.from("usuarios_aprovadores").select("id, nome, sobrenome, nome_completo, ativo").eq("ativo", true).order("nome");
+      // ✅ Busca apenas usuários ativos
+      const { data, error } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("id, nome, sobrenome, nome_completo, ativo")
+        .eq("ativo", true)
+        .order("nome");
+      
+      if (error) console.error("Erro ao buscar responsáveis:", error);
       setListaResponsaveis(data || []);
     };
     fetchResponsaveis();
@@ -99,8 +108,11 @@ export default function DetalhesReuniao({
         const baseId = editingReuniao?.id || "nova"; 
         const fileName = `${baseId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
         const filePath = `anexos/${fileName}`;
+        
+        // Upload para o bucket 'materiais'
         const { error: uploadErr } = await supabase.storage.from('materiais').upload(filePath, file);
         if (uploadErr) throw uploadErr;
+        
         const { data: urlData } = supabase.storage.from('materiais').getPublicUrl(filePath);
         if (urlData?.publicUrl) {
           novosMateriais.push({ name: file.name, url: urlData.publicUrl, type: file.type, path: filePath });
@@ -117,7 +129,6 @@ export default function DetalhesReuniao({
     }
   };
 
-  // --- EXCLUSÃO DE MATERIAL (SEGURA) ---
   const handleRequestDeleteMaterial = (index) => {
     setMaterialToDelete(index);
     setAuthLoginMat("");
@@ -147,18 +158,20 @@ export default function DetalhesReuniao({
     return listaResponsaveis.filter(u => buildNomeSobrenome(u).toLowerCase().includes(termo)).slice(0, 8); 
   }, [listaResponsaveis, formData.responsavel]);
 
+  // ✅ CORREÇÃO: Função de seleção segura
   const selectResponsavel = (u) => {
-    handleChange("responsavel", buildNomeSobrenome(u));
+    const nome = buildNomeSobrenome(u);
+    handleChange("responsavel", nome);
     setShowSugestoesResp(false);
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 relative">
       
-      {/* Modal Auth Material */}
+      {/* Modal Auth Material (Z-INDEX ALTO) */}
       {showAuthMaterial && (
-        <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-xl border border-slate-200 shadow-xl h-full">
-          <div className="w-full max-w-xs text-center">
+        <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="w-full max-w-xs bg-white border border-slate-200 shadow-2xl rounded-xl p-6 text-center">
             <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600"><ShieldAlert size={20} /></div>
             <h4 className="text-base font-bold text-slate-800 mb-1">Autorização Necessária</h4>
             <div className="space-y-2 text-left my-4">
@@ -166,8 +179,8 @@ export default function DetalhesReuniao({
               <div><label className="text-[10px] font-bold text-slate-500 uppercase">Senha</label><input type="password" className="w-full border p-2 rounded text-sm" value={authSenhaMat} onChange={e => setAuthSenhaMat(e.target.value)} /></div>
             </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setShowAuthMaterial(false)} className="flex-1 py-2 border rounded text-xs font-bold">Cancelar</button>
-              <button type="button" onClick={confirmDeleteMaterial} disabled={validatingAuthMat} className="flex-1 py-2 bg-red-600 text-white rounded text-xs font-bold">{validatingAuthMat ? "Verificando..." : "Confirmar"}</button>
+              <button type="button" onClick={() => setShowAuthMaterial(false)} className="flex-1 py-2 border rounded text-xs font-bold hover:bg-slate-50">Cancelar</button>
+              <button type="button" onClick={confirmDeleteMaterial} disabled={validatingAuthMat} className="flex-1 py-2 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700">{validatingAuthMat ? "..." : "Confirmar"}</button>
             </div>
           </div>
         </div>
@@ -202,12 +215,36 @@ export default function DetalhesReuniao({
               <label className="block text-xs font-semibold text-slate-700 mb-1">Hora (término)</label>
               <div className="relative"><Clock className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="time" disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60" value={formData.hora_fim} onChange={(e) => handleChange("hora_fim", e.target.value)} /></div>
             </div>
+            
+            {/* SELEÇÃO DE RESPONSÁVEL COM CORREÇÃO DE FOCO */}
             <div className="relative">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Organizador</label>
-              <div className="relative"><User className="absolute left-3 top-2.5 text-slate-400" size={16} /><input disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60" value={formData.responsavel} onChange={(e) => { handleChange("responsavel", e.target.value); setShowSugestoesResp(true); }} onFocus={() => setShowSugestoesResp(true)} onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)} placeholder="Buscar..." /></div>
+              <div className="relative">
+                <User className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                <input
+                  disabled={isRealizada}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+                  value={formData.responsavel}
+                  onChange={(e) => { handleChange("responsavel", e.target.value); setShowSugestoesResp(true); }}
+                  onFocus={() => setShowSugestoesResp(true)}
+                  // ✅ Pequeno delay no Blur para permitir o clique
+                  onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)}
+                  placeholder="Buscar responsável..."
+                />
+              </div>
               {showSugestoesResp && !isRealizada && filteredResponsaveis.length > 0 && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-lg max-h-40 overflow-y-auto">
-                  {filteredResponsaveis.map(u => (<button key={u.id} type="button" onClick={() => selectResponsavel(u)} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0">{buildNomeSobrenome(u)}</button>))}
+                  {filteredResponsaveis.map(u => (
+                    <button 
+                      key={u.id} 
+                      type="button" 
+                      // ✅ onMouseDown dispara antes do onBlur do input
+                      onMouseDown={(e) => { e.preventDefault(); selectResponsavel(u); }} 
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
+                    >
+                      {buildNomeSobrenome(u)}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
@@ -236,14 +273,10 @@ export default function DetalhesReuniao({
           </div>
         </section>
 
-        {/* ✅ Botão EXCLUIR REUNIÃO (Só aparece se estiver editando) */}
+        {/* BOTÃO EXCLUIR REUNIÃO */}
         {editingReuniao && (
           <div className="pt-4 border-t border-slate-100 mt-auto">
-            <button
-              type="button"
-              onClick={onDeleteRequest}
-              className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors"
-            >
+            <button type="button" onClick={onDeleteRequest} className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors">
               <Trash2 size={16} /> Excluir Reunião (Área Restrita)
             </button>
           </div>
