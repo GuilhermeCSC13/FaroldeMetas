@@ -1,7 +1,8 @@
 // src/components/tatico/DetalhesReuniao.jsx
-import React, { useMemo, useEffect } from "react";
-import { Calendar, Clock, AlignLeft, FileText } from "lucide-react";
+import React, { useMemo, useEffect, useState } from "react";
+import { Calendar, Clock, AlignLeft, FileText, Paperclip, Loader2, Plus, Trash2, Download, ImageIcon } from "lucide-react";
 import { format } from "date-fns";
+import { supabase } from "../../supabaseClient"; // Importar supabase para upload
 
 // Helper para extrair HH:mm de uma string ISO ou Date
 function extractTime(dateString) {
@@ -20,6 +21,8 @@ export default function DetalhesReuniao({
   editingReuniao,
   tipos = [],
 }) {
+  const [uploadingMaterial, setUploadingMaterial] = useState(false);
+
   const handleChange = (name, value) =>
     setFormData((prev) => ({ ...prev, [name]: value }));
 
@@ -27,30 +30,83 @@ export default function DetalhesReuniao({
     return tipos.find((t) => String(t.id) === String(formData.tipo_reuniao_id)) || null;
   }, [tipos, formData.tipo_reuniao_id]);
 
-  // ✅ Efeito para preencher horários ao carregar edição
+  // ✅ Efeito para carregar dados (incluindo materiais)
   useEffect(() => {
     if (editingReuniao) {
-      // Prioridade: horario_inicio/fim do banco > data_hora
       const horaIni = extractTime(editingReuniao.horario_inicio) || extractTime(editingReuniao.data_hora) || "09:00";
-      
-      // Se tiver horario_fim no banco, usa. Senão, calcula pela duração.
       let horaFim = extractTime(editingReuniao.horario_fim);
       
-      if (!horaFim && editingReuniao.duracao_segundos) {
-         // Fallback antigo: calcular baseado na duração
-         // ... logica de calculo se necessário
-      }
-      
-      // Atualiza o form apenas se estiverem vazios (para não sobrescrever edição do usuário)
       if (!formData.hora_inicio) handleChange("hora_inicio", horaIni);
       if (!formData.hora_fim) handleChange("hora_fim", horaFim || "09:30");
+
+      // Carregar materiais existentes se ainda não estiverem no form
+      if (editingReuniao.materiais && (!formData.materiais || formData.materiais.length === 0)) {
+          handleChange("materiais", editingReuniao.materiais);
+      }
     }
-  }, [editingReuniao]); // Rodar apenas quando mudar a reunião sendo editada
+  }, [editingReuniao]);
 
   const usarAtaDoTipo = () => {
     const guia = selectedTipo?.ata_principal || "";
     if (!guia) return;
     handleChange("ata", guia);
+  };
+
+  // ✅ Lógica de Upload (Igual CentralAtas)
+  const handleUploadMaterial = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    setUploadingMaterial(true);
+    try {
+      const novosMateriais = [];
+
+      for (const file of files) {
+        const fileExt = file.name.split('.').pop();
+        // Usa ID temp se for nova reunião
+        const baseId = editingReuniao?.id || "nova"; 
+        const fileName = `${baseId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
+        const filePath = `anexos/${fileName}`;
+
+        const { error: uploadErr } = await supabase.storage
+          .from('materiais')
+          .upload(filePath, file);
+
+        if (uploadErr) throw uploadErr;
+
+        const { data: urlData } = supabase.storage
+          .from('materiais')
+          .getPublicUrl(filePath);
+
+        if (urlData?.publicUrl) {
+          novosMateriais.push({
+            name: file.name,
+            url: urlData.publicUrl,
+            type: file.type,
+            path: filePath
+          });
+        }
+      }
+
+      // Atualiza o estado do formulário (ainda não salvo no banco)
+      const listaAtual = formData.materiais || [];
+      const listaFinal = [...listaAtual, ...novosMateriais];
+      handleChange("materiais", listaFinal);
+      
+    } catch (err) {
+      console.error("Erro upload:", err);
+      alert("Erro ao enviar arquivo: " + err.message);
+    } finally {
+      setUploadingMaterial(false);
+      e.target.value = null;
+    }
+  };
+
+  const handleDeleteMaterial = (indexToDelete) => {
+    if(!window.confirm("Remover este anexo da lista? (Será salvo ao confirmar a reunião)")) return;
+    const listaAtual = formData.materiais || [];
+    const novaLista = listaAtual.filter((_, i) => i !== indexToDelete);
+    handleChange("materiais", novaLista);
   };
 
   return (
@@ -113,7 +169,6 @@ export default function DetalhesReuniao({
             </div>
           </div>
 
-          {/* ✅ Campo Hora Fim agora é explícito e editável */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -198,7 +253,7 @@ export default function DetalhesReuniao({
         </section>
       </div>
 
-      {/* LADO DIREITO: ATA */}
+      {/* LADO DIREITO: ATA E MATERIAIS */}
       <div className="lg:col-span-7 flex flex-col space-y-4">
         <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2">
           <AlignLeft size={16} /> ATA da Reunião
@@ -231,11 +286,62 @@ export default function DetalhesReuniao({
         </div>
 
         <textarea
-          className="flex-1 w-full min-h-[380px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono"
+          className="flex-1 w-full min-h-[250px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono"
           placeholder="Descreva a ATA desta reunião aqui..."
           value={formData.ata}
           onChange={(e) => handleChange("ata", e.target.value)}
         />
+
+        {/* ✅ SEÇÃO DE MATERIAIS */}
+        <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                <Paperclip size={14} /> Materiais e Anexos
+              </div>
+              
+              <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? 'opacity-50 pointer-events-none' : ''}`}>
+                {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                {uploadingMaterial ? "Enviando..." : "Anexar"}
+                <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
+              </label>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[80px]">
+              {formData.materiais && formData.materiais.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {formData.materiais.map((item, idx) => {
+                    const isImage = item.type?.startsWith('image');
+                    return (
+                      <div key={idx} className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isImage ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                            {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-700 truncate" title={item.name}>{item.name}</p>
+                            <p className="text-[10px] text-slate-400 uppercase">Anexo</p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-1">
+                          <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="Baixar">
+                            <Download size={16} />
+                          </a>
+                          <button type="button" onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Remover">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-slate-400 text-xs italic">
+                  Nenhum material anexado.
+                </div>
+              )}
+            </div>
+        </div>
       </div>
     </div>
   );
