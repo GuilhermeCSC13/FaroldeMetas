@@ -34,6 +34,30 @@ import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
 
+// ✅ 1. NOVA FUNÇÃO DE EXTRAÇÃO DE HORA (CORREÇÃO DO ERRO "2026")
+function extractTime(dateString) {
+  if (!dateString) return null;
+  
+  // Se for uma string de data completa (ISO), converte para Date e formata
+  if (String(dateString).includes("-") || String(dateString).includes("T")) {
+    try {
+      const date = new Date(dateString);
+      if (!isNaN(date.getTime())) {
+        return format(date, "HH:mm");
+      }
+    } catch (e) {
+      console.warn("Erro ao parsear data:", dateString);
+    }
+  }
+
+  // Se já for apenas hora (ex: "09:00:00"), corta os segundos
+  if (String(dateString).includes(":")) {
+    return String(dateString).slice(0, 5);
+  }
+
+  return null;
+}
+
 function parseDataLocal(dataString) {
   if (!dataString) return new Date();
   try {
@@ -76,27 +100,26 @@ function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
   return hhmmFromDate(fim);
 }
 
-// ✅ NOVA FUNÇÃO PARA FORMATAR "INICIO - FIM"
+// ✅ 2. FUNÇÃO FORMATADA CORRETAMENTE
 function formatTimeRange(reuniao) {
   try {
     const dt = parseDataLocal(reuniao.data_hora);
     
-    // Início
-    const inicio = reuniao.horario_inicio
-      ? String(reuniao.horario_inicio).slice(0, 5)
-      : format(dt, "HH:mm");
+    // Início (Usa a nova função extractTime)
+    const inicio = extractTime(reuniao.horario_inicio) || format(dt, "HH:mm");
 
     // Fim
-    let fim = "";
-    if (reuniao.horario_fim) {
-      fim = String(reuniao.horario_fim).slice(0, 5);
-    } else if (reuniao.duracao_segundos) {
-      const dtFim = addMinutes(dt, reuniao.duracao_segundos / 60);
-      fim = format(dtFim, "HH:mm");
-    } else {
-      // Fallback 15min se não tiver nada
-      const dtFim = addMinutes(dt, 15);
-      fim = format(dtFim, "HH:mm");
+    let fim = extractTime(reuniao.horario_fim);
+    
+    if (!fim) {
+        if (reuniao.duracao_segundos) {
+            const dtFim = addMinutes(dt, reuniao.duracao_segundos / 60);
+            fim = format(dtFim, "HH:mm");
+        } else {
+            // Fallback 15min se não tiver nada
+            const dtFim = addMinutes(dt, 15);
+            fim = format(dtFim, "HH:mm");
+        }
     }
 
     return `${inicio} - ${fim}`;
@@ -124,6 +147,7 @@ export default function CentralReunioes() {
     responsavel: "",
     ata: "",
     status: "Agendada",
+    materiais: [] // ✅ Inicializa lista de materiais
   });
 
   const [draggingReuniao, setDraggingReuniao] = useState(null);
@@ -176,18 +200,23 @@ export default function CentralReunioes() {
       responsavel: "",
       ata: "",
       status: "Agendada",
+      materiais: [] // ✅ Reset materiais
     });
 
     setIsModalOpen(true);
   };
 
+  // ✅ 3. CORREÇÃO NA EDIÇÃO TAMBÉM
   const handleEdit = (reuniao) => {
     const dt = parseDataLocal(reuniao.data_hora);
-    const hhmmIni = reuniao.horario_inicio
-      ? String(reuniao.horario_inicio).slice(0, 5)
-      : format(dt, "HH:mm");
-
-    const hhmmFim = hhmmFimFromInicioDuracao(dt, reuniao.duracao_segundos);
+    
+    // Usa extractTime para garantir HH:mm correto
+    const hhmmIni = extractTime(reuniao.horario_inicio) || format(dt, "HH:mm");
+    
+    let hhmmFim = extractTime(reuniao.horario_fim);
+    if (!hhmmFim) {
+        hhmmFim = hhmmFimFromInicioDuracao(dt, reuniao.duracao_segundos);
+    }
 
     setFormData({
       titulo: reuniao.titulo || "",
@@ -199,6 +228,7 @@ export default function CentralReunioes() {
       responsavel: reuniao.responsavel || "",
       ata: reuniao.ata || "",
       status: reuniao.status || "Agendada",
+      materiais: reuniao.materiais || [] // ✅ Carrega materiais
     });
 
     setEditingReuniao(reuniao);
@@ -211,7 +241,10 @@ export default function CentralReunioes() {
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || "Geral";
 
+    // ✅ Monta a string ISO completa para salvar
     const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
+    const horaFimIso = `${formData.data}T${formData.hora_fim}:00`;
+
     const duracao_segundos = calcDuracaoSegundos(
       formData.hora_inicio,
       formData.hora_fim
@@ -227,10 +260,11 @@ export default function CentralReunioes() {
       responsavel: formData.responsavel,
       ata: formData.ata,
       status: formData.status,
-      // Se tiver horario_inicio e fim na tabela, grave também:
-      horario_inicio: `${formData.hora_inicio}:00`,
-      horario_fim: `${formData.hora_fim}:00`,
+      // ✅ Salva Data Completa no banco
+      horario_inicio: dataHoraIso,
+      horario_fim: horaFimIso,
       area_id: 4,
+      materiais: formData.materiais || [] // ✅ Salva Materiais
     };
     
     try {
@@ -289,26 +323,36 @@ export default function CentralReunioes() {
     e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDragOverDay = (e) => e.preventDefault(); // Necessário para permitir o drop
+  const handleDragOverDay = (e) => e.preventDefault();
 
   const handleDropOnDay = async (e, day) => {
     e.preventDefault();
     if (!draggingReuniao) return;
 
     try {
-      // Mantém o horário original, muda apenas a data
-      const dtOrig = parseDataLocal(draggingReuniao.data_hora);
-      const hora = format(dtOrig, "HH:mm:ss");
-      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${hora}`;
+      // 1. Pega horário original
+      const horaOrig = extractTime(draggingReuniao.horario_inicio) || "09:00";
+      const novaDataHora = `${format(day, "yyyy-MM-dd")}T${horaOrig}:00`;
 
+      // 2. Calcula novo Fim mantendo a duração
+      let novoFim = null;
+      if (draggingReuniao.horario_fim) {
+          const horaFimOrig = extractTime(draggingReuniao.horario_fim) || "09:30";
+          novoFim = `${format(day, "yyyy-MM-dd")}T${horaFimOrig}:00`;
+      }
+
+      // 3. Atualiza no banco
       const { error } = await supabase
         .from("reunioes")
-        .update({ data_hora: novaDataHora })
+        .update({ 
+            data_hora: novaDataHora,
+            horario_inicio: novaDataHora,
+            horario_fim: novoFim
+        })
         .eq("id", draggingReuniao.id);
 
       if (error) throw error;
       
-      // Atualiza lista
       await fetchReunioes();
     } catch (err) {
       console.error(err);
@@ -409,7 +453,6 @@ export default function CentralReunioes() {
                 <div 
                     key={day.toString()} 
                     className="border-r p-4 bg-white overflow-y-auto"
-                    // ✅ Eventos para receber o Drop na visão Semanal
                     onDragOver={handleDragOverDay}
                     onDrop={(e) => handleDropOnDay(e, day)}
                 >
@@ -425,13 +468,11 @@ export default function CentralReunioes() {
                     .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
                     .map((m) => {
                       const badge = statusBadge(m.status);
-                      // ✅ Uso da nova função de formatação
                       const timeRange = formatTimeRange(m);
 
                       return (
                         <div
                           key={m.id}
-                          // ✅ Tornando arrastável na visão semanal
                           draggable
                           onDragStart={(e) => handleDragStart(e, m)}
                           onClick={() => handleEdit(m)}
@@ -439,7 +480,6 @@ export default function CentralReunioes() {
                           style={{ borderLeft: `4px solid ${m.cor}` }}
                         >
                           <div>
-                            {/* ✅ Exibindo Início - Fim */}
                             <p className="text-[10px] font-bold text-slate-400">{timeRange}</p>
                             <p className="text-xs font-bold text-slate-700 leading-tight">{m.titulo}</p>
                             <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">
@@ -589,7 +629,6 @@ export default function CentralReunioes() {
                           title={m.titulo}
                         >
                           <span className="truncate">
-                            {/* ✅ Exibindo Início - Fim também no calendário */}
                             {timeRange} {m.titulo}
                           </span>
 
