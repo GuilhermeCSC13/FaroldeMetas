@@ -1,3 +1,4 @@
+// src/pages/Inicio.jsx
 import React, { useEffect, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase } from "../supabaseClient";
@@ -6,10 +7,8 @@ import {
   Calendar,
   ArrowRight,
   Zap,
-  TrendingUp,
   BrainCircuit,
   Loader2,
-  ExternalLink,
   Layers,
   RefreshCw,
 } from "lucide-react";
@@ -25,7 +24,6 @@ const Inicio = () => {
   const [stats, setStats] = useState({
     acoesAbertas: 0,
     reunioesHoje: 0,
-    metasCriticas: 0,
   });
 
   useEffect(() => {
@@ -33,16 +31,15 @@ const Inicio = () => {
     // manda para "/" (LandingFarol). NÃO manda pro INOVE daqui.
     const guard = async () => {
       const storedUser = localStorage.getItem("usuario_externo");
-
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
       if (!storedUser && !session) {
-        // força passar pelo Landing, que é quem resolve o fluxo e grava userData
         window.location.replace("/");
         return;
       }
 
-      // ok, segue
       carregarDados();
     };
 
@@ -53,7 +50,7 @@ const Inicio = () => {
   const carregarDados = async () => {
     const hoje = new Date().toISOString().split("T")[0];
 
-    // 1. KPIs (Números)
+    // 1) KPIs
     const { count: acoesCount } = await supabase
       .from("acoes")
       .select("*", { count: "exact", head: true })
@@ -65,7 +62,7 @@ const Inicio = () => {
       .gte("data_hora", `${hoje}T00:00:00`)
       .lte("data_hora", `${hoje}T23:59:59`);
 
-    // 2. Últimas Realizadas (Para contexto)
+    // 2) Últimas realizadas (contexto)
     const { data: ultimasRealizadas } = await supabase
       .from("reunioes")
       .select("titulo, status")
@@ -76,7 +73,6 @@ const Inicio = () => {
     const estatisticas = {
       acoesAbertas: acoesCount || 0,
       reunioesHoje: reunioesCount || 0,
-      metasCriticas: 3, // Exemplo
       agendaHoje: agendaHoje || [],
       ultimasRealizadas: ultimasRealizadas || [],
     };
@@ -84,10 +80,9 @@ const Inicio = () => {
     setStats({
       acoesAbertas: estatisticas.acoesAbertas,
       reunioesHoje: estatisticas.reunioesHoje,
-      metasCriticas: estatisticas.metasCriticas,
     });
 
-    // 3. Cache ou Nova Geração
+    // 3) Cache ou nova geração
     const cacheDate = localStorage.getItem("farol_ia_date");
     const cacheText = localStorage.getItem("farol_ia_text");
 
@@ -106,19 +101,47 @@ const Inicio = () => {
     try {
       const model = getGeminiFlash();
 
-      const prompt = `
-        Aja como um Diretor de Operações Sênior analisando o Farol Tático.
-        DADOS HOJE (${dataHoje}): Agenda: ${JSON.stringify(
-          dados.agendaHoje
-        )}. Pendências CRM: ${dados.acoesAbertas}. Histórico Recente: ${JSON.stringify(
-          dados.ultimasRealizadas
-        )}.
-        
-        MISSÃO: Escreva um resumo executivo curto (máx 4 linhas).
-        DIRETRIZES: Destaque pontos de atenção ou oportunidades de foco. Não invente dados. Use markdown simples (negrito **texto**).
-      `;
+      // 1) Busca prompt no Supabase (app_prompts)
+      let promptTemplate = "";
+      const { data: promptData, error: promptErr } = await supabase
+        .from("app_prompts")
+        .select("prompt_text")
+        .eq("slug", "inicio_resumo")
+        .maybeSingle();
 
-      const result = await model.generateContent(prompt);
+      if (promptErr) {
+        console.error("Erro ao buscar prompt inicio_resumo:", promptErr);
+      }
+
+      promptTemplate =
+        promptData?.prompt_text ||
+        `Aja como um Diretor de Operações Sênior analisando o Farol Tático.
+
+DADOS HOJE ({data}):
+- Agenda de hoje: {agendaHoje}
+- Ações abertas: {acoesAbertas}
+- Últimas reuniões realizadas: {ultimasRealizadas}
+
+MISSÃO:
+Escreva um resumo executivo curto (máx 4 linhas).
+
+DIRETRIZES:
+- Não invente dados.
+- Destaque pontos de atenção ou oportunidades de foco.
+- Use markdown simples (negrito **texto**).`;
+
+      // 2) Monta variáveis para o prompt
+      const agendaHojeStr = JSON.stringify(dados.agendaHoje || []);
+      const ultimasRealizadasStr = JSON.stringify(dados.ultimasRealizadas || []);
+
+      const finalPrompt = promptTemplate
+        .replace(/{data}/g, dataHoje)
+        .replace(/{agendaHoje}/g, agendaHojeStr)
+        .replace(/{acoesAbertas}/g, String(dados.acoesAbertas ?? 0))
+        .replace(/{ultimasRealizadas}/g, ultimasRealizadasStr);
+
+      // 3) Gera
+      const result = await model.generateContent(finalPrompt);
       const texto = result.response.text();
 
       setResumoIA(texto);
@@ -168,7 +191,7 @@ const Inicio = () => {
                   ? "bg-yellow-400 animate-bounce"
                   : "bg-red-500"
               }`}
-            ></div>
+            />
             <div className="flex flex-col">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
                 {iaStatus === "active"
@@ -184,13 +207,16 @@ const Inicio = () => {
               )}
             </div>
             {iaStatus === "active" && (
-              <BrainCircuit size={16} className="text-blue-600 ml-2 opacity-50" />
+              <BrainCircuit
+                size={16}
+                className="text-blue-600 ml-2 opacity-50"
+              />
             )}
           </div>
         </div>
 
         {/* KPIs GRIDS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           <div
             onClick={() => navigate("/gestao-acoes")}
             className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
@@ -228,21 +254,6 @@ const Inicio = () => {
               <span className="text-xs text-blue-500 font-medium">eventos</span>
             </div>
           </div>
-
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md transition-all group relative overflow-hidden">
-            <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-              <TrendingUp size={60} />
-            </div>
-            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">
-              Metas Críticas
-            </p>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-gray-800">
-                {stats.metasCriticas}
-              </span>
-              <span className="text-xs text-yellow-600 font-medium">atenção</span>
-            </div>
-          </div>
         </div>
 
         {/* ÁREA CENTRAL: IA E ATALHOS */}
@@ -250,7 +261,7 @@ const Inicio = () => {
           {/* CARTÃO DE INTELIGÊNCIA */}
           <div className="lg:col-span-2">
             <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 shadow-xl relative overflow-hidden h-full flex flex-col justify-between group">
-              <div className="absolute top-0 right-0 w-80 h-80 bg-blue-600 rounded-full blur-[120px] opacity-20 group-hover:opacity-30 transition-opacity duration-1000"></div>
+              <div className="absolute top-0 right-0 w-80 h-80 bg-blue-600 rounded-full blur-[120px] opacity-20 group-hover:opacity-30 transition-opacity duration-1000" />
 
               <div className="relative z-10">
                 <div className="flex items-center justify-between mb-6">
@@ -263,7 +274,7 @@ const Inicio = () => {
                         Análise Executiva
                       </h2>
                       <p className="text-xs text-slate-400">
-                        Gemini 1.5 Pro • Monitoramento Ativo
+                        Gemini Flash • Monitoramento Ativo
                       </p>
                     </div>
                   </div>
@@ -304,11 +315,16 @@ const Inicio = () => {
                       return (
                         <p key={idx}>
                           {line
-                            .replace(/\*\*(.*?)\*\*/g, (match, p1) => `<strong>${p1}</strong>`)
+                            .replace(/\*\*(.*?)\*\*/g, (match, p1) => {
+                              return `<strong>${p1}</strong>`;
+                            })
                             .split(/<strong>(.*?)<\/strong>/g)
                             .map((part, i) =>
                               i % 2 === 1 ? (
-                                <strong key={i} className="text-white font-semibold">
+                                <strong
+                                  key={i}
+                                  className="text-white font-semibold"
+                                >
                                   {part}
                                 </strong>
                               ) : (
@@ -324,12 +340,12 @@ const Inicio = () => {
 
               <div className="relative z-10 mt-6 pt-6 border-t border-white/5 flex gap-4 text-xs text-slate-400 font-mono">
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>{" "}
-                  CRM Conectado
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" /> CRM
+                  Conectado
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{" "}
-                  Agenda Sincronizada
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Agenda
+                  Sincronizada
                 </span>
               </div>
             </div>
@@ -397,35 +413,6 @@ const Inicio = () => {
                 size={18}
               />
             </button>
-          </div>
-        </div>
-
-        {/* Link Externo CRM */}
-        <div className="mt-4 border-t border-gray-100 pt-8">
-          <div className="bg-gradient-to-r from-indigo-900 to-blue-900 rounded-xl p-1 text-white shadow-lg">
-            <div className="bg-slate-900/50 backdrop-blur-sm rounded-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="bg-white/10 p-3 rounded-full">
-                  <Layers className="text-white" />
-                </div>
-                <div>
-                  <h2 className="font-bold text-lg">
-                    Sistema de Tratativas & Avarias
-                  </h2>
-                  <p className="text-blue-200 text-sm">
-                    Ambiente exclusivo para gestão de frota.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => window.location.replace("https://inovequatai.onrender.com/")}
-                className="bg-white text-blue-900 px-6 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg text-sm"
-              >
-                Voltar para o INOVE <ExternalLink size={16} />
-              </button>
-            </div>
           </div>
         </div>
       </div>
