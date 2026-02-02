@@ -13,7 +13,6 @@ import {
   isSameDay,
   addMonths,
   subMonths,
-  // ✅ NOVOS IMPORTS PARA SEMANA
   addWeeks,
   subWeeks,
   parseISO,
@@ -75,6 +74,35 @@ function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
   if (!duracaoSegundos || !inicioDate) return "09:15";
   const fim = addMinutes(inicioDate, Math.round(duracaoSegundos / 60));
   return hhmmFromDate(fim);
+}
+
+// ✅ NOVA FUNÇÃO PARA FORMATAR "INICIO - FIM"
+function formatTimeRange(reuniao) {
+  try {
+    const dt = parseDataLocal(reuniao.data_hora);
+    
+    // Início
+    const inicio = reuniao.horario_inicio
+      ? String(reuniao.horario_inicio).slice(0, 5)
+      : format(dt, "HH:mm");
+
+    // Fim
+    let fim = "";
+    if (reuniao.horario_fim) {
+      fim = String(reuniao.horario_fim).slice(0, 5);
+    } else if (reuniao.duracao_segundos) {
+      const dtFim = addMinutes(dt, reuniao.duracao_segundos / 60);
+      fim = format(dtFim, "HH:mm");
+    } else {
+      // Fallback 15min se não tiver nada
+      const dtFim = addMinutes(dt, 15);
+      fim = format(dtFim, "HH:mm");
+    }
+
+    return `${inicio} - ${fim}`;
+  } catch {
+    return "--:--";
+  }
 }
 
 export default function CentralReunioes() {
@@ -199,6 +227,9 @@ export default function CentralReunioes() {
       responsavel: formData.responsavel,
       ata: formData.ata,
       status: formData.status,
+      // Se tiver horario_inicio e fim na tabela, grave também:
+      horario_inicio: `${formData.hora_inicio}:00`,
+      horario_fim: `${formData.hora_fim}:00`,
       area_id: 4,
     };
     
@@ -252,18 +283,20 @@ export default function CentralReunioes() {
     end: endOfWeek(currentDate),
   });
 
+  // --- LÓGICA DE ARRASTAR E SOLTAR ---
   const handleDragStart = (e, reuniao) => {
     setDraggingReuniao(reuniao);
     e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDragOverDay = (e) => e.preventDefault();
+  const handleDragOverDay = (e) => e.preventDefault(); // Necessário para permitir o drop
 
   const handleDropOnDay = async (e, day) => {
     e.preventDefault();
     if (!draggingReuniao) return;
 
     try {
+      // Mantém o horário original, muda apenas a data
       const dtOrig = parseDataLocal(draggingReuniao.data_hora);
       const hora = format(dtOrig, "HH:mm:ss");
       const novaDataHora = `${format(day, "yyyy-MM-dd")}T${hora}`;
@@ -274,7 +307,9 @@ export default function CentralReunioes() {
         .eq("id", draggingReuniao.id);
 
       if (error) throw error;
-      fetchReunioes();
+      
+      // Atualiza lista
+      await fetchReunioes();
     } catch (err) {
       console.error(err);
       alert("Erro ao mover: " + (err?.message || ""));
@@ -348,7 +383,6 @@ export default function CentralReunioes() {
         {/* MODO SEMANAL (COM NAVEGAÇÃO) */}
         {view === "week" && (
           <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden">
-            {/* ✅ HEADER DA SEMANA COM SETINHAS */}
             <div className="flex items-center justify-between p-4 border-b">
               <h2 className="text-xl font-bold text-slate-700 capitalize">
                 {format(startOfWeek(currentDate), "dd MMM", { locale: ptBR })} -{" "}
@@ -372,7 +406,13 @@ export default function CentralReunioes() {
 
             <div className="grid grid-cols-7 flex-1">
               {weekDays.map((day) => (
-                <div key={day.toString()} className="border-r p-4 bg-white overflow-y-auto">
+                <div 
+                    key={day.toString()} 
+                    className="border-r p-4 bg-white overflow-y-auto"
+                    // ✅ Eventos para receber o Drop na visão Semanal
+                    onDragOver={handleDragOverDay}
+                    onDrop={(e) => handleDropOnDay(e, day)}
+                >
                   <h3
                     className={`text-sm font-bold mb-4 uppercase ${
                       isSameDay(day, new Date()) ? "text-blue-600" : "text-slate-400"
@@ -385,22 +425,24 @@ export default function CentralReunioes() {
                     .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
                     .map((m) => {
                       const badge = statusBadge(m.status);
-                      const dt = parseDataLocal(m.data_hora);
-                      const hhmm = m.horario_inicio
-                        ? String(m.horario_inicio).slice(0, 5)
-                        : format(dt, "HH:mm");
+                      // ✅ Uso da nova função de formatação
+                      const timeRange = formatTimeRange(m);
 
                       return (
                         <div
                           key={m.id}
+                          // ✅ Tornando arrastável na visão semanal
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, m)}
                           onClick={() => handleEdit(m)}
-                          className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2"
+                          className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2 bg-white"
                           style={{ borderLeft: `4px solid ${m.cor}` }}
                         >
                           <div>
-                            <p className="text-[10px] font-bold text-slate-400">{hhmm}</p>
-                            <p className="text-xs font-bold text-slate-700">{m.titulo}</p>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold">
+                            {/* ✅ Exibindo Início - Fim */}
+                            <p className="text-[10px] font-bold text-slate-400">{timeRange}</p>
+                            <p className="text-xs font-bold text-slate-700 leading-tight">{m.titulo}</p>
+                            <p className="text-[10px] text-slate-500 uppercase font-bold mt-1">
                               {tipoLabel(m)}
                             </p>
                           </div>
@@ -440,10 +482,7 @@ export default function CentralReunioes() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {meetings.map((m) => {
                       const badge = statusBadge(m.status);
-                      const dt = parseDataLocal(m.data_hora);
-                      const hhmm = m.horario_inicio
-                        ? String(m.horario_inicio).slice(0, 5)
-                        : format(dt, "HH:mm");
+                      const timeRange = formatTimeRange(m);
 
                       return (
                         <div
@@ -454,7 +493,7 @@ export default function CentralReunioes() {
                           <div className="flex items-center gap-4">
                             <div className="w-2 h-10 rounded-full" style={{ backgroundColor: m.cor }} />
                             <div>
-                              <p className="text-xs font-bold text-blue-600">{hhmm}</p>
+                              <p className="text-xs font-bold text-blue-600">{timeRange}</p>
                               <h4 className="font-bold text-slate-800">{m.titulo}</h4>
                               <p className="text-[10px] text-slate-500 uppercase font-bold">
                                 {tipoLabel(m)}
@@ -531,10 +570,7 @@ export default function CentralReunioes() {
                     .filter((r) => isSameDay(parseDataLocal(r.data_hora), day))
                     .map((m) => {
                       const badge = statusBadge(m.status);
-                      const dt = parseDataLocal(m.data_hora);
-                      const hhmm = m.horario_inicio
-                        ? String(m.horario_inicio).slice(0, 5)
-                        : format(dt, "HH:mm");
+                      const timeRange = formatTimeRange(m);
 
                       return (
                         <div
@@ -553,7 +589,8 @@ export default function CentralReunioes() {
                           title={m.titulo}
                         >
                           <span className="truncate">
-                            {hhmm} {m.titulo}
+                            {/* ✅ Exibindo Início - Fim também no calendário */}
+                            {timeRange} {m.titulo}
                           </span>
 
                           <span
