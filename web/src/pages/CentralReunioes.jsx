@@ -35,27 +35,52 @@ import DetalhesReuniao from "../components/tatico/DetalhesReuniao";
 
 const SENHA_EXCLUSAO = "KM2026";
 
-// ✅ 1. FUNÇÃO INTELIGENTE PARA EXTRAIR HORA (HH:mm)
-// Resolve o problema de aparecer "2026-" ou input vazio
+// ✅ FUNÇÃO CORRIGIDA: Extrai HH:mm garantindo o fuso local
 function extractTime(dateString) {
   if (!dateString) return "";
 
-  // Se já for apenas hora (ex: "09:00" ou "09:00:00")
-  if (String(dateString).length <= 8 && String(dateString).includes(":")) {
-    return String(dateString).substring(0, 5);
+  // Se já for "09:00", devolve
+  if (String(dateString).length === 5 && String(dateString).includes(":")) {
+    return dateString;
   }
 
-  // Se for data completa ISO (ex: "2026-01-20T09:00:00...")
   try {
     const date = new Date(dateString);
-    if (isValid(date)) {
-      return format(date, "HH:mm"); // Retorna "09:00" corretamente
-    }
+    if (!isValid(date)) return "";
+    
+    // Formata para hora local do navegador (ex: 09:00)
+    return format(date, "HH:mm");
   } catch (e) {
-    console.warn("Data inválida:", dateString);
+    return "";
   }
+}
 
-  return "";
+// ✅ FUNÇÃO CORRIGIDA: Resolve o "2026 - 2026" visualmente
+function formatTimeRange(reuniao) {
+  try {
+    // Tenta pegar horario_inicio (banco novo) ou data_hora (legado)
+    const rawInicio = reuniao.horario_inicio || reuniao.data_hora;
+    const inicio = extractTime(rawInicio) || "--:--";
+
+    // Tenta pegar fim ou calcular
+    let fim = extractTime(reuniao.horario_fim);
+    
+    if (!fim) {
+      // Se não tiver fim gravado, calcula pela duração
+      if (reuniao.duracao_segundos) {
+        const dtInicio = new Date(rawInicio);
+        const dtFim = addMinutes(dtInicio, reuniao.duracao_segundos / 60);
+        fim = format(dtFim, "HH:mm");
+      } else {
+        // Fallback visual
+        fim = "";
+      }
+    }
+
+    return fim ? `${inicio} - ${fim}` : inicio;
+  } catch {
+    return "--:--";
+  }
 }
 
 function parseDataLocal(dataString) {
@@ -96,31 +121,6 @@ function hhmmFimFromInicioDuracao(inicioDate, duracaoSegundos) {
   return format(fim, "HH:mm");
 }
 
-// ✅ 2. FORMATAR INTERVALO VISUAL (Conserta o "2026 - 2026")
-function formatTimeRange(reuniao) {
-  try {
-    // Tenta pegar do horario_inicio (prioridade) ou data_hora
-    // Usa extractTime para garantir que pegamos HH:mm, não o ano
-    const horaIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "--:--";
-    
-    // Tenta pegar do horario_fim
-    let horaFim = extractTime(reuniao.horario_fim);
-
-    // Se não tiver fim, calcula pela duração ou chuta 15min
-    if (!horaFim || horaFim === "") {
-        const dtBase = parseDataLocal(reuniao.data_hora);
-        if (reuniao.duracao_segundos) {
-            const dtFim = addMinutes(dtBase, reuniao.duracao_segundos / 60);
-            horaFim = format(dtFim, "HH:mm");
-        }
-    }
-
-    return horaFim ? `${horaIni} - ${horaFim}` : horaIni;
-  } catch {
-    return "--:--";
-  }
-}
-
 export default function CentralReunioes() {
   const [view, setView] = useState("week");
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -135,7 +135,7 @@ export default function CentralReunioes() {
     tipo_reuniao_id: "",
     data: "",
     hora_inicio: "09:00",
-    hora_fim: "09:15",
+    hora_fim: "10:00",
     cor: "#3B82F6",
     responsavel: "",
     ata: "",
@@ -155,7 +155,7 @@ export default function CentralReunioes() {
 
   const fetchTipos = async () => {
     const { data, error } = await supabase.from("tipos_reuniao").select("*").order("nome");
-    if (error) { console.error(error); alert("Erro ao carregar tipos."); return; }
+    if (error) { console.error(error); return; }
     setTipos(data || []);
   };
 
@@ -187,14 +187,14 @@ export default function CentralReunioes() {
     setIsModalOpen(true);
   };
 
-  // ✅ 3. PREPARAR DADOS PARA O MODAL (Conserta inputs vazios)
+  // ✅ CORREÇÃO AO ABRIR EDIÇÃO
   const handleEdit = (reuniao) => {
     const dt = parseDataLocal(reuniao.data_hora);
     
-    // Extrai HH:mm limpo para o input funcionar (sem "2026-")
+    // Garante que pegamos só "09:00" para o input type="time"
     const hhmmIni = extractTime(reuniao.horario_inicio) || extractTime(reuniao.data_hora) || "09:00";
-    let hhmmFim = extractTime(reuniao.horario_fim);
     
+    let hhmmFim = extractTime(reuniao.horario_fim);
     if (!hhmmFim) {
         hhmmFim = hhmmFimFromInicioDuracao(dt, reuniao.duracao_segundos || 3600);
     }
@@ -203,8 +203,8 @@ export default function CentralReunioes() {
       titulo: reuniao.titulo || "",
       tipo_reuniao_id: reuniao.tipo_reuniao_id || "",
       data: format(dt, "yyyy-MM-dd"),
-      hora_inicio: hhmmIni,
-      hora_fim: hhmmFim,
+      hora_inicio: hhmmIni, // "09:00"
+      hora_fim: hhmmFim,    // "10:00"
       cor: reuniao.cor || "#3B82F6",
       responsavel: reuniao.responsavel || "",
       ata: reuniao.ata || "",
@@ -221,7 +221,7 @@ export default function CentralReunioes() {
     const tipo = getTipoById(formData.tipo_reuniao_id);
     const tipoNome = tipo?.nome || "Geral";
 
-    // ✅ Monta a ISO completa para salvar
+    // ✅ RECOMBINA DATA + HORA CORRETAMENTE PARA O BANCO
     const dataHoraIso = `${formData.data}T${formData.hora_inicio}:00`;
     const horaFimIso = `${formData.data}T${formData.hora_fim}:00`;
 
@@ -237,7 +237,7 @@ export default function CentralReunioes() {
       responsavel: formData.responsavel,
       ata: formData.ata,
       status: formData.status,
-      // Salva Timestamps completos no banco
+      // Salva Timestamps completos (necessário para o TIMESTAMPTZ)
       horario_inicio: dataHoraIso,
       horario_fim: horaFimIso,
       area_id: 4,
@@ -294,7 +294,7 @@ export default function CentralReunioes() {
     e.preventDefault();
     if (!draggingReuniao) return;
     try {
-      // Pega hora original (limpa)
+      // Mantém a hora original ao mover de dia
       const horaOrig = extractTime(draggingReuniao.horario_inicio) || "09:00";
       const novaDataHora = `${format(day, "yyyy-MM-dd")}T${horaOrig}:00`;
       
@@ -353,7 +353,7 @@ export default function CentralReunioes() {
                   <h3 className={`text-sm font-bold mb-4 uppercase ${isSameDay(day, new Date()) ? "text-blue-600" : "text-slate-400"}`}>{format(day, "EEE dd/MM", { locale: ptBR })}</h3>
                   {reunioes.filter((r) => isSameDay(parseDataLocal(r.data_hora), day)).map((m) => {
                       const badge = statusBadge(m.status);
-                      const timeRange = formatTimeRange(m); // ✅ Agora exibe "09:00 - 10:00"
+                      const timeRange = formatTimeRange(m);
                       return (
                         <div key={m.id} draggable onDragStart={(e) => handleDragStart(e, m)} onClick={() => handleEdit(m)} className="p-3 mb-2 rounded-xl border border-slate-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow flex items-start justify-between gap-2 bg-white" style={{ borderLeft: `4px solid ${m.cor}` }}>
                           <div>
@@ -438,6 +438,7 @@ export default function CentralReunioes() {
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X size={20} className="text-slate-400" /></button>
             </div>
             <form id="form-reuniao" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 bg-white">
+              {/* O DetalhesReuniao já foi atualizado para receber o formData.materiais */}
               <DetalhesReuniao formData={formData} setFormData={setFormData} editingReuniao={editingReuniao} tipos={tipos} />
             </form>
             <div className="bg-slate-50 p-5 border-t flex justify-end gap-3 shrink-0">
