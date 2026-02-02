@@ -12,8 +12,7 @@ import {
   Download, 
   ImageIcon, 
   ShieldAlert, 
-  User, 
-  X 
+  User 
 } from "lucide-react";
 import { format, isValid } from "date-fns";
 import { supabase, supabaseInove } from "../../supabaseClient";
@@ -51,19 +50,13 @@ export default function DetalhesReuniao({
   setFormData,
   editingReuniao,
   tipos = [],
+  isRealizada = false // ✅ Nova prop para travar edição
 }) {
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   
   // Estados para Responsáveis (Sugestões)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [showSugestoesResp, setShowSugestoesResp] = useState(false);
-
-  // Estados para Exclusão Segura
-  const [showAuth, setShowAuth] = useState(false);
-  const [authLogin, setAuthLogin] = useState("");
-  const [authSenha, setAuthSenha] = useState("");
-  const [validatingAuth, setValidatingAuth] = useState(false);
-  const [materialIndexToDelete, setMaterialIndexToDelete] = useState(null);
 
   const handleChange = (name, value) =>
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -144,56 +137,11 @@ export default function DetalhesReuniao({
     }
   };
 
-  // --- LÓGICA DE EXCLUSÃO SEGURA ---
-  const handleRequestDelete = (index) => {
-    setMaterialIndexToDelete(index);
-    setAuthLogin("");
-    setAuthSenha("");
-    setShowAuth(true);
-  };
-
-  const confirmDeleteMaterial = async () => {
-    if (!authLogin || !authSenha) return alert("Informe Login e Senha.");
-    setValidatingAuth(true);
-
-    try {
-      // 1. Validar Credenciais
-      const { data: usuario, error } = await supabaseInove
-        .from("usuarios_aprovadores")
-        .select("nivel, ativo")
-        .eq("login", authLogin)
-        .eq("senha", authSenha)
-        .eq("ativo", true)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (!usuario) {
-        alert("Credenciais inválidas.");
-        setValidatingAuth(false);
-        return;
-      }
-
-      // 2. Validar Nível (Gestor ou Adm)
-      if (usuario.nivel !== 'Gestor' && usuario.nivel !== 'Administrador') {
-        alert("Permissão negada. Apenas Gestores e Administradores podem excluir anexos.");
-        setValidatingAuth(false);
-        return;
-      }
-
-      // 3. Executar Exclusão
-      const listaAtual = formData.materiais || [];
-      const novaLista = listaAtual.filter((_, i) => i !== materialIndexToDelete);
-      handleChange("materiais", novaLista);
-      
-      setShowAuth(false);
-      setMaterialIndexToDelete(null);
-
-    } catch (err) {
-      console.error(err);
-      alert("Erro ao validar: " + err.message);
-    } finally {
-      setValidatingAuth(false);
-    }
+  const handleDeleteMaterial = (indexToDelete) => {
+    if(!window.confirm("Remover este anexo da lista?")) return;
+    const listaAtual = formData.materiais || [];
+    const novaLista = listaAtual.filter((_, i) => i !== indexToDelete);
+    handleChange("materiais", novaLista);
   };
 
   // --- LÓGICA DE SELEÇÃO DE RESPONSÁVEL ---
@@ -201,7 +149,7 @@ export default function DetalhesReuniao({
     const termo = (formData.responsavel || "").toLowerCase();
     return listaResponsaveis.filter(u => 
       buildNomeSobrenome(u).toLowerCase().includes(termo)
-    ).slice(0, 8); // Limita a 8 sugestões
+    ).slice(0, 8); 
   }, [listaResponsaveis, formData.responsavel]);
 
   const selectResponsavel = (u) => {
@@ -212,71 +160,26 @@ export default function DetalhesReuniao({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 relative">
       
-      {/* MODAL DE AUTENTICAÇÃO (OVERLAY) */}
-      {showAuth && (
-        <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-xl animate-in fade-in duration-200 border border-slate-200 shadow-xl h-full">
-          <div className="w-full max-w-xs text-center">
-            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600">
-              <ShieldAlert size={20} />
-            </div>
-            <h4 className="text-base font-bold text-slate-800 mb-1">Autorização Necessária</h4>
-            <p className="text-xs text-slate-500 mb-4">Apenas <b>Gestores</b> ou <b>ADM</b> podem remover anexos.</p>
-            
-            <div className="space-y-2 text-left">
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Login</label>
-                <input 
-                  type="text" 
-                  autoFocus
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                  value={authLogin}
-                  onChange={e => setAuthLogin(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Senha</label>
-                <input 
-                  type="password" 
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                  value={authSenha}
-                  onChange={e => setAuthSenha(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 mt-4">
-              <button 
-                type="button"
-                onClick={() => setShowAuth(false)}
-                className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50"
-              >
-                Cancelar
-              </button>
-              <button 
-                type="button"
-                onClick={confirmDeleteMaterial}
-                disabled={validatingAuth}
-                className="flex-1 py-2 rounded-lg bg-red-600 text-white font-bold text-xs hover:bg-red-700 disabled:opacity-50"
-              >
-                {validatingAuth ? "Verificando..." : "Confirmar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* LADO ESQUERDO: CONFIGURAÇÃO */}
       <div className="lg:col-span-5 space-y-8">
         <section className="space-y-4">
-          <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">
-            Configurações da Reunião
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">
+              Configurações da Reunião
+            </h3>
+            {isRealizada && (
+                <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200">
+                    🔒 Reunião Realizada (Bloqueada)
+                </span>
+            )}
+          </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Título</label>
             <input
               required
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20"
+              disabled={isRealizada} // 🔒 Travado
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
               value={formData.titulo}
               onChange={(e) => handleChange("titulo", e.target.value)}
               placeholder="Ex: DBO - Diretrizes Básicas"
@@ -290,7 +193,8 @@ export default function DetalhesReuniao({
                 <Calendar className="absolute left-3 top-2.5 text-slate-400" size={16} />
                 <input
                   type="date"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none"
+                  disabled={isRealizada} // 🔒 Travado
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   value={formData.data}
                   onChange={(e) => handleChange("data", e.target.value)}
                 />
@@ -303,7 +207,8 @@ export default function DetalhesReuniao({
                 <Clock className="absolute left-3 top-2.5 text-slate-400" size={16} />
                 <input
                   type="time"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none"
+                  disabled={isRealizada} // 🔒 Travado
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   value={formData.hora_inicio}
                   onChange={(e) => handleChange("hora_inicio", e.target.value)}
                 />
@@ -318,7 +223,8 @@ export default function DetalhesReuniao({
                 <Clock className="absolute left-3 top-2.5 text-slate-400" size={16} />
                 <input
                   type="time"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none"
+                  disabled={isRealizada} // 🔒 Travado
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   value={formData.hora_fim}
                   onChange={(e) => handleChange("hora_fim", e.target.value)}
                 />
@@ -331,7 +237,8 @@ export default function DetalhesReuniao({
               <div className="relative">
                 <User className="absolute left-3 top-2.5 text-slate-400" size={16} />
                 <input
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                  disabled={isRealizada} // 🔒 Travado
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60 disabled:cursor-not-allowed"
                   value={formData.responsavel}
                   onChange={(e) => {
                     handleChange("responsavel", e.target.value);
@@ -342,7 +249,7 @@ export default function DetalhesReuniao({
                   placeholder="Buscar responsável..."
                 />
               </div>
-              {showSugestoesResp && filteredResponsaveis.length > 0 && (
+              {showSugestoesResp && !isRealizada && filteredResponsaveis.length > 0 && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-lg max-h-40 overflow-y-auto">
                   {filteredResponsaveis.map(u => (
                     <button
@@ -362,7 +269,8 @@ export default function DetalhesReuniao({
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo de reunião</label>
             <select
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold"
+              disabled={isRealizada} // 🔒 Travado
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
               value={formData.tipo_reuniao_id || ""}
               onChange={(e) => handleChange("tipo_reuniao_id", e.target.value)}
             >
@@ -380,7 +288,8 @@ export default function DetalhesReuniao({
             <span className="text-xs font-semibold text-slate-700">Cor na agenda</span>
             <input
               type="color"
-              className="w-10 h-8 rounded cursor-pointer border-none bg-transparent"
+              disabled={isRealizada} // 🔒 Travado
+              className="w-10 h-8 rounded cursor-pointer border-none bg-transparent disabled:opacity-60 disabled:cursor-not-allowed"
               value={formData.cor}
               onChange={(e) => handleChange("cor", e.target.value)}
             />
@@ -389,7 +298,8 @@ export default function DetalhesReuniao({
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
             <select
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold"
+              disabled={isRealizada} // 🔒 Travado (Se quiser destravar só o status, remova isso)
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
               value={formData.status}
               onChange={(e) => handleChange("status", e.target.value)}
             >
@@ -416,8 +326,8 @@ export default function DetalhesReuniao({
             <button
               type="button"
               onClick={usarAtaDoTipo}
-              className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 hover:bg-white"
-              disabled={!selectedTipo?.ata_principal}
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 hover:bg-white disabled:opacity-50"
+              disabled={!selectedTipo?.ata_principal || isRealizada} // 🔒 Travado
               title={!selectedTipo?.ata_principal ? "Tipo sem ATA guia" : "Copiar ATA guia para esta reunião"}
             >
               Usar ATA principal do tipo
@@ -429,12 +339,14 @@ export default function DetalhesReuniao({
         </div>
 
         <textarea
-          className="flex-1 w-full min-h-[250px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono"
+          disabled={isRealizada} // 🔒 Travado
+          className="flex-1 w-full min-h-[250px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono disabled:opacity-60 disabled:cursor-not-allowed"
           placeholder="Descreva a ATA desta reunião aqui..."
           value={formData.ata}
           onChange={(e) => handleChange("ata", e.target.value)}
         />
 
+        {/* ✅ MATERIAIS: SEMPRE HABILITADO MESMO SE REALIZADA */}
         <div className="mt-4 pt-4 border-t border-slate-100">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
@@ -469,7 +381,7 @@ export default function DetalhesReuniao({
                           </a>
                           <button 
                             type="button" 
-                            onClick={() => handleRequestDelete(idx)} 
+                            onClick={() => handleDeleteMaterial(idx)} 
                             className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" 
                             title="Remover"
                           >
