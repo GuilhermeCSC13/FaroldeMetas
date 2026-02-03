@@ -31,9 +31,9 @@ import {
   VolumeX,
   StickyNote,
   ShieldAlert,
-  Paperclip, // ✅ Ícone anexo
-  FileText, // ✅ Ícone arquivo
-  Download, // ✅ Ícone download
+  Paperclip,
+  FileText,
+  Download,
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -166,7 +166,10 @@ export default function CentralAtas() {
   const [selectedAta, setSelectedAta] = useState(null);
   const [busca, setBusca] = useState("");
 
+  // ✅ Novos estados para controle de Mídia Compilada
   const [mediaUrls, setMediaUrls] = useState({ video: null, audio: null });
+  const [compiledFile, setCompiledFile] = useState(null); // Guarda o Blob do vídeo completo
+  const [isLoadingMedia, setIsLoadingMedia] = useState(false); // Loading do download/compilação
 
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
@@ -206,10 +209,13 @@ export default function CentralAtas() {
       setDelLogin("");
       setDelSenha("");
 
-      hydrateMediaUrls(selectedAta);
+      // ✅ CHAMA A NOVA FUNÇÃO DE CARREGAMENTO TOTAL
+      loadFullMedia(selectedAta);
+      
       checkAutoRefresh(selectedAta);
     } else {
       setMediaUrls({ video: null, audio: null });
+      setCompiledFile(null);
       stopPolling();
     }
 
@@ -275,7 +281,9 @@ export default function CentralAtas() {
 
         if (!aindaProcessando) {
           stopPolling();
-          hydrateMediaUrls(data);
+          // Atualiza mídia se terminou de processar
+          loadFullMedia(data);
+          
           carregarDetalhes(data);
           if (data.pauta) setEditedPauta(data.pauta);
           if (!isEditing) {
@@ -288,6 +296,7 @@ export default function CentralAtas() {
     }
   };
 
+  // Função auxiliar para URLs simples (usada no fallback)
   const getSignedOrPublicUrl = async (
     bucket,
     filePath,
@@ -302,18 +311,93 @@ export default function CentralAtas() {
     return signed?.signedUrl || null;
   };
 
-  const hydrateMediaUrls = async (ata) => {
+  // ✅ NOVA FUNÇÃO: Carrega TODAS as partes e compila na memória
+  const loadFullMedia = async (ata) => {
+    // 1. Limpeza
+    if (mediaUrls.video && mediaUrls.video.startsWith('blob:')) URL.revokeObjectURL(mediaUrls.video);
+    if (mediaUrls.audio && mediaUrls.audio.startsWith('blob:')) URL.revokeObjectURL(mediaUrls.audio);
+    
+    setMediaUrls({ video: null, audio: null });
+    setCompiledFile(null);
+
+    // Validações
+    if (!ata?.gravacao_bucket || !ata?.gravacao_path) return;
+
+    setIsLoadingMedia(true);
+
     try {
-      const videoUrl = await getSignedOrPublicUrl(
-        ata.gravacao_bucket,
-        ata.gravacao_path
+      const bucket = ata.gravacao_audio_bucket || ata.gravacao_bucket;
+      const originalPath = ata.gravacao_audio_path || ata.gravacao_path;
+      
+      // Descobre a pasta removendo o nome do arquivo final
+      const folderPath = originalPath.substring(0, originalPath.lastIndexOf("/"));
+
+      // 2. Lista arquivos na pasta
+      const { data: fileList, error: listError } = await supabase.storage
+        .from(bucket)
+        .list(folderPath, {
+          limit: 100,
+          offset: 0,
+          sortBy: { column: 'name', order: 'asc' },
+        });
+
+      if (listError) throw listError;
+
+      // 3. Filtra e Ordena numericamente
+      const mediaFiles = fileList
+        .filter(f => f.name.match(/\.(webm|mp4|mp3|wav|mkv)$/i))
+        .sort((a, b) => {
+          // Extrai números para ordenar corretamente (video_1, video_10, etc)
+          const numA = parseInt(a.name.replace(/\D/g, '')) || 0;
+          const numB = parseInt(b.name.replace(/\D/g, '')) || 0;
+          return numA - numB;
+        });
+
+      // Se não achou lista (talvez seja arquivo único antigo), tenta fallback
+      if (mediaFiles.length === 0) {
+        const url = await getSignedOrPublicUrl(bucket, originalPath);
+        setMediaUrls({ video: url, audio: url });
+        setIsLoadingMedia(false);
+        return;
+      }
+
+      console.log(`Baixando e compilando ${mediaFiles.length} partes...`);
+
+      // 4. Download em paralelo
+      const downloadPromises = mediaFiles.map(file => 
+        supabase.storage.from(bucket).download(`${folderPath}/${file.name}`)
       );
-      const audioPath = ata.gravacao_audio_path || ata.gravacao_path;
-      const audioBucket = ata.gravacao_audio_bucket || ata.gravacao_bucket;
-      const audioUrl = await getSignedOrPublicUrl(audioBucket, audioPath);
-      setMediaUrls({ video: videoUrl, audio: audioUrl });
-    } catch (e) {
-      console.error("Erro URLs:", e);
+
+      const responses = await Promise.all(downloadPromises);
+      
+      const blobs = [];
+      responses.forEach((resp) => {
+        if (resp.data) blobs.push(resp.data);
+      });
+
+      if (blobs.length === 0) throw new Error("Falha ao baixar partes da gravação.");
+
+      // 5. Unificação (Stitching)
+      const fullBlob = new Blob(blobs, { type: 'video/webm' }); 
+      const localUrl = URL.createObjectURL(fullBlob);
+
+      // 6. Atualiza Estados
+      setCompiledFile(fullBlob); // Guarda para a IA
+      setMediaUrls({ video: localUrl, audio: localUrl }); // Toca no Player
+
+    } catch (error) {
+      console.error("Erro ao carregar mídia completa:", error);
+      // Tenta fallback simples se der erro na compilação
+      try {
+        const bucket = ata.gravacao_bucket;
+        const path = ata.gravacao_path;
+        const url = await getSignedOrPublicUrl(bucket, path);
+        setMediaUrls({ video: url, audio: url });
+      } catch (e) {
+        alert("Erro crítico ao carregar gravação: " + error.message);
+      }
+    } finally {
+      setIsLoadingMedia(false);
     }
   };
 
@@ -424,23 +508,33 @@ export default function CentralAtas() {
     }
   };
 
+  // ✅ NOVA LÓGICA DE REGENERAÇÃO (Usa o arquivo já compilado na memória)
   const handleRegenerateIA = async () => {
-    const audioUrl = mediaUrls.audio || mediaUrls.video;
-    if (
-      !audioUrl ||
-      !window.confirm("Gerar novo resumo a partir do áudio da reunião?")
-    )
+    // Verifica se temos o arquivo na memória ou uma URL válida
+    if (!compiledFile && !mediaUrls.video) {
+      alert("Aguarde o carregamento do vídeo terminar.");
       return;
+    }
+
+    if (!window.confirm("Gerar novo resumo IA a partir da gravação completa?")) return;
 
     setIsGenerating(true);
     try {
-      const response = await fetch(audioUrl);
-      if (!response.ok) throw new Error("Falha ao baixar o arquivo de mídia.");
+      let blobParaEnviar = compiledFile;
 
-      const blob = await response.blob();
+      // Fallback: Se não tem blob compilado (arquivo único antigo), tenta baixar da URL
+      if (!blobParaEnviar && mediaUrls.video && !mediaUrls.video.startsWith("blob:")) {
+         const resp = await fetch(mediaUrls.video);
+         blobParaEnviar = await resp.blob();
+      }
+
+      if (!blobParaEnviar) throw new Error("Arquivo de mídia não disponível na memória.");
+
+      console.log("Enviando arquivo para IA. Tamanho:", (blobParaEnviar.size / 1024 / 1024).toFixed(2), "MB");
+
       const reader = new FileReader();
-
-      reader.readAsDataURL(blob);
+      reader.readAsDataURL(blobParaEnviar);
+      
       reader.onloadend = async () => {
         try {
           const base64data = reader.result.split(",")[1];
@@ -469,7 +563,7 @@ export default function CentralAtas() {
             .replace(/{titulo}/g, titulo)
             .replace(/{data}/g, dataBR);
 
-          // 2. Gera
+          // 2. Gera Conteúdo (Envia o vídeo compilado como inlineData)
           const result = await model.generateContent([
             finalPrompt,
             { inlineData: { data: base64data, mimeType: "video/webm" } },
@@ -504,7 +598,7 @@ export default function CentralAtas() {
             )
           );
 
-          alert("Ata gerada e salva automaticamente!");
+          alert("Ata gerada com sucesso!");
         } catch (err) {
           console.error(err);
           alert("Erro na IA ou ao Salvar: " + err.message);
@@ -513,7 +607,7 @@ export default function CentralAtas() {
         }
       };
     } catch (e) {
-      alert("Erro download áudio: " + e.message);
+      alert("Erro processo IA: " + e.message);
       setIsGenerating(false);
     }
   };
@@ -536,7 +630,7 @@ export default function CentralAtas() {
 
         // 1. Upload para o Storage
         const { error: uploadErr } = await supabase.storage
-          .from("materiais") // ⚠️ Precisa criar este bucket no Supabase (já enviei o SQL)
+          .from("materiais")
           .upload(filePath, file);
 
         if (uploadErr) throw uploadErr;
@@ -550,7 +644,7 @@ export default function CentralAtas() {
           novosMateriais.push({
             name: file.name,
             url: urlData.publicUrl,
-            type: file.type, // 'image/png', 'application/pdf', etc.
+            type: file.type, 
             path: filePath,
           });
         }
@@ -885,12 +979,20 @@ export default function CentralAtas() {
                     <PlayCircle size={14} /> Gravação Compilada
                   </div>
 
-                  {mediaUrls.video ? (
+                  {/* ✅ LOADING DO VÍDEO */}
+                  {isLoadingMedia && (
+                    <div className="w-full h-48 bg-slate-100 rounded-xl flex flex-col items-center justify-center text-slate-500 border border-slate-200 animate-pulse mb-2">
+                      <Loader2 size={32} className="animate-spin text-blue-500 mb-2" />
+                      <span className="text-xs font-bold">Baixando e compilando partes...</span>
+                    </div>
+                  )}
+
+                  {!isLoadingMedia && mediaUrls.video ? (
                     <div className="space-y-2">
                       <video
                         key={mediaUrls.video}
                         controls
-                        className="w-full rounded-xl bg-black"
+                        className="w-full rounded-xl bg-black max-h-[480px]"
                         preload="metadata"
                       >
                         <source src={mediaUrls.video} type="video/webm" />
@@ -906,7 +1008,7 @@ export default function CentralAtas() {
                         Abrir vídeo em nova aba
                       </a>
                     </div>
-                  ) : (
+                  ) : !isLoadingMedia ? (
                     <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
                       {String(selectedAta.gravacao_status || "")
                         .toUpperCase()
@@ -925,7 +1027,7 @@ export default function CentralAtas() {
                         "Vídeo não disponível ainda."
                       )}
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* ÁUDIO */}
@@ -1086,7 +1188,6 @@ export default function CentralAtas() {
                           prose-a:text-blue-700
                         "
                         components={{
-                          // ✅ Evita títulos gigantes / garante espaçamento consistente
                           h1: ({ node, ...props }) => (
                             <h1 className="text-2xl font-bold text-slate-900 mt-0 mb-4" {...props} />
                           ),
@@ -1096,11 +1197,9 @@ export default function CentralAtas() {
                           h3: ({ node, ...props }) => (
                             <h3 className="text-base font-bold text-slate-900 mt-4 mb-2" {...props} />
                           ),
-                          // ✅ Parágrafos com espaçamento profissional
                           p: ({ node, ...props }) => (
                             <p className="my-2 leading-relaxed text-slate-700" {...props} />
                           ),
-                          // ✅ Listas “certinhas”
                           ul: ({ node, ...props }) => (
                             <ul className="my-2 pl-6 list-disc" {...props} />
                           ),
@@ -1110,7 +1209,6 @@ export default function CentralAtas() {
                           li: ({ node, ...props }) => (
                             <li className="my-1 leading-relaxed" {...props} />
                           ),
-                          // ✅ “Monoespaçado” só em code inline
                           code: ({ node, inline, ...props }) =>
                             inline ? (
                               <code
