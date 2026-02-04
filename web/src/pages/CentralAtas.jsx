@@ -39,6 +39,7 @@ import {
   X,
   RefreshCw,
   FileVideo,
+  Hourglass, // Icone para fila de espera
 } from "lucide-react";
 
 // --- HELPER: Formatar Duração Real ---
@@ -88,8 +89,8 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
-      
       if (!Number.isFinite(audioRef.current.duration) && durationDb > 0) {
+          // Mantém visualmente
       } else if (Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
           setDuration(audioRef.current.duration);
       }
@@ -269,6 +270,7 @@ export default function CentralAtas() {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     
+    // Continua atualizando se estiver PENDENTE ou PROCESSANDO
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
       stGravacao === "PROCESSANDO_RENDER" ||
@@ -302,7 +304,9 @@ export default function CentralAtas() {
         );
         
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
-        if (stGravacao !== "PROCESSANDO" && stGravacao !== "PENDENTE" && stGravacao !== "PROCESSANDO_RENDER") {
+        
+        // Se terminou, para o polling
+        if (stGravacao !== "PROCESSANDO" && stGravacao !== "PENDENTE" && stGravacao !== "PROCESSANDO_RENDER" && stGravacao !== "GRAVANDO") {
             stopPolling();
             hydrateMediaUrls(data);
             carregarDetalhes(data);
@@ -375,7 +379,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ LÓGICA CORRIGIDA: SEM FETCH PARA O RENDER
+  // ✅ BOTÃO REFAZER - SEM CHAMAR RENDER
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     
@@ -386,36 +390,33 @@ export default function CentralAtas() {
     setRequestingVideo(true);
 
     try {
-      // 1. Reseta status
+      // 1. UI Status
       await supabase.from("reunioes").update({ gravacao_status: "PENDENTE" }).eq("id", selectedAta.id);
 
-      // 2. Limpa fila antiga
+      // 2. Limpa Fila
       await supabase.from("reuniao_processing_queue")
         .delete()
         .eq("reuniao_id", selectedAta.id)
         .eq("job_type", "RENDER_FIX");
 
-      // 3. Insere job para o GitHub Actions pegar
+      // 3. Insere novo Job para GitHub Actions
       const { error } = await supabase.from("reuniao_processing_queue").insert(
         [{
             reuniao_id: selectedAta.id,
             job_type: "RENDER_FIX",
-            status: "PENDENTE",
-            log_text: "Solicitado via Central (Aguardando GitHub)",
+            status: "PENDENTE", // GitHub pega isso
+            log_text: "Solicitado Manualmente pelo Admin",
         }]
       );
 
       if (error) throw error;
-
-      // ⚠️ IMPORTANTE: REMOVI O FETCH PARA O RENDER AQUI
-      // Agora apenas esperamos o GitHub rodar no tempo dele (ou acionamos manualmente lá)
 
       // 4. Update UI Local
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map(a => a.id === selectedAta.id ? {...a, gravacao_status: 'PENDENTE'} : a));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
-      alert("Solicitação enviada para a fila! O Robô do GitHub iniciará em breve.");
+      alert("Solicitação enviada para a fila! O Robô do GitHub iniciará no próximo ciclo (aprox. 10min).");
     } catch (e) {
       alert("Erro: " + e.message);
     } finally {
@@ -564,10 +565,18 @@ export default function CentralAtas() {
 
   const getFileName = (path) => path ? path.split('/').pop() : "Arquivo desconhecido";
 
+  // ✅ VISUAL STATUS ATUALIZADO
   const getStatusBadge = (status) => {
       const st = String(status || "").toUpperCase();
-      if(st === "CONCLUIDO") return <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded font-bold border border-green-200">PRONTO</span>;
-      if(st.includes("PROCESSANDO") || st.includes("PENDENTE")) return <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-200 animate-pulse">PROCESSANDO</span>;
+      if(st === "CONCLUIDO") 
+        return <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded font-bold border border-green-200">PRONTO</span>;
+      
+      if(st.includes("PROCESSANDO") || st.includes("RENDER")) 
+        return <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-200 animate-pulse">PROCESSANDO</span>;
+      
+      if(st === "PENDENTE")
+        return <span className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">NA FILA</span>;
+
       return <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded font-bold border border-slate-200">AGUARDANDO</span>;
   };
 
@@ -655,6 +664,7 @@ export default function CentralAtas() {
                         <span className="text-blue-600 font-bold text-xs uppercase tracking-wider flex items-center gap-1">
                         <CheckCircle size={14} /> Ata Oficial
                         </span>
+                        {/* ✅ Badge atualizado */}
                         {getStatusBadge(selectedAta.gravacao_status)}
                     </div>
                     
@@ -744,16 +754,29 @@ export default function CentralAtas() {
                     </div>
                   ) : (
                     <div className="flex flex-col gap-4">
+                      {/* ✅ VISUAL PARA STATUS PENDENTE (NA FILA) vs PROCESSANDO (RODANDO) */}
                       <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center gap-3 text-center min-h-[200px]">
-                        {String(selectedAta.gravacao_status || "").includes("PROCESSANDO") || String(selectedAta.gravacao_status || "").includes("PENDENTE") ? (
+                        
+                        {String(selectedAta.gravacao_status || "").includes("PROCESSANDO") ? (
+                            // CASO 1: O Robô está mexendo (Azul e Girando)
                             <>
                                 <div className="p-4 bg-blue-100 rounded-full text-blue-600 animate-spin"><Loader2 size={32} /></div>
                                 <div>
                                     <h4 className="font-bold text-slate-700">Processando Vídeo...</h4>
-                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">O Robô está baixando as partes, unificando e fazendo upload do arquivo final. Isso pode levar de 5 a 15 minutos dependendo do tamanho.</p>
+                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">O GitHub está trabalhando na compressão. Aguarde...</p>
+                                </div>
+                            </>
+                        ) : String(selectedAta.gravacao_status || "").includes("PENDENTE") ? (
+                            // CASO 2: Está na fila (Amarelo e Ampulheta)
+                            <>
+                                <div className="p-4 bg-amber-100 rounded-full text-amber-600 animate-pulse"><Hourglass size={32} /></div>
+                                <div>
+                                    <h4 className="font-bold text-slate-700">Na Fila de Espera</h4>
+                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">Solicitado! O Robô iniciará no próximo ciclo (máx 10min).</p>
                                 </div>
                             </>
                         ) : (
+                            // CASO 3: Nada ou Erro
                             <>
                                 <div className="p-4 bg-slate-200 rounded-full text-slate-400"><Video size={32} /></div>
                                 <p>Vídeo completo não disponível.</p>
@@ -762,9 +785,9 @@ export default function CentralAtas() {
                       </div>
 
                       {(isAdmin || !selectedAta.gravacao_status || selectedAta.gravacao_status === "ERRO") && !String(selectedAta.gravacao_status || "").includes("PROCESSANDO") && (
-                            <button onClick={handleSolicitarVideo} disabled={requestingVideo} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-3 font-bold text-sm transition-all transform active:scale-[0.98]">
+                            <button onClick={handleSolicitarVideo} disabled={requestingVideo || selectedAta.gravacao_status === 'PENDENTE'} className={`w-full py-4 rounded-xl shadow-lg flex items-center justify-center gap-3 font-bold text-sm transition-all transform active:scale-[0.98] ${selectedAta.gravacao_status === 'PENDENTE' ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'}`}>
                               {requestingVideo ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
-                              {requestingVideo ? "Solicitando..." : "Gerar/Refazer Vídeo Completo (Chamar Robô)"}
+                              {requestingVideo ? "Solicitando..." : selectedAta.gravacao_status === 'PENDENTE' ? "Aguarde o início..." : "Gerar/Refazer Vídeo Completo"}
                             </button>
                       )}
                     </div>
