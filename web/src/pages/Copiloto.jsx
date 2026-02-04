@@ -1011,7 +1011,7 @@ export default function Copiloto() {
               onClick={() => setTab("ata_principal")}
               icon={<FileText size={16} />}
             >
-              Ata Principal
+              Pauta
             </TabButton>
 
             <TabButton
@@ -1019,7 +1019,7 @@ export default function Copiloto() {
               onClick={() => setTab("ata_manual")}
               icon={<StickyNote size={16} />}
             >
-              Ata Manual
+              Pauta Manual
             </TabButton>
 
             {/* ✅ NOVO: Material da Reunião (após Ata Manual) */}
@@ -1240,7 +1240,7 @@ export default function Copiloto() {
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-3">
                 <FileText size={18} className="text-slate-600" />
-                <div className="font-black">Ata Principal (somente leitura)</div>
+                <div className="font-black">Pauta (somente leitura)</div>
               </div>
 
               <div className="text-sm text-slate-700 whitespace-pre-wrap">
@@ -1252,7 +1252,7 @@ export default function Copiloto() {
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
                   <StickyNote size={18} className="text-slate-600" />
-                  <div className="font-black">Ata Manual</div>
+                  <div className="font-black">Pauta Manual</div>
                 </div>
 
                 <div className="flex gap-2">
