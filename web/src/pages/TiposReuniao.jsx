@@ -25,48 +25,26 @@ import {
   User,
 } from "lucide-react";
 
-/* =========================================================
-   COMPONENTE INTERNO: PARTICIPANTES (FIX)
-   - Mesma lógica do Organizador:
-     Busca no supabaseInove (usuarios_aprovadores)
-     Salva no supabase principal por chave estável: login/email
-========================================================= */
-function ParticipantesInterno({ tipoId, editavel }) {
+/**
+ * PARTICIPANTES (mesma fonte do organizador)
+ * - NÃO busca usuários aqui dentro
+ * - Recebe `usuariosAprovadores` do pai (mesma query que funciona)
+ */
+function ParticipantesInterno({ tipoId, editavel, usuariosAprovadores = [] }) {
   const [participantes, setParticipantes] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [usuariosInove, setUsuariosInove] = useState([]);
   const [busca, setBusca] = useState("");
 
   useEffect(() => {
-    if (tipoId) {
-      fetchParticipantes();
-      fetchUsuariosInove();
-    }
+    if (tipoId) fetchParticipantes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoId]);
-
-  const getUserKey = (u) => String(u?.login || u?.email || "").trim().toLowerCase();
-
-  const fetchUsuariosInove = async () => {
-    const { data, error } = await supabaseInove
-      .from("usuarios_aprovadores")
-      .select("id, nome, email, cargo, ativo, login")
-      .eq("ativo", true)
-      .order("nome");
-
-    if (error) {
-      console.warn("Erro ao carregar usuarios_aprovadores:", error.message);
-      setUsuariosInove([]);
-      return;
-    }
-    setUsuariosInove(data || []);
-  };
 
   const fetchParticipantes = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("participantes_tipo_reuniao")
-      .select("id, tipo_reuniao_id, usuario_login, nome, email, cargo")
+      .select("*")
       .eq("tipo_reuniao_id", tipoId)
       .order("nome", { ascending: true });
 
@@ -82,62 +60,63 @@ function ParticipantesInterno({ tipoId, editavel }) {
   };
 
   const adicionar = async (usuario) => {
-    const key = getUserKey(usuario);
-    if (!key) return;
+    if (!tipoId || !usuario?.id) return;
 
-    if (participantes.some((p) => String(p.usuario_login || "").toLowerCase() === key)) return;
+    // ✅ dedupe por usuario_id (id do usuarios_aprovadores)
+    if (participantes.some((p) => String(p.usuario_id) === String(usuario.id))) return;
 
     const payload = {
       tipo_reuniao_id: tipoId,
-      usuario_login: key,
-      nome: usuario.nome || null,
-      email: usuario.email || null,
-      cargo: usuario.cargo || null,
+      usuario_id: usuario.id,
+      nome: usuario.nome,
+      email: usuario.email,
     };
 
     const { data, error } = await supabase
       .from("participantes_tipo_reuniao")
       .insert(payload)
-      .select();
+      .select()
+      .single();
 
     if (error) {
       console.warn("Erro ao inserir participante:", error.message);
+      alert("Erro ao adicionar participante.");
       return;
     }
 
-    if (data?.[0]) {
-      setParticipantes((prev) => [...prev, data[0]]);
-      setBusca("");
-    }
+    setParticipantes((prev) => [...prev, data]);
+    setBusca("");
   };
 
   const remover = async (id) => {
     const { error } = await supabase.from("participantes_tipo_reuniao").delete().eq("id", id);
-    if (!error) setParticipantes((prev) => prev.filter((p) => p.id !== id));
-    else console.warn("Erro ao remover participante:", error.message);
+    if (error) {
+      console.warn("Erro ao remover participante:", error.message);
+      alert("Erro ao remover participante.");
+      return;
+    }
+    setParticipantes((prev) => prev.filter((p) => p.id !== id));
   };
 
   const usuariosFiltrados = useMemo(() => {
     const term = busca.trim().toLowerCase();
     if (!term) return [];
 
-    return (usuariosInove || [])
+    return (usuariosAprovadores || [])
       .filter((u) => {
-        const key = getUserKey(u);
-        if (!key) return false;
+        if (!u?.id) return false;
 
-        const jaExiste = participantes.some(
-          (p) => String(p.usuario_login || "").toLowerCase() === key
-        );
+        // não mostrar quem já está adicionado
+        const jaExiste = participantes.some((p) => String(p.usuario_id) === String(u.id));
         if (jaExiste) return false;
 
         const nome = String(u?.nome || "").toLowerCase();
         const email = String(u?.email || "").toLowerCase();
-        const login = String(u?.login || "").toLowerCase();
-        return nome.includes(term) || email.includes(term) || login.includes(term);
+
+        return nome.includes(term) || email.includes(term);
       })
       .slice(0, 5);
-  }, [usuariosInove, participantes, busca]);
+  }, [usuariosAprovadores, participantes, busca]);
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-4">
@@ -159,7 +138,7 @@ function ParticipantesInterno({ tipoId, editavel }) {
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar nome, login ou email para adicionar..."
+              placeholder="Buscar nome ou email para adicionar..."
               className="w-full text-sm p-2 outline-none"
             />
           </div>
@@ -175,14 +154,18 @@ function ParticipantesInterno({ tipoId, editavel }) {
                 >
                   <div className="min-w-0">
                     <div className="font-bold text-gray-700 truncate">{u.nome}</div>
-                    <div className="text-[10px] text-gray-400 truncate">
-                      {u.login ? `${u.login} • ` : ""}
-                      {u.email}
-                    </div>
+                    <div className="text-[10px] text-gray-400 truncate">{u.email}</div>
                   </div>
-                  <Plus size={14} className="text-blue-600" />
+                  <Plus size={14} className="text-blue-600 shrink-0" />
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* quando digitou e não achou */}
+          {busca.length > 0 && usuariosFiltrados.length === 0 && (
+            <div className="mt-2 text-[11px] text-gray-400">
+              Nenhum usuário encontrado (ou já adicionado).
             </div>
           )}
         </div>
@@ -205,21 +188,20 @@ function ParticipantesInterno({ tipoId, editavel }) {
             >
               <div className="min-w-0 flex items-center gap-2">
                 <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold shrink-0">
-                  {p.nome?.charAt(0)}
+                  {String(p.nome || "?").charAt(0)}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold text-gray-800 truncate">{p.nome}</p>
-                  <p className="text-[10px] text-gray-500 truncate">
-                    {p.usuario_login ? `${p.usuario_login} • ` : ""}
-                    {p.email}
-                  </p>
+                  <p className="text-xs font-bold text-gray-800 truncate">{p.nome || "-"}</p>
+                  <p className="text-[10px] text-gray-500 truncate">{p.email || "-"}</p>
                 </div>
               </div>
+
               {editavel && (
                 <button
                   type="button"
                   onClick={() => remover(p.id)}
                   className="text-gray-300 hover:text-red-500 p-1 transition-colors"
+                  title="Remover"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -231,8 +213,8 @@ function ParticipantesInterno({ tipoId, editavel }) {
     </div>
   );
 }
-// --- FIM COMPONENTE INTERNO ---
 
+// -----------------------------
 const REUNIOES_TIPO_FIELD = "tipo_reuniao";
 
 const DIAS_UI = [
@@ -301,22 +283,18 @@ export default function TiposReuniao() {
   const [q, setQ] = useState("");
   const [view, setView] = useState("cards");
 
-  // counts: { [tipoId]: number }
   const [counts, setCounts] = useState({});
   const [countsLoading, setCountsLoading] = useState(false);
 
-  // Drawer/Detalhe
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedTipo, setSelectedTipo] = useState(null);
   const [reunioesTipo, setReunioesTipo] = useState([]);
   const [reunioesLoading, setReunioesLoading] = useState(false);
 
-  // Modal Create/Edit
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState("create");
   const [saving, setSaving] = useState(false);
 
-  // ✅ Form State com campo responsavel_id
   const [form, setForm] = useState({
     id: null,
     nome: "",
@@ -331,16 +309,14 @@ export default function TiposReuniao() {
     responsavel_id: "",
   });
 
-  // ✅ Lista de Usuários para o Select (Organizador)
+  // ✅ UMA ÚNICA LISTA (serve pro organizador e pro participantes)
   const [usuariosAprovadores, setUsuariosAprovadores] = useState([]);
 
-  // ✅ Estados para Exclusão Segura
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
   const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // ✅ Estado do Usuário Logado (para permissão de edição)
   const [userLevel, setUserLevel] = useState(null);
 
   useEffect(() => {
@@ -359,6 +335,7 @@ export default function TiposReuniao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ MESMA QUERY DO ORGANIZADOR (e agora é a única usada)
   const fetchUsuariosAprovadores = async () => {
     const { data, error } = await supabaseInove
       .from("usuarios_aprovadores")
@@ -396,11 +373,8 @@ export default function TiposReuniao() {
     setTipos(data || []);
     setLoading(false);
 
-    if ((data || []).length) {
-      fetchCounts(data || []);
-    } else {
-      setCounts({});
-    }
+    if ((data || []).length) fetchCounts(data || []);
+    else setCounts({});
   };
 
   const fetchCounts = async (list) => {
@@ -426,9 +400,7 @@ export default function TiposReuniao() {
       );
 
       const map = {};
-      results.forEach(([id, c]) => {
-        map[id] = c;
-      });
+      results.forEach(([id, c]) => (map[id] = c));
       setCounts(map);
     } finally {
       setCountsLoading(false);
@@ -438,6 +410,7 @@ export default function TiposReuniao() {
   const tiposFiltrados = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return tipos;
+
     return (tipos || []).filter((t) => {
       const nome = String(t?.nome || "").toLowerCase();
       const slug = String(t?.slug || "").toLowerCase();
@@ -486,7 +459,7 @@ export default function TiposReuniao() {
     }
   };
 
-  // ---------- FORM (Create/Edit) ----------
+  // ---------- FORM ----------
   const checkEditPermission = () => {
     if (userLevel === "Administrador" || userLevel === "Gestor") return true;
     alert("Permissão negada. Apenas Administradores e Gestores podem criar ou editar tipos.");
@@ -536,9 +509,7 @@ export default function TiposReuniao() {
   const toggleDia = (val) => {
     setForm((prev) => {
       const exists = (prev.dias_semana || []).includes(val);
-      const next = exists
-        ? (prev.dias_semana || []).filter((x) => x !== val)
-        : [...(prev.dias_semana || []), val];
+      const next = exists ? (prev.dias_semana || []).filter((x) => x !== val) : [...(prev.dias_semana || []), val];
       next.sort((a, b) => a - b);
       return { ...prev, dias_semana: next };
     });
@@ -573,10 +544,7 @@ export default function TiposReuniao() {
         horario_fim: form.horario_fim ? `${form.horario_fim}:00` : null,
         ata_principal: form.ata_principal || null,
         cor: form.cor || null,
-        ordem:
-          form.ordem === "" || form.ordem === null || Number.isNaN(Number(form.ordem))
-            ? null
-            : Number(form.ordem),
+        ordem: form.ordem === "" || form.ordem === null || Number.isNaN(Number(form.ordem)) ? null : Number(form.ordem),
         responsavel_id: form.responsavel_id || null,
       };
 
@@ -662,8 +630,7 @@ export default function TiposReuniao() {
               </div>
               <div className="p-5 space-y-4">
                 <p className="text-sm text-gray-600">
-                  Esta ação é irreversível. Informe suas credenciais de <b>Gestor</b> ou{" "}
-                  <b>Administrador</b> para confirmar a exclusão de:
+                  Esta ação é irreversível. Informe suas credenciais de <b>Gestor</b> ou <b>Administrador</b> para confirmar a exclusão de:
                   <br />
                   <span className="font-bold text-gray-900">{selectedTipo?.nome}</span>
                 </p>
@@ -937,7 +904,7 @@ export default function TiposReuniao() {
           </div>
         </div>
 
-        {/* DRAWER / DETALHE */}
+        {/* DRAWER */}
         {drawerOpen && selectedTipo && (
           <div className="absolute inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
             <div className="w-full max-w-2xl h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col">
@@ -956,7 +923,6 @@ export default function TiposReuniao() {
               </div>
 
               <div className="p-6 space-y-5 overflow-y-auto flex-1">
-                {/* Metadados */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                     <p className="text-xs font-bold text-gray-500 uppercase">Periodicidade</p>
@@ -987,7 +953,6 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* Ações */}
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => openEdit(selectedTipo)}
@@ -1018,7 +983,6 @@ export default function TiposReuniao() {
                   </button>
                 </div>
 
-                {/* ATA principal */}
                 <div>
                   <p className="text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2">
                     <FileText size={16} /> ATA Principal
@@ -1028,10 +992,13 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* PARTICIPANTES (apenas leitura no drawer) */}
-                <ParticipantesInterno tipoId={selectedTipo?.id} editavel={false} />
+                {/* ✅ PARTICIPANTES no drawer (mesma fonte do organizador) */}
+                <ParticipantesInterno
+                  tipoId={selectedTipo?.id}
+                  editavel={false}
+                  usuariosAprovadores={usuariosAprovadores}
+                />
 
-                {/* Reuniões vinculadas */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-bold text-gray-500 uppercase flex items-center gap-2">
@@ -1107,9 +1074,7 @@ export default function TiposReuniao() {
               <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                 <div className="flex items-center gap-2">
                   <Tags size={18} className="text-gray-700" />
-                  <h3 className="font-bold text-gray-900">
-                    {formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}
-                  </h3>
+                  <h3 className="font-bold text-gray-900">{formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}</h3>
                 </div>
                 <button onClick={() => setFormOpen(false)} className="text-gray-400 hover:text-red-500" title="Fechar">
                   <X size={20} />
@@ -1128,8 +1093,7 @@ export default function TiposReuniao() {
                         setForm((p) => ({
                           ...p,
                           nome: v,
-                          slug:
-                            formMode === "create" && (!p.slug || p.slug === slugify(p.nome)) ? slugify(v) : p.slug,
+                          slug: formMode === "create" && (!p.slug || p.slug === slugify(p.nome)) ? slugify(v) : p.slug,
                         }));
                       }}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
@@ -1213,9 +1177,7 @@ export default function TiposReuniao() {
                             key={d.value}
                             onClick={() => toggleDia(d.value)}
                             className={`px-3 py-2 rounded-lg border text-sm font-bold transition-colors ${
-                              active
-                                ? "bg-blue-50 text-blue-700 border-blue-200"
-                                : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                              active ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                             }`}
                           >
                             {active ? (
@@ -1271,9 +1233,13 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* Participantes dentro do Modal */}
+                {/* ✅ Participantes: mesma fonte do organizador */}
                 {formMode === "edit" && form.id ? (
-                  <ParticipantesInterno tipoId={form.id} editavel={true} />
+                  <ParticipantesInterno
+                    tipoId={form.id}
+                    editavel={true}
+                    usuariosAprovadores={usuariosAprovadores}
+                  />
                 ) : (
                   <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
                     Você poderá adicionar participantes padrão após salvar este tipo de reunião pela primeira vez.
