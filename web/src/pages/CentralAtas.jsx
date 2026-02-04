@@ -36,18 +36,20 @@ import {
   Download,
 } from "lucide-react";
 
-// --- PLAYER DE ÁUDIO ---
+// --- PLAYER DE ÁUDIO OTIMIZADO (CORREÇÃO DA BARRA DE PROGRESSO) ---
 const CustomAudioPlayer = ({ src, durationDb }) => {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(durationDb || 0);
+  // Inicia com a duração do banco para garantir que a barra tenha tamanho certo desde o início
+  const [duration, setDuration] = useState(durationDb || 1); 
   const [isMuted, setIsMuted] = useState(false);
 
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
-    if (durationDb) setDuration(durationDb);
+    // Se mudou a fonte, reseta a duração para o valor do banco (backup)
+    if (durationDb && durationDb > 0) setDuration(durationDb);
   }, [src, durationDb]);
 
   const togglePlay = () => {
@@ -59,9 +61,21 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
 
   const handleTimeUpdate = () => {
     if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-      if (audioRef.current.duration && audioRef.current.duration !== Infinity) {
-        setDuration(audioRef.current.duration);
+      const now = audioRef.current.currentTime;
+      setCurrentTime(now);
+
+      // Tenta ler a duração real do arquivo
+      const realDuration = audioRef.current.duration;
+      
+      // Lógica de Prioridade:
+      // 1. Se o navegador conseguiu ler a duração (e não é infinita), usa ela.
+      if (realDuration && !isNaN(realDuration) && realDuration !== Infinity) {
+        setDuration(realDuration);
+      } 
+      // 2. Se o navegador falhou (Infinity), MANTÉM a duração do banco (durationDb) que já setamos no inicio.
+      // 3. Se não tem banco nem arquivo (fallback visual para não travar), expande a barra conforme toca.
+      else if ((!durationDb || durationDb === 0) && now > duration) {
+        setDuration(now + 10);
       }
     }
   };
@@ -69,7 +83,10 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   const handleSeek = (e) => {
     const newTime = Number(e.target.value);
     setCurrentTime(newTime);
-    if (audioRef.current) audioRef.current.currentTime = newTime;
+    if (audioRef.current) {
+      // Força o tempo no player
+      audioRef.current.currentTime = newTime;
+    }
   };
 
   const toggleMute = () => {
@@ -80,13 +97,14 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   };
 
   const formatTime = (time) => {
-    if (!time || isNaN(time)) return "00:00";
+    if (!time || isNaN(time) || time === Infinity) return "00:00";
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  // Garante que a barra não passe de 100% visualmente
+  const progressPercent = duration > 0 ? Math.min((currentTime / duration) * 100, 100) : 0;
 
   return (
     <div className="flex items-center gap-3 bg-slate-100 p-3 rounded-xl border border-slate-200 shadow-sm w-full">
@@ -94,31 +112,45 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
         ref={audioRef}
         src={src}
         onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleTimeUpdate}
         onEnded={() => setIsPlaying(false)}
         className="hidden"
       />
+
       <button onClick={togglePlay} className="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all">
         {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
       </button>
+
       <span className="text-xs font-mono text-slate-500 w-10 text-right">{formatTime(currentTime)}</span>
-      <div className="flex-1 relative h-6 flex items-center">
+
+      <div className="flex-1 relative h-6 flex items-center group">
+        {/* Barra de Fundo */}
+        <div className="absolute w-full h-1.5 bg-slate-300 rounded-lg overflow-hidden">
+            <div 
+                className="h-full bg-blue-500 transition-all duration-100 ease-linear"
+                style={{ width: `${progressPercent}%` }}
+            />
+        </div>
+        
+        {/* Input Invisível (Range) para controle de toque/clique */}
         <input
           type="range"
           min="0"
-          max={duration || 100}
+          max={duration}
           value={currentTime}
           onChange={handleSeek}
-          className="absolute w-full h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer"
-          style={{ background: `linear-gradient(to right, #3b82f6 ${progressPercent}%, #cbd5e1 ${progressPercent}%)` }}
+          className="absolute w-full h-full opacity-0 cursor-pointer z-10"
         />
-        <style jsx>{`
-          input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
-            background: #3b82f6; cursor: pointer; margin-top: 0px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-          }
-        `}</style>
+        
+        {/* Bolinha Visual (Thumb) */}
+        <div 
+            className="absolute h-3 w-3 bg-white border-2 border-blue-600 rounded-full shadow pointer-events-none transition-all duration-100 ease-linear"
+            style={{ left: `calc(${progressPercent}% - 6px)` }}
+        />
       </div>
+
       <span className="text-xs font-mono text-slate-500 w-10">{formatTime(duration)}</span>
+
       <button onClick={toggleMute} className="text-slate-400 hover:text-slate-600">
         {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
       </button>
