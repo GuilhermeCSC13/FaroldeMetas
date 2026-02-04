@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
 import { useNavigate } from "react-router-dom";
+import ParticipantesTipoReuniao from "./ParticipantesTipoReuniao"; // Importar o novo componente
 import {
   Tags,
   Search,
@@ -77,6 +78,15 @@ function snippet(text, max = 160) {
   if (!text) return "";
   const clean = String(text).replace(/\s+/g, " ").trim();
   return clean.length > max ? clean.slice(0, max) + "..." : clean;
+}
+
+function badge(icon, label) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+      {icon}
+      {label}
+    </span>
+  );
 }
 
 export default function TiposReuniao() {
@@ -354,154 +364,132 @@ export default function TiposReuniao() {
       }
 
       setFormOpen(false);
-      await fetchTipos();
-
-      if (selectedTipo?.id && formMode === "edit" && selectedTipo.id === form.id) {
-        const updated = (tipos || []).find((t) => t.id === form.id);
-        if (updated) setSelectedTipo(updated);
-        await fetchReunioesTipo(updated || selectedTipo);
-      }
-    } catch (e) {
-      console.error(e);
-      alert(`Erro ao salvar: ${e?.message || "falha"}`);
+      fetchTipos();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao salvar.");
     } finally {
-      setSaving(false);
+      setSaving(true);
     }
   };
 
-  // ---------- DELETE (COM AUTH) ----------
   const requestDelete = (tipo) => {
-    // Abre o modal de autenticação em vez de deletar direto
+    if (!checkEditPermission()) return;
     setSelectedTipo(tipo);
-    setShowDeleteAuth(true);
     setDelLogin("");
     setDelSenha("");
+    setShowDeleteAuth(true);
   };
 
-  const confirmarExclusao = async () => {
-    if (!selectedTipo?.id) return;
-    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
-    
+  const confirmDelete = async () => {
+    if (!delLogin || !delSenha) {
+      alert("Informe login e senha para excluir.");
+      return;
+    }
     setDeleting(true);
     try {
-      // 1. Validar Usuário (INOVE)
-      const { data: usuario, error: errAuth } = await supabaseInove
+      const { data: usuario, error: authError } = await supabaseInove
         .from("usuarios_aprovadores")
-        .select("id, login, senha, nivel, ativo")
+        .select("id, nivel, ativo")
         .eq("login", delLogin)
         .eq("senha", delSenha)
         .eq("ativo", true)
         .maybeSingle();
 
-      if (errAuth) throw errAuth;
-
+      if (authError) throw authError;
       if (!usuario) {
-        alert("Credenciais inválidas.");
+        alert("Login ou senha incorretos ou usuário inativo.");
         setDeleting(false);
         return;
       }
 
-      // 2. Apenas ADMINISTRADOR pode excluir
-      if (usuario.nivel !== "Administrador") {
-        alert("Permissão negada. Apenas Administradores podem excluir Tipos de Reunião.");
+      if (usuario.nivel !== "Administrador" && usuario.nivel !== "Gestor") {
+        alert("Apenas Administradores e Gestores podem excluir tipos.");
         setDeleting(false);
         return;
       }
 
-      // 3. Verificar se há reuniões vinculadas
-      const tipoKey = selectedTipo?.nome || selectedTipo?.slug || "";
-      const { count } = await supabase
-        .from("reunioes")
-        .select("id", { count: "exact", head: true })
-        .eq(REUNIOES_TIPO_FIELD, tipoKey);
+      const { error: delError } = await supabase
+        .from("tipos_reuniao")
+        .delete()
+        .eq("id", selectedTipo.id);
 
-      if ((count ?? 0) > 0) {
-        const ok = window.confirm(
-          `ATENÇÃO: Existem ${count} reunião(ões) vinculadas a este tipo.\n\nSe você apagar, elas ficarão sem categoria.\n\nDeseja continuar mesmo assim?`
-        );
-        if (!ok) {
-          setDeleting(false);
-          return;
-        }
-      }
-
-      // 4. Excluir
-      const { error } = await supabase.from("tipos_reuniao").delete().eq("id", selectedTipo.id);
-      if (error) throw error;
+      if (delError) throw delError;
 
       setShowDeleteAuth(false);
-      closeDrawer();
-      await fetchTipos();
+      setSelectedTipo(null);
+      fetchTipos();
       alert("Tipo excluído com sucesso.");
-
-    } catch (e) {
-      console.error(e);
-      alert(`Erro ao excluir: ${e?.message || "falha"}`);
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir.");
     } finally {
       setDeleting(false);
     }
   };
 
-  // ---------- UI helpers ----------
-  const badge = (icon, text) => (
-    <span className="inline-flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-1 rounded-full">
-      {icon}
-      {text}
-    </span>
-  );
-
   return (
-    <Layout>
-      <div className="p-6 h-full flex flex-col font-sans bg-gray-50 relative">
-        
-        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+    <Layout title="Tipos de Reunião">
+      <div className="flex flex-col h-full relative">
+        {/* Modal Auth Delete */}
         {showDeleteAuth && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
-            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-                <ShieldAlert size={24} />
+          <div className="absolute inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-100 flex items-center gap-3 bg-red-50 text-red-700">
+                <ShieldAlert size={20} />
+                <h3 className="font-bold">Autorização de Exclusão</h3>
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Confirmar Exclusão</h3>
-              <p className="text-sm text-slate-500 mb-6">
-                Ação restrita a <b>Administradores</b>.
-              </p>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-gray-600">
+                  Esta ação é irreversível. Informe suas credenciais de{" "}
+                  <b>Gestor</b> ou <b>Administrador</b> para confirmar a exclusão de:
+                  <br />
+                  <span className="font-bold text-gray-900">
+                    {selectedTipo?.nome}
+                  </span>
+                </p>
 
-              <div className="space-y-3 text-left">
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
-                  <input 
-                    type="text" 
-                    autoFocus
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Login
+                  </label>
+                  <input
                     value={delLogin}
-                    onChange={e => setDelLogin(e.target.value)}
+                    onChange={(e) => setDelLogin(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-red-100"
+                    placeholder="Seu login"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
-                  <input 
-                    type="password" 
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delSenha}
-                    onChange={e => setDelSenha(e.target.value)}
-                  />
-                </div>
-              </div>
 
-              <div className="flex gap-3 mt-6">
-                <button 
-                  onClick={() => setShowDeleteAuth(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmarExclusao}
-                  disabled={deleting}
-                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
-                >
-                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
-                </button>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Senha
+                  </label>
+                  <input
+                    type="password"
+                    value={delSenha}
+                    onChange={(e) => setDelSenha(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-red-100"
+                    placeholder="Sua senha"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowDeleteAuth(false)}
+                    className="flex-1 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 font-bold text-gray-800"
+                    disabled={deleting}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold"
+                    disabled={deleting}
+                  >
+                    {deleting ? "Verificando..." : "Confirmar Exclusão"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -699,14 +687,6 @@ export default function TiposReuniao() {
                           className="text-blue-700 font-bold text-sm flex items-center gap-2 opacity-80 group-hover:opacity-100"
                         >
                           Ver reuniões <ArrowRight size={16} />
-                        </button>
-
-                        <button
-                          onClick={() => navigate("/central-reunioes")}
-                          className="text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold"
-                          title="Abrir Agenda Tática"
-                        >
-                          Agenda
                         </button>
                       </div>
                     </div>
@@ -922,8 +902,11 @@ export default function TiposReuniao() {
                         {reunioesTipo.map((r) => {
                           const dt = new Date(r.data_hora);
                           const dtStr = dt.toLocaleString("pt-BR", {
-                            dateStyle: "short",
-                            timeStyle: "short",
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           });
 
                           return (
@@ -960,6 +943,15 @@ export default function TiposReuniao() {
                     )}
                   </div>
                 </div>
+
+                {/* Participantes Padrão */}
+                {selectedTipo?.id && selectedTipo?.nome && (
+                  <ParticipantesTipoReuniao
+                    tipoReuniaoId={selectedTipo.id}
+                    tipoReuniaoNome={selectedTipo.nome}
+                    editavel={userLevel === "Administrador" || userLevel === "Gestor"}
+                  />
+                )}
               </div>
 
               <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
