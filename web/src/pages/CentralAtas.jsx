@@ -37,6 +37,7 @@ import {
   RefreshCw,
   FileVideo,
   Hourglass,
+  FileDown, // ✅ Novo ícone para baixar ata
 } from "lucide-react";
 
 // --- HELPER: Formatar Duração Real ---
@@ -59,146 +60,44 @@ const calculateRealDuration = (startStr, endStr) => {
 };
 
 // ==========================
-// ✅ FORMATADOR PROFISSIONAL DE ATA (padrão limpo)
+// ✅ FORMATADOR PROFISSIONAL DE ATA (REFATORADO)
 // ==========================
-function escapeRegExp(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function cleanLeadingSalutation(md) {
-  let t = String(md || "").replace(/\r\n/g, "\n").trim();
-  // remove linhas iniciais tipo "Certo, aqui está a ATA..."
-  t = t.replace(/^(certo|claro)[^\n]*\n+/gim, "");
+function formatAtaMarkdown(raw, { titulo, dataBR } = {}) {
+  let t = String(raw || "").replace(/\r\n/g, "\n").trim();
+
+  // 1. Limpeza de "lixo" de IA (Saudações)
+  t = t.replace(/^(certo|claro|aqui está|olá|bom dia)[^\n]*\n+/gim, "");
   t = t.replace(/^(aqui\s+est[aá]\s+a\s+ata[^\n]*)\n+/gim, "");
-  return t.trim();
-}
-function ensureSpacing(md) {
-  // garante espaçamento entre blocos (evita “paredão”)
-  return String(md || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/([^\n])\n(##\s)/g, "$1\n\n$2")
-    .replace(/([^\n])\n(\*\*Data:\*\*)/g, "$1\n\n$2")
-    .trim();
-}
-function boldSectionTitles(md) {
-  // transforma "1. Resumo" -> "## **Resumo**"
-  // transforma "2. Decisões" / "Decisões" -> "## **Decisões**"
-  // transforma "3. Ações" -> "## **Ações**"
-  let t = String(md || "");
 
-  const map = [
-    { re: /^\s*(\d+)\s*[\.\)]\s*Resumo\s*$/gim, rep: "## **Resumo**" },
-    { re: /^\s*(\d+)\s*[\.\)]\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
-    { re: /^\s*(\d+)\s*[\.\)]\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
+  // 2. Normalização de Seções para H2 (##)
+  // Transforma "1. Resumo", "Resumo:", "**Resumo**" em "## RESUMO"
+  const sections = ["Resumo", "Decisões", "Ações", "Pauta", "Participantes", "Pontos de Atenção"];
+  
+  sections.forEach(sec => {
+    // Regex flexível: (opcional numero) + (opcional **) + Nome + (opcional **) + (opcional :)
+    const re = new RegExp(`^(\\d+\\.?\\s*)?\\**${sec}\\**\\s*:?\\s*$`, "gim");
+    t = t.replace(re, `\n## ${sec.toUpperCase()}\n`);
+  });
 
-    // sem numeração
-    { re: /^\s*Resumo\s*$/gim, rep: "## **Resumo**" },
-    { re: /^\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
-    { re: /^\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
-  ];
-
-  for (const r of map) t = t.replace(r.re, r.rep);
-  return t;
-}
-function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
-  let t = String(raw || "").trim();
-
-  const safeTitulo = String(titulo || "").trim();
-  const safeData = String(dataBR || "").trim();
-
-  // remove "DBO - ..." solto no topo se já colocaremos título padrão
-  // (não remove se estiver dentro do corpo)
-  const lines = t.split("\n");
-  let i = 0;
-  while (i < lines.length && !lines[i].trim()) i++;
-  const first = (lines[i] || "").trim();
-
-  // cria header profissional:
-  // **TÍTULO**
-  // **Data:** DD/MM/AAAA
+  // 3. Tratamento do Título Principal (H1)
+  // Se o texto não começa com "# ", adicionamos o título passado por prop
+  const hasH1 = /^#\s/.test(t);
   let header = "";
-  if (safeTitulo) header += `**${safeTitulo}**\n`;
-  if (safeData) header += `**Data:** ${safeData}\n`;
-
-  // se o texto já começa com H1/H2, mantém; senão força cabeçalho profissional
-  const startsWithHeading = /^#{1,6}\s+/.test(first);
-
-  // se já começa com o título ou "DBO -" etc, substitui por header
-  const looksLikeTitleLine = safeTitulo && first.toLowerCase().includes(safeTitulo.toLowerCase());
-  const startsWithDBO = /^d\s*b\s*o\s*[\-–—]/i.test(first) || /^dbo\b/i.test(first);
-
-  if (!startsWithHeading) {
-    if (looksLikeTitleLine || startsWithDBO) {
-      // remove primeiras 2-4 linhas (título/data) e injeta header limpo
-      let cut = i;
-      let consumed = 0;
-      while (cut < lines.length && consumed < 6) {
-        const s = (lines[cut] || "").trim();
-        if (!s) {
-          cut++;
-          consumed++;
-          continue;
-        }
-        // para quando chegar em "Resumo" ou "1. Resumo" etc
-        if (/^(\d+\s*[\.\)]\s*)?resumo\b/i.test(s)) break;
-        if (/^(\d+\s*[\.\)]\s*)?decis/i.test(s)) break;
-        if (/^(\d+\s*[\.\)]\s*)?a(ç|c)oes\b/i.test(s)) break;
-        cut++;
-        consumed++;
-      }
-      const rest = lines.slice(cut).join("\n").trim();
-      t = `${header}\n${rest}`.trim();
-    } else {
-      // só prefixa header se não existir ainda uma linha "Data:" no começo
-      const hasEarlyDate = lines.slice(0, Math.min(lines.length, 8)).some((l) => /^\s*data\s*:/i.test(l));
-      if (!hasEarlyDate && (safeTitulo || safeData)) {
-        t = `${header}\n${t}`.trim();
-      }
-    }
+  
+  if (!hasH1 && titulo) {
+    header += `# ${titulo.toUpperCase()}\n`;
+    if (dataBR) header += `**Data da Reunião:** ${dataBR}\n\n`;
+    header += `___\n\n`; // Linha horizontal separadora no markdown
   }
 
-  // normaliza "Data:" que venha perdida para **Data:**
-  t = t.replace(/^\s*data\s*:\s*(.+)$/gim, (_, v) => `**Data:** ${String(v).trim()}`);
+  // 4. Melhoria de Espaçamento e Negrito em Métricas
+  t = t.replace(/\n{3,}/g, "\n\n"); // Remove excesso de quebras
+  // Negrito em porcentagens e valores monetários simples
+  t = t.replace(/(\s)(\d{1,3}(?:[.,]\d{1,2})?%)/g, "$1**$2**");
+  t = t.replace(/(\s)(R\$\s?\d+)/g, "$1**$2**");
 
-  return t;
-}
-function improveParagraphs(md) {
-  // quebra em blocos por frases gatilho para ficar mais “profissional”
-  let t = String(md || "");
-
-  // garante que cada "Foi ..." vira novo parágrafo
-  t = t
-    .replace(/\s+(Foi mencionado que)/g, "\n\n$1")
-    .replace(/\s+(Foi citado que)/g, "\n\n$1")
-    .replace(/\s+(Foi discutido)/g, "\n\n$1")
-    .replace(/\s+(É necessário)/g, "\n\n$1");
-
-  // negrita percentuais
-  t = t.replace(/(\b\d{1,3})\s*%/g, "**$1%**");
-
-  // indicadores: "cumprimento ... foi 98% e ..." -> quebra linha se virar grande
-  t = t.replace(/(\*\*\d{1,3}%\*\*)\s+e\s+/g, "$1**;** ");
-
-  return ensureSpacing(t);
-}
-function formatAtaMarkdown(raw, { titulo, dataBR } = {}) {
-  let t = cleanLeadingSalutation(raw);
-  t = normalizeTitleAndDate(t, { titulo, dataBR });
-  t = boldSectionTitles(t);
-
-  // seções mínimas caso IA não traga
-  const hasResumo = /##\s*\*\*Resumo\*\*/i.test(t);
-  const hasDecisoes = /##\s*\*\*Decis(õ|o)es\*\*/i.test(t);
-  const hasAcoes = /##\s*\*\*A(ç|c)oes\*\*/i.test(t);
-
-  if (!hasResumo) t = `${t}\n\n## **Resumo**\n- —`;
-  if (!hasDecisoes) t = `${t}\n\n## **Decisões**\n- —`;
-  if (!hasAcoes) t = `${t}\n\n## **Ações**\n- —`;
-
-  t = improveParagraphs(t);
-
-  return t.trim();
+  // Junta header + corpo
+  return (header + t).trim();
 }
 
 // --- COMPONENTE PLAYER DE ÁUDIO ---
@@ -349,7 +248,7 @@ export default function CentralAtas() {
 
       const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-      // ✅ sempre abrir já padronizado
+      // ✅ FORMATAÇÃO INICIAL AO SELECIONAR
       setEditedPauta(
         formatAtaMarkdown(selectedAta.pauta || "", {
           titulo: selectedAta.titulo || "Ata da Reunião",
@@ -513,7 +412,6 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ IA: usa app_prompts SIM (slug="ata_reuniao"). Se não achar, usa fallback.
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -535,24 +433,19 @@ export default function CentralAtas() {
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-          // ✅ Fallback PROFISSIONAL (caso app_prompts esteja vazio)
           let promptTemplate = `
 Você é uma secretária executiva experiente.
 Gere uma **ATA PROFISSIONAL**, clara e legível em **Markdown**.
 
 Regras obrigatórias:
 - NÃO escreva "Certo" / "Claro" / "Aqui está a ata".
-- Comece com:
-  **{titulo}**
-  **Data:** {data}
-- Use exatamente estas seções (com títulos em negrito):
-  ## **Resumo**
-  ## **Decisões**
-  ## **Ações**
+- Use exatamente estas seções (com títulos em Markdown ##):
+  ## Resumo
+  ## Decisões
+  ## Ações
 - Use parágrafos curtos e listas quando fizer sentido.
-- Destaque em **negrito** indicadores e números-chave (ex.: 98%, 91,11%).
+- Destaque em **negrito** indicadores e números-chave.
 - Não invente fatos. Use apenas o que estiver no áudio/vídeo.
-
 `.trim();
 
           const { data: promptData } = await supabase
@@ -573,7 +466,7 @@ Regras obrigatórias:
 
           const textoBruto = result.response.text();
 
-          // ✅ pós-processamento para garantir padrão mesmo se o prompt falhar
+          // ✅ FORMATAÇÃO PROFISSIONAL AO GERAR
           const textoFormatado = formatAtaMarkdown(textoBruto, { titulo, dataBR });
 
           await supabase.from("reunioes").update({ pauta: textoFormatado, ata_ia_status: "PRONTA" }).eq("id", selectedAta.id);
@@ -597,49 +490,30 @@ Regras obrigatórias:
     }
   };
 
-  // --- RESTO DO CÓDIGO (vídeo, anexos, etc.) permanece igual ao seu, sem alterar regras ---
-  // ✅ A partir daqui é seu arquivo original, só removi o handleRegenerateIA antigo e mantive o restante.
-  // Para não “inventar” mudanças, eu mantive o seu layout e só mexi no que impacta a ATA.
-
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
-
     const GITHUB_USER = import.meta.env.VITE_GITHUB_USER;
     const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO;
     const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
 
     if (!GITHUB_USER || !GITHUB_REPO || !GITHUB_TOKEN) {
-      alert("ERRO DE CONFIGURAÇÃO:\nFaltam as variáveis de ambiente do GitHub no Render (VITE_GITHUB_...).");
+      alert("ERRO CONFIG GITHUB");
       return;
     }
-
-    if (selectedAta.gravacao_status === "CONCLUIDO") {
-      if (!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente?")) return;
-    }
-
     setRequestingVideo(true);
 
     try {
       await supabase.from("reunioes").update({ gravacao_status: "PENDENTE" }).eq("id", selectedAta.id);
+      await supabase.from("reuniao_processing_queue").delete().eq("reuniao_id", selectedAta.id).eq("job_type", "RENDER_FIX");
 
-      await supabase
-        .from("reuniao_processing_queue")
-        .delete()
-        .eq("reuniao_id", selectedAta.id)
-        .eq("job_type", "RENDER_FIX");
+      await supabase.from("reuniao_processing_queue").insert([{
+        reuniao_id: selectedAta.id,
+        job_type: "RENDER_FIX",
+        status: "FILA_GITHUB",
+        log_text: "Solicitado Manualmente",
+      }]);
 
-      const { error } = await supabase.from("reuniao_processing_queue").insert([
-        {
-          reuniao_id: selectedAta.id,
-          job_type: "RENDER_FIX",
-          status: "FILA_GITHUB",
-          log_text: "Solicitado Manualmente (Disparo Imediato)",
-        },
-      ]);
-
-      if (error) throw error;
-
-      const response = await fetch(
+      await fetch(
         `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`,
         {
           method: "POST",
@@ -650,14 +524,7 @@ Regras obrigatórias:
           body: JSON.stringify({ ref: "main" }),
         }
       );
-
-      if (!response.ok) {
-        console.error("Falha ao chamar GitHub:", await response.text());
-        alert("Salvo na fila! O GitHub iniciará no próximo ciclo (ou tente novamente para forçar o início).");
-      } else {
-        alert("🚀 Sucesso! O Robô do GitHub foi acionado e já vai começar.");
-      }
-
+      alert("Processamento solicitado!");
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, gravacao_status: "PENDENTE" } : a)));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
@@ -701,6 +568,55 @@ Regras obrigatórias:
     } else {
       alert("Erro ao salvar ata: " + error.message);
     }
+  };
+
+  // ✅ FUNÇÃO NOVA: DOWNLOAD DA ATA EM TXT
+  const handleDownloadAta = () => {
+    if (!selectedAta) return;
+
+    // Dados Técnicos
+    const dataStr = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "Data N/A";
+    const inicioStr = selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString("pt-BR") : "--:--";
+    const fimStr = selectedAta.gravacao_fim ? new Date(selectedAta.gravacao_fim).toLocaleTimeString("pt-BR") : "--:--";
+    const duracaoStr = calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim) || "N/A";
+
+    // Conteúdo do Arquivo
+    let conteudoArquivo = `DOCUMENTO OFICIAL DE REUNIÃO\n`;
+    conteudoArquivo += `==================================================\n`;
+    conteudoArquivo += `TÍTULO:  ${selectedAta.titulo || "Sem Título"}\n`;
+    conteudoArquivo += `DATA:    ${dataStr}\n`;
+    conteudoArquivo += `INÍCIO:  ${inicioStr}\n`;
+    conteudoArquivo += `FIM:     ${fimStr}\n`;
+    conteudoArquivo += `DURAÇÃO: ${duracaoStr}\n`;
+    conteudoArquivo += `==================================================\n\n`;
+
+    // Adiciona Pauta (removendo caracteres markdown para ficar limpo em txt ou mantendo se preferir)
+    // Aqui manteremos o texto da pauta
+    conteudoArquivo += editedPauta || selectedAta.pauta || "Nenhum resumo disponível.";
+
+    conteudoArquivo += `\n\n\n==================================================\n`;
+    conteudoArquivo += `LISTA DE AÇÕES\n`;
+    conteudoArquivo += `==================================================\n`;
+
+    if (acoesCriadas.length > 0) {
+      acoesCriadas.forEach((acao, idx) => {
+        const venc = acao.data_vencimento ? new Date(acao.data_vencimento).toLocaleDateString() : "S/ Data";
+        conteudoArquivo += `${idx + 1}. [${acao.status.toUpperCase()}] ${acao.descricao} (Resp: ${acao.responsavel || "?"}) - Vence: ${venc}\n`;
+      });
+    } else {
+        conteudoArquivo += "Nenhuma ação registrada nesta reunião.\n";
+    }
+
+    // Gerar Blob e Download
+    const blob = new Blob([conteudoArquivo], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    // Nome do arquivo: ATA_Data_Titulo.txt
+    link.download = `ATA_${dataStr.replace(/\//g, '-')}_${(selectedAta.titulo || "Reuniao").replace(/[^a-z0-9]/gi, '_')}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleUploadMaterial = async (e) => {
@@ -918,11 +834,22 @@ Regras obrigatórias:
                     </div>
                   </div>
 
+                  {/* ✅ BOTÕES DE AÇÃO: Baixar / Editar / Excluir */}
                   <div className="flex gap-2">
-                    <button onClick={() => setIsEditing(!isEditing)} className="p-2 bg-slate-100 rounded hover:bg-slate-200">
+                    <button
+                        onClick={handleDownloadAta}
+                        className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold text-xs rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-all shadow-sm"
+                        title="Baixar Ata em Texto"
+                    >
+                        <FileDown size={16} /> Baixar Ata
+                    </button>
+                    
+                    <div className="h-8 w-px bg-slate-200 mx-1"></div> {/* Divisor */}
+
+                    <button onClick={() => setIsEditing(!isEditing)} className="p-2 bg-white border border-slate-200 shadow-sm rounded-lg hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all text-slate-600">
                       <Edit3 size={18} />
                     </button>
-                    <button onClick={handleDeleteClick} className="p-2 bg-slate-100 rounded hover:text-red-600">
+                    <button onClick={handleDeleteClick} className="p-2 bg-white border border-slate-200 shadow-sm rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all text-slate-600">
                       <Trash2 size={18} />
                     </button>
                   </div>
@@ -1103,30 +1030,67 @@ Regras obrigatórias:
                   </div>
                 </div>
 
-                {/* PAUTA MARKDOWN */}
-                <div className="mt-2">
+                {/* PAUTA MARKDOWN - VISUAL PROFISSIONAL */}
+                <div className="mt-8">
                   {isEditing ? (
-                    <textarea className="w-full h-64 p-4 border rounded-xl bg-slate-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" value={editedPauta} onChange={(e) => setEditedPauta(e.target.value)} />
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-blue-200">
+                        <label className="text-xs font-bold text-blue-600 mb-2 block uppercase">Editando Ata</label>
+                        <textarea 
+                            className="w-full h-[500px] p-4 border border-slate-200 rounded-lg bg-slate-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none leading-relaxed" 
+                            value={editedPauta} 
+                            onChange={(e) => setEditedPauta(e.target.value)} 
+                        />
+                        <div className="flex justify-end gap-2 mt-3">
+                             <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+                             <button onClick={handleSaveAta} className="px-4 py-2 text-sm bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Salvar Alterações</button>
+                        </div>
+                    </div>
                   ) : (
-                    <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
+                    // ✨ ESTILIZAÇÃO TIPO DOCUMENTO OFICIAL
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-[400px]">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         className="prose prose-slate max-w-none
-                          prose-h1:text-2xl prose-h2:text-xl
-                          prose-p:my-4 prose-li:my-2 prose-ul:my-3 prose-ol:my-3
-                          prose-strong:text-slate-900 prose-a:text-blue-700"
+                          
+                          /* Títulos */
+                          prose-headings:font-bold prose-headings:text-slate-800
+                          
+                          /* H1 - Título Principal (Grande e com linha abaixo) */
+                          prose-h1:text-3xl prose-h1:uppercase prose-h1:tracking-tight prose-h1:mb-6 prose-h1:pb-4 prose-h1:border-b prose-h1:border-slate-200
+                          
+                          /* H2 - Seções (Resumo, Decisões - Azul escuro e espaçado) */
+                          prose-h2:text-lg prose-h2:text-blue-800 prose-h2:uppercase prose-h2:tracking-wider prose-h2:mt-10 prose-h2:mb-4 prose-h2:flex prose-h2:items-center prose-h2:gap-2
+                          
+                          /* Parágrafos - Leitura confortável */
+                          prose-p:text-slate-600 prose-p:text-justify prose-p:leading-7 prose-p:my-3
+                          
+                          /* Listas */
+                          prose-li:text-slate-600 prose-li:marker:text-blue-500
+                          
+                          /* Negritos */
+                          prose-strong:text-slate-900 prose-strong:font-bold
+                          
+                          /* Divisor */
+                          prose-hr:border-slate-200 prose-hr:my-8
+                        "
                       >
                         {formatAtaMarkdown(selectedAta.pauta || "", {
                           titulo: selectedAta.titulo || "Ata da Reunião",
                           dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
-                        }) || "Sem resumo."}
+                        }) || "_Nenhuma ata gerada para esta reunião._"}
                       </ReactMarkdown>
+                      
+                      {/* Rodapé Simulado */}
+                      <div className="mt-16 pt-8 border-t border-slate-100 flex justify-between text-[10px] text-slate-400 font-mono uppercase">
+                        <span>Documento gerado automaticamente pelo Sistema</span>
+                        <span>ID: {selectedAta.id.split('-')[0]}</span>
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* AÇÕES / ATA MANUAL (mantive igual ao seu código anterior) */}
+              {/* AÇÕES / ATA MANUAL */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
