@@ -31,9 +31,10 @@ import {
   VolumeX,
   StickyNote,
   ShieldAlert,
-  Paperclip, // ✅ Ícone anexo
-  FileText, // ✅ Ícone arquivo
-  Download, // ✅ Ícone download
+  Paperclip,
+  FileText,
+  Download,
+  Video, // ✅ Ícone para o botão de gerar vídeo
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -176,6 +177,7 @@ export default function CentralAtas() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [requestingVideo, setRequestingVideo] = useState(false); // ✅ Estado para botão de vídeo
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
@@ -186,7 +188,7 @@ export default function CentralAtas() {
   const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // ✅ Estado de Upload
+  // Estado de Upload
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
   useEffect(() => {
@@ -205,6 +207,7 @@ export default function CentralAtas() {
       setShowDeleteAuth(false);
       setDelLogin("");
       setDelSenha("");
+      setRequestingVideo(false);
 
       hydrateMediaUrls(selectedAta);
       checkAutoRefresh(selectedAta);
@@ -231,6 +234,7 @@ export default function CentralAtas() {
 
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
+      stGravacao === "PROCESSANDO_RENDER" || // Adicionado status do robô
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
       stGravacao === "PRONTO_PROCESSAR" ||
@@ -267,6 +271,7 @@ export default function CentralAtas() {
 
         const aindaProcessando =
           stGravacao === "PROCESSANDO" ||
+          stGravacao === "PROCESSANDO_RENDER" ||
           stGravacao === "PENDENTE" ||
           stGravacao === "GRAVANDO" ||
           stGravacao === "PRONTO_PROCESSAR" ||
@@ -364,12 +369,65 @@ export default function CentralAtas() {
       const { data: anteriores } = await supabase
         .from("acoes")
         .select("*")
-        .in("reuniao_id", listaIds)
-        .eq("status", "Aberta");
+        .eq("status", "Aberta")
+        .in("reuniao_id", listaIds);
 
       setAcoesAnteriores(anteriores || []);
     } catch (err) {
       setAcoesAnteriores([]);
+    }
+  };
+
+  // ✅ CHAMAR ROBÔ (PROCESSAR VÍDEO)
+  const handleSolicitarVideo = async () => {
+    if (!selectedAta?.id) return;
+    setRequestingVideo(true);
+
+    try {
+      // 1. Coloca na fila do Robô
+      // Usamos Upsert para garantir que se já existir uma falha, ele tenta de novo
+      const { error } = await supabase.from("reuniao_processing_queue").upsert(
+        [
+          {
+            reuniao_id: selectedAta.id,
+            job_type: "RENDER_FIX", // Tipo usado pelo Robô
+            status: "PENDENTE",
+            log_text: "Solicitado via Central de Atas",
+          },
+        ],
+        { onConflict: "reuniao_id, job_type" }
+      );
+
+      if (error) throw error;
+
+      // 2. Acorda o Robô no Render (Ping fire-and-forget)
+      // Usamos no-cors pois só queremos "tocar" a URL, não ler a resposta
+      fetch("https://robo-video.onrender.com/processar", {
+        mode: "no-cors",
+      }).catch(() => {});
+
+      // 3. Feedback Visual Imediato
+      setSelectedAta((prev) => ({
+        ...prev,
+        gravacao_status: "PENDENTE",
+      }));
+      setAtas((prev) =>
+        prev.map((a) =>
+          a.id === selectedAta.id ? { ...a, gravacao_status: "PENDENTE" } : a
+        )
+      );
+
+      // 4. Inicia Polling
+      checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
+
+      alert(
+        "Processamento solicitado com sucesso! O robô está gerando o vídeo completo. Isso pode levar alguns minutos."
+      );
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao solicitar processamento: " + e.message);
+    } finally {
+      setRequestingVideo(false);
     }
   };
 
@@ -518,7 +576,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ UPLOAD DE MATERIAIS
+  // UPLOAD DE MATERIAIS
   const handleUploadMaterial = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -534,14 +592,12 @@ export default function CentralAtas() {
           .substr(2, 5)}.${fileExt}`;
         const filePath = `anexos/${fileName}`;
 
-        // 1. Upload para o Storage
         const { error: uploadErr } = await supabase.storage
-          .from("materiais") // ⚠️ Precisa criar este bucket no Supabase (já enviei o SQL)
+          .from("materiais")
           .upload(filePath, file);
 
         if (uploadErr) throw uploadErr;
 
-        // 2. Pegar URL Pública
         const { data: urlData } = supabase.storage
           .from("materiais")
           .getPublicUrl(filePath);
@@ -550,13 +606,12 @@ export default function CentralAtas() {
           novosMateriais.push({
             name: file.name,
             url: urlData.publicUrl,
-            type: file.type, // 'image/png', 'application/pdf', etc.
+            type: file.type,
             path: filePath,
           });
         }
       }
 
-      // 3. Atualizar Banco
       const listaAtual = selectedAta.materiais || [];
       const listaFinal = [...listaAtual, ...novosMateriais];
 
@@ -567,7 +622,6 @@ export default function CentralAtas() {
 
       if (updateErr) throw updateErr;
 
-      // 4. Atualizar Estado Local
       setSelectedAta((prev) => ({ ...prev, materiais: listaFinal }));
       setAtas((prev) =>
         prev.map((a) =>
@@ -619,7 +673,6 @@ export default function CentralAtas() {
     setDeleting(true);
 
     try {
-      // 1. Validar Usuário na tabela usuarios_aprovadores
       const { data: usuario, error: errAuth } = await supabaseInove
         .from("usuarios_aprovadores")
         .select("id, login, senha, nivel, ativo")
@@ -636,14 +689,12 @@ export default function CentralAtas() {
         return;
       }
 
-      // 2. Validar se é ADMINISTRADOR
       if (usuario.nivel !== "Administrador") {
         alert("Apenas Administradores podem excluir Atas.");
         setDeleting(false);
         return;
       }
 
-      // 3. Excluir a reunião
       const { error: errDel } = await supabase
         .from("reunioes")
         .delete()
@@ -682,6 +733,11 @@ export default function CentralAtas() {
       red: "bg-red-100 text-red-700 border-red-200",
       gray: "bg-slate-100 text-slate-700 border-slate-200",
     }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
+
+  const formatTimeOnly = (timeStr) => {
+    if (!timeStr) return "--:--";
+    return timeStr.substring(0, 5); // Pega apenas HH:mm
+  };
 
   return (
     <Layout>
@@ -777,7 +833,9 @@ export default function CentralAtas() {
               >
                 <h3
                   className={`font-bold text-sm ${
-                    selectedAta?.id === ata.id ? "text-blue-800" : "text-slate-700"
+                    selectedAta?.id === ata.id
+                      ? "text-blue-800"
+                      : "text-slate-700"
                   }`}
                 >
                   {ata.titulo}
@@ -844,6 +902,12 @@ export default function CentralAtas() {
                           ? new Date(selectedAta.data_hora).toLocaleDateString()
                           : "-"}
                       </span>
+                      {/* ✅ NOVA EXIBIÇÃO DE HORÁRIO INÍCIO/FIM */}
+                      <span className="flex items-center gap-1 text-slate-600">
+                        <Clock size={16} />
+                        {formatTimeOnly(selectedAta.horario_inicio)} -{" "}
+                        {formatTimeOnly(selectedAta.horario_fim)}
+                      </span>
                       <span className="flex items-center gap-1">
                         <User size={16} /> {selectedAta.responsavel || "IA"}
                       </span>
@@ -907,22 +971,48 @@ export default function CentralAtas() {
                       </a>
                     </div>
                   ) : (
-                    <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
-                      {String(selectedAta.gravacao_status || "")
-                        .toUpperCase()
-                        .includes("PROCESSANDO") ||
-                      String(selectedAta.gravacao_status || "")
-                        .toUpperCase()
-                        .includes("PENDENTE") ||
-                      String(selectedAta.gravacao_status || "")
-                        .toUpperCase()
-                        .includes("PRONTO_PROCESSAR") ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin text-blue-500" />{" "}
-                          Processando vídeo...
-                        </>
-                      ) : (
-                        "Vídeo não disponível ainda."
+                    <div className="flex flex-col gap-3">
+                      <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
+                        {String(selectedAta.gravacao_status || "")
+                          .toUpperCase()
+                          .includes("PROCESSANDO") ||
+                        String(selectedAta.gravacao_status || "")
+                          .toUpperCase()
+                          .includes("PENDENTE") ||
+                        String(selectedAta.gravacao_status || "")
+                          .toUpperCase()
+                          .includes("PRONTO_PROCESSAR") ? (
+                          <>
+                            <Loader2
+                              size={14}
+                              className="animate-spin text-blue-500"
+                            />{" "}
+                            Processando vídeo (Isso pode levar alguns
+                            minutos)...
+                          </>
+                        ) : (
+                          "Vídeo completo ainda não disponível."
+                        )}
+                      </div>
+
+                      {/* ✅ BOTÃO PARA CHAMAR O ROBÔ */}
+                      {(!selectedAta.gravacao_status ||
+                        selectedAta.gravacao_status === "ERRO" ||
+                        selectedAta.gravacao_status === "PARCIAL") && (
+                        <button
+                          onClick={handleSolicitarVideo}
+                          disabled={requestingVideo}
+                          className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center justify-center gap-2 font-bold text-sm transition-all"
+                        >
+                          {requestingVideo ? (
+                            <Loader2 size={18} className="animate-spin" />
+                          ) : (
+                            <Video size={18} />
+                          )}
+                          {requestingVideo
+                            ? "Solicitando..."
+                            : "Gerar Vídeo Completo (Chamar Robô)"}
+                        </button>
                       )}
                     </div>
                   )}
@@ -966,7 +1056,7 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* ✅ SEÇÃO DE MATERIAIS DE APOIO */}
+                {/* SEÇÃO DE MATERIAIS DE APOIO */}
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
@@ -975,7 +1065,9 @@ export default function CentralAtas() {
 
                     <label
                       className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${
-                        uploadingMaterial ? "opacity-50 pointer-events-none" : ""
+                        uploadingMaterial
+                          ? "opacity-50 pointer-events-none"
+                          : ""
                       }`}
                     >
                       {uploadingMaterial ? (
@@ -995,7 +1087,8 @@ export default function CentralAtas() {
                   </div>
 
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                    {selectedAta.materiais && selectedAta.materiais.length > 0 ? (
+                    {selectedAta.materiais &&
+                    selectedAta.materiais.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         {selectedAta.materiais.map((item, idx) => {
                           const isImage = item.type?.startsWith("image");
@@ -1061,7 +1154,7 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* ✅ RENDER PROFISSIONAL DO MARKDOWN (AJUSTE DE ESPAÇAMENTO) */}
+                {/* PAUTA / ATA MARKDOWN */}
                 <div className="mt-2">
                   {isEditing ? (
                     <textarea
@@ -1086,21 +1179,30 @@ export default function CentralAtas() {
                           prose-a:text-blue-700
                         "
                         components={{
-                          // ✅ Evita títulos gigantes / garante espaçamento consistente
                           h1: ({ node, ...props }) => (
-                            <h1 className="text-2xl font-bold text-slate-900 mt-0 mb-4" {...props} />
+                            <h1
+                              className="text-2xl font-bold text-slate-900 mt-0 mb-4"
+                              {...props}
+                            />
                           ),
                           h2: ({ node, ...props }) => (
-                            <h2 className="text-xl font-bold text-slate-900 mt-6 mb-3" {...props} />
+                            <h2
+                              className="text-xl font-bold text-slate-900 mt-6 mb-3"
+                              {...props}
+                            />
                           ),
                           h3: ({ node, ...props }) => (
-                            <h3 className="text-base font-bold text-slate-900 mt-4 mb-2" {...props} />
+                            <h3
+                              className="text-base font-bold text-slate-900 mt-4 mb-2"
+                              {...props}
+                            />
                           ),
-                          // ✅ Parágrafos com espaçamento profissional
                           p: ({ node, ...props }) => (
-                            <p className="my-2 leading-relaxed text-slate-700" {...props} />
+                            <p
+                              className="my-2 leading-relaxed text-slate-700"
+                              {...props}
+                            />
                           ),
-                          // ✅ Listas “certinhas”
                           ul: ({ node, ...props }) => (
                             <ul className="my-2 pl-6 list-disc" {...props} />
                           ),
@@ -1110,7 +1212,6 @@ export default function CentralAtas() {
                           li: ({ node, ...props }) => (
                             <li className="my-1 leading-relaxed" {...props} />
                           ),
-                          // ✅ “Monoespaçado” só em code inline
                           code: ({ node, inline, ...props }) =>
                             inline ? (
                               <code
@@ -1182,7 +1283,9 @@ export default function CentralAtas() {
                               {acao.data_vencimento && (
                                 <span className="text-[10px] text-red-500 flex items-center gap-1">
                                   <Clock size={10} />{" "}
-                                  {new Date(acao.data_vencimento).toLocaleDateString()}
+                                  {new Date(
+                                    acao.data_vencimento
+                                  ).toLocaleDateString()}
                                 </span>
                               )}
                               {acao.fotos && acao.fotos.length > 0 && (
@@ -1225,7 +1328,9 @@ export default function CentralAtas() {
                             <p className="text-[10px] text-amber-600 mt-1">
                               Origem:{" "}
                               {acao.data_criacao
-                                ? new Date(acao.data_criacao).toLocaleDateString()
+                                ? new Date(
+                                    acao.data_criacao
+                                  ).toLocaleDateString()
                                 : "-"}
                             </p>
                           </div>
