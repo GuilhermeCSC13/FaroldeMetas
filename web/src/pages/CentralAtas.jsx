@@ -89,6 +89,7 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
+      
       if (!Number.isFinite(audioRef.current.duration) && durationDb > 0) {
           // Mantém visualmente
       } else if (Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
@@ -270,10 +271,8 @@ export default function CentralAtas() {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
     
-    // Continua atualizando se estiver PENDENTE ou PROCESSANDO
     const precisaAtualizar =
-      stGravacao === "PROCESSANDO" ||
-      stGravacao === "PROCESSANDO_RENDER" ||
+      stGravacao.includes("PROCESSANDO") ||
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
       stGravacao === "PRONTO_PROCESSAR";
@@ -306,7 +305,7 @@ export default function CentralAtas() {
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
         
         // Se terminou, para o polling
-        if (stGravacao !== "PROCESSANDO" && stGravacao !== "PENDENTE" && stGravacao !== "PROCESSANDO_RENDER" && stGravacao !== "GRAVANDO") {
+        if (!stGravacao.includes("PROCESSANDO") && stGravacao !== "PENDENTE" && stGravacao !== "GRAVANDO") {
             stopPolling();
             hydrateMediaUrls(data);
             carregarDetalhes(data);
@@ -379,44 +378,74 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ BOTÃO REFAZER - SEM CHAMAR RENDER
+  // ✅ LÓGICA TURBO: BANCO + ACORDA GITHUB NA HORA
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     
+    // --- LÊ VARIÁVEIS DE AMBIENTE DO RENDER ---
+    const GITHUB_USER = import.meta.env.VITE_GITHUB_USER; 
+    const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO;
+    const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN; 
+
+    // Validação de segurança
+    if (!GITHUB_USER || !GITHUB_REPO || !GITHUB_TOKEN) {
+        alert("ERRO DE CONFIGURAÇÃO:\nFaltam as variáveis de ambiente do GitHub no Render (VITE_GITHUB_...).");
+        return;
+    }
+
     if(selectedAta.gravacao_status === "CONCLUIDO") {
-        if(!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente pelo Robô do GitHub?")) return;
+        if(!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente?")) return;
     }
 
     setRequestingVideo(true);
 
     try {
-      // 1. UI Status
+      // 1. ATUALIZA O SITE (Visual)
       await supabase.from("reunioes").update({ gravacao_status: "PENDENTE" }).eq("id", selectedAta.id);
 
-      // 2. Limpa Fila
+      // 2. LIMPA FILA ANTIGA (Evita duplicidade)
       await supabase.from("reuniao_processing_queue")
         .delete()
         .eq("reuniao_id", selectedAta.id)
         .eq("job_type", "RENDER_FIX");
 
-      // 3. Insere novo Job para GitHub Actions
+      // 3. INSERE NA FILA (Para o Robô pegar) com status BLINDADO
       const { error } = await supabase.from("reuniao_processing_queue").insert(
         [{
             reuniao_id: selectedAta.id,
             job_type: "RENDER_FIX",
-            status: "PENDENTE", // GitHub pega isso
-            log_text: "Solicitado Manualmente pelo Admin",
+            status: "FILA_GITHUB", // <--- O SEGREDO: O Robô antigo não enxerga isso!
+            log_text: "Solicitado Manualmente (Disparo Imediato)",
         }]
       );
 
       if (error) throw error;
 
-      // 4. Update UI Local
+      // 4. ACORDA O GITHUB ACTIONS (O Pulo do Gato 🐈)
+      const response = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'Authorization': `Bearer ${GITHUB_TOKEN}`,
+        },
+        body: JSON.stringify({
+          ref: 'main' // Assumindo 'main'. Se seu repo usa 'master', mude aqui.
+        })
+      });
+
+      if (!response.ok) {
+        console.error("Falha ao chamar GitHub:", await response.text());
+        // Não damos erro fatal, pois o cron de 10min vai pegar de qualquer jeito
+        alert("Salvo na fila! O GitHub iniciará no próximo ciclo (ou tente novamente para forçar o início).");
+      } else {
+        alert("🚀 Sucesso! O Robô do GitHub foi acionado e já vai começar.");
+      }
+
+      // 5. Update UI Local
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map(a => a.id === selectedAta.id ? {...a, gravacao_status: 'PENDENTE'} : a));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
-      alert("Solicitação enviada para a fila! O Robô do GitHub iniciará no próximo ciclo (aprox. 10min).");
     } catch (e) {
       alert("Erro: " + e.message);
     } finally {
