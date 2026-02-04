@@ -5,11 +5,11 @@ import { supabase, supabaseInove } from "../supabaseClient";
 import { getGeminiFlash } from "../services/gemini";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 
-// ✅ Importação da biblioteca de PDF
-import { jsPDF } from "jspdf";
-
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 
 import {
   Calendar,
@@ -40,7 +40,6 @@ import {
   RefreshCw,
   FileVideo,
   Hourglass,
-  FileDown, // Ícone do PDF
 } from "lucide-react";
 
 // --- HELPER: Formatar Duração Real ---
@@ -63,43 +62,256 @@ const calculateRealDuration = (startStr, endStr) => {
 };
 
 // ==========================
-// ✅ FORMATADOR PROFISSIONAL (Correção de Espaçamento)
+// ✅ FORMATADOR PROFISSIONAL DE ATA (padrão limpo)
 // ==========================
-function formatAtaMarkdown(raw, { titulo, dataBR } = {}) {
-  let t = String(raw || "").replace(/\r\n/g, "\n").trim();
-
-  // 1. Limpeza de saudações de IA
-  t = t.replace(/^(certo|claro|aqui está|olá|bom dia)[^\n]*\n+/gim, "");
+function cleanLeadingSalutation(md) {
+  let t = String(md || "").replace(/\r\n/g, "\n").trim();
+  // remove linhas iniciais tipo "Certo, aqui está a ATA..."
+  t = t.replace(/^(certo|claro)[^\n]*\n+/gim, "");
   t = t.replace(/^(aqui\s+est[aá]\s+a\s+ata[^\n]*)\n+/gim, "");
+  t = t.trim();
+  return t;
+}
 
-  // 2. CORREÇÃO CRÍTICA: Forçar quebras de linha duplas
-  // O Markdown ignora quebra simples. Se houver texto\ntexto, virar texto\n\ntexto
-  t = t.replace(/([^\n])\n([^\n])/g, "$1\n\n$2");
+function ensureSpacing(md) {
+  return String(md || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
-  // 3. Normalização de Seções para H2 (##) com BASTANTE espaço antes
-  const sections = ["Resumo", "Decisões", "Ações", "Pauta", "Participantes", "Pontos de Atenção"];
-  
-  sections.forEach(sec => {
-    // Adiciona 3 quebras de linha antes do título para garantir separação visual
-    const re = new RegExp(`^(\\d+\\.?\\s*)?\\**${sec}\\**\\s*:?\\s*$`, "gim");
-    t = t.replace(re, `\n\n\n## ${sec.toUpperCase()}\n\n`);
-  });
+function boldSectionTitles(md) {
+  // transforma "1. Resumo" -> "## **Resumo**"
+  // transforma "2. Decisões" -> "## **Decisões**"
+  // transforma "3. Ações" -> "## **Ações**"
+  let t = String(md || "");
 
-  // 4. Tratamento do Título Principal (H1)
-  const hasH1 = /^#\s/.test(t);
+  const map = [
+    { re: /^\s*(\d+)\s*[\.\)]\s*Resumo\s*$/gim, rep: "## **Resumo**" },
+    { re: /^\s*(\d+)\s*[\.\)]\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
+    { re: /^\s*(\d+)\s*[\.\)]\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
+
+    // se vier em negrito solto
+    { re: /^\s*\*\*Resumo\*\*\s*$/gim, rep: "## **Resumo**" },
+    { re: /^\s*\*\*Decis(õ|o)es\*\*\s*$/gim, rep: "## **Decisões**" },
+    { re: /^\s*\*\*A(ç|c)oes\*\*\s*$/gim, rep: "## **Ações**" },
+
+    // sem numeração
+    { re: /^\s*Resumo\s*$/gim, rep: "## **Resumo**" },
+    { re: /^\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
+    { re: /^\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
+  ];
+
+  for (const r of map) t = t.replace(r.re, r.rep);
+  return t;
+}
+
+function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
+  let t = String(raw || "").trim();
+
+  const safeTitulo = String(titulo || "").trim();
+  const safeData = String(dataBR || "").trim();
+
+  // cabeçalho padrão:
+  // # Título
+  // **Data:** dd/mm/aaaa
+  // (em markdown, bem renderizado no ReactMarkdown)
   let header = "";
-  
-  if (!hasH1 && titulo) {
-    header += `# ${titulo.toUpperCase()}\n\n`;
-    if (dataBR) header += `**Data da Reunião:** ${dataBR}\n\n`;
-    header += `___\n\n`; // Linha horizontal separadora
+  if (safeTitulo) header += `# ${safeTitulo}\n`;
+  if (safeData) header += `**Data:** ${safeData}\n`;
+
+  // remove duplicação de título/data no começo se houver
+  const lines = t.split("\n");
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const first = (lines[i] || "").trim();
+
+  const startsWithHeading = /^#{1,6}\s+/.test(first);
+  const startsWithDBO = /^d\s*b\s*o\s*[\-–—]/i.test(first) || /^dbo\b/i.test(first);
+
+  if (!startsWithHeading) {
+    // se começa com DBO ou com o título solto, substitui por header
+    if (startsWithDBO) {
+      // corta linhas iniciais até achar a primeira seção
+      let cut = i;
+      let guard = 0;
+      while (cut < lines.length && guard < 10) {
+        const s = (lines[cut] || "").trim();
+        if (!s) {
+          cut++;
+          guard++;
+          continue;
+        }
+        if (/^(##\s*)?\*?\*?(1\.)?\s*Resumo/i.test(s)) break;
+        if (/^(##\s*)?\*?\*?(2\.)?\s*Decis/i.test(s)) break;
+        if (/^(##\s*)?\*?\*?(3\.)?\s*A(ç|c)oes/i.test(s)) break;
+        cut++;
+        guard++;
+      }
+      const rest = lines.slice(cut).join("\n").trim();
+      t = `${header}\n${rest}`.trim();
+    } else {
+      // prefixa se não tem Data cedo
+      const hasEarlyDate = lines.slice(0, Math.min(lines.length, 8)).some((l) => /^\s*data\s*:/i.test(l));
+      if (!hasEarlyDate && (safeTitulo || safeData)) {
+        t = `${header}\n${t}`.trim();
+      }
+    }
   }
 
-  // 5. Negrito em métricas (ex: 10%, R$ 500)
-  t = t.replace(/(\s)(\d{1,3}(?:[.,]\d{1,2})?%)/g, "$1**$2**");
-  t = t.replace(/(\s)(R\$\s?\d+)/g, "$1**$2**");
+  // normaliza "Data:" perdida
+  t = t.replace(/^\s*data\s*:\s*(.+)$/gim, (_, v) => `**Data:** ${String(v).trim()}`);
 
-  return (header + t).trim();
+  return t.trim();
+}
+
+function enforceParagraphBreaks(md) {
+  // ✅ O pulo do gato: Markdown ignora newline simples.
+  // Aqui a gente transforma "linhas comuns" em parágrafos reais,
+  // preservando headings (#/##), listas (-/*/1.), blockquote, etc.
+  const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+
+  const isSpecialLine = (s) => {
+    const t = s.trim();
+    if (!t) return true; // já é separador
+    if (/^#{1,6}\s+/.test(t)) return true; // headings
+    if (/^(\-|\*|\+)\s+/.test(t)) return true; // listas
+    if (/^\d+\.\s+/.test(t)) return true; // listas numeradas
+    if (/^>\s+/.test(t)) return true; // blockquote
+    if (/^---$/.test(t)) return true; // hr
+    if (/^\*\*Data:\*\*/.test(t)) return true; // linha de data
+    return false;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i];
+    const next = lines[i + 1];
+
+    out.push(cur);
+
+    const curTrim = cur.trim();
+    const nextTrim = (next || "").trim();
+
+    if (!curTrim) continue; // já tem quebra
+    if (!nextTrim) continue; // próxima já é quebra
+    if (isSpecialLine(cur) || isSpecialLine(next)) continue;
+
+    // Se são duas linhas "normais", coloca uma linha em branco entre elas
+    out.push("");
+  }
+
+  return ensureSpacing(out.join("\n"));
+}
+
+function negritarPercentuais(md) {
+  let t = String(md || "");
+  // 98% -> **98%**
+  t = t.replace(/(\b\d{1,3})\s*%/g, "**$1%**");
+  // 91,11% já fica coberto pelo acima (pega 91 e sobra ,11%),
+  // então tratamos percentuais com decimal:
+  t = t.replace(/(\b\d{1,3}(?:[.,]\d{1,2})?)\s*%/g, "**$1%**");
+  return t;
+}
+
+function normalizeSectionsContent(md) {
+  // Remove duplicações tipo "Ações" repetido várias vezes no final
+  // e evita acrescentar placeholders se já houver conteúdo.
+  let t = String(md || "").trim();
+
+  // remove repetição de headings iguais seguidas (ex: ## **Ações** ... ## **Ações**)
+  t = t.replace(/(##\s+\*\*A(ç|c)oes\*\*\s*\n)(\s*\n)*(##\s+\*\*A(ç|c)oes\*\*\s*\n)/gim, "$1");
+  t = t.replace(/(##\s+\*\*Decis(õ|o)es\*\*\s*\n)(\s*\n)*(##\s+\*\*Decis(õ|o)es\*\*\s*\n)/gim, "$1");
+  t = t.replace(/(##\s+\*\*Resumo\*\*\s*\n)(\s*\n)*(##\s+\*\*Resumo\*\*\s*\n)/gim, "$1");
+
+  return ensureSpacing(t);
+}
+
+function ensureMinimumSections(md) {
+  let t = String(md || "").trim();
+
+  const hasResumo = /##\s+\*\*Resumo\*\*/i.test(t);
+  const hasDecisoes = /##\s+\*\*Decis(õ|o)es\*\*/i.test(t);
+  const hasAcoes = /##\s+\*\*A(ç|c)oes\*\*/i.test(t);
+
+  if (!hasResumo) t = `${t}\n\n## **Resumo**\n\n—`;
+  if (!hasDecisoes) t = `${t}\n\n## **Decisões**\n\n*Nenhuma decisão foi formalizada nesta reunião.*`;
+  if (!hasAcoes) t = `${t}\n\n## **Ações**\n\n*Nenhuma ação foi definida nesta reunião.*`;
+
+  return ensureSpacing(t);
+}
+
+function bulletizeAcoesSection(md) {
+  // Se a IA vier com "Ações" e linhas soltas, transforma em bullets.
+  let t = String(md || "");
+
+  const split = t.split(/##\s+\*\*A(ç|c)oes\*\*/i);
+  if (split.length < 2) return t;
+
+  const before = split[0];
+  const after = "## **Ações**" + split.slice(1).join("## **Ações**");
+
+  const parts = after.split(/\n/);
+  const out = [];
+  let inAcoes = false;
+
+  for (let i = 0; i < parts.length; i++) {
+    const line = parts[i];
+    const trim = line.trim();
+
+    if (/^##\s+\*\*A(ç|c)oes\*\*/i.test(trim)) {
+      inAcoes = true;
+      out.push(line);
+      continue;
+    }
+    if (inAcoes && /^##\s+\*\*/.test(trim)) {
+      // saiu da seção
+      inAcoes = false;
+      out.push(line);
+      continue;
+    }
+
+    if (inAcoes) {
+      if (!trim) {
+        out.push(line);
+        continue;
+      }
+      if (/^(\-|\*|\+)\s+/.test(trim) || /^\d+\.\s+/.test(trim) || /^_/.test(trim) || /^\*/.test(trim)) {
+        out.push(line);
+        continue;
+      }
+      // linha normal -> vira bullet
+      out.push(`- ${trim}`);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return ensureSpacing(before.trim() + "\n\n" + out.join("\n").trim());
+}
+
+function formatAtaMarkdown(raw, { titulo, dataBR } = {}) {
+  let t = cleanLeadingSalutation(raw);
+
+  t = normalizeTitleAndDate(t, { titulo, dataBR });
+  t = boldSectionTitles(t);
+  t = normalizeSectionsContent(t);
+
+  // ✅ garante espaçamento real (resolve "grudado")
+  t = enforceParagraphBreaks(t);
+
+  // ✅ negrita percentuais/números-chave
+  t = negritarPercentuais(t);
+
+  // ✅ garante seções mínimas sem duplicar
+  t = ensureMinimumSections(t);
+
+  // ✅ organiza Ações em lista quando vier “linhas soltas”
+  t = bulletizeAcoesSection(t);
+
+  return ensureSpacing(t);
 }
 
 // --- COMPONENTE PLAYER DE ÁUDIO ---
@@ -126,6 +338,7 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
     setCurrentTime(audioRef.current.currentTime);
+
     if (Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
       setDuration(audioRef.current.duration);
     }
@@ -164,6 +377,7 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
         className="hidden"
         preload="metadata"
       />
+
       <button
         onClick={togglePlay}
         className="w-10 h-10 flex-shrink-0 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all active:scale-95"
@@ -177,7 +391,9 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
         <div className="absolute w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
           <div className="h-full bg-blue-500 transition-all duration-100 ease-linear" style={{ width: `${Math.min(progressPercent, 100)}%` }} />
         </div>
+
         <input type="range" min="0" max={safeDuration} value={currentTime} onChange={handleSeek} className="absolute w-full h-full opacity-0 cursor-pointer z-10" />
+
         <div
           className="absolute h-4 w-4 bg-white border-2 border-blue-600 rounded-full shadow pointer-events-none transition-all duration-100 ease-linear"
           style={{ left: `calc(${Math.min(progressPercent, 100)}% - 8px)` }}
@@ -201,38 +417,37 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
 };
 
 export default function CentralAtas() {
-  // --- STATES ---
   const [atas, setAtas] = useState([]);
   const [selectedAta, setSelectedAta] = useState(null);
   const [busca, setBusca] = useState("");
+
   const [mediaUrls, setMediaUrls] = useState({ video: null, audio: null });
 
-  // Ações
   const [acoesCriadas, setAcoesCriadas] = useState([]);
   const [acoesAnteriores, setAcoesAnteriores] = useState([]);
-  const [acaoParaModal, setAcaoParaModal] = useState(null);
 
-  // Edição e Pauta
   const [ataManual, setAtaManual] = useState("");
+
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
-  
-  // Controles de Processamento
   const [isGenerating, setIsGenerating] = useState(false);
   const [requestingVideo, setRequestingVideo] = useState(false);
+
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
-  const [pollingRefState, setPollingRefState] = useState(null); // Ref para polling
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
 
-  // Admin e Auth
-  const [isAdmin, setIsAdmin] = useState(false);
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
   const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // Upload
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
+
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const ataExportRef = useRef(null);
 
   const checkUserRole = async () => {
     setIsAdmin(true);
@@ -241,14 +456,16 @@ export default function CentralAtas() {
   useEffect(() => {
     fetchAtas();
     checkUserRole();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
+
       const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
-      
-      // Formata ao carregar a ata
+
+      // ✅ sempre abrir já padronizado
       setEditedPauta(
         formatAtaMarkdown(selectedAta.pauta || "", {
           titulo: selectedAta.titulo || "Ata da Reunião",
@@ -258,18 +475,22 @@ export default function CentralAtas() {
 
       setAtaManual(selectedAta.ata_manual || "");
       setIsEditing(false);
+
       setShowDeleteAuth(false);
       setDelLogin("");
       setDelSenha("");
       setRequestingVideo(false);
       setIsVideoModalOpen(false);
+
       hydrateMediaUrls(selectedAta);
       checkAutoRefresh(selectedAta);
     } else {
       setMediaUrls({ video: null, audio: null });
       stopPolling();
     }
+
     return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAta?.id]);
 
   const stopPolling = () => {
@@ -282,6 +503,7 @@ export default function CentralAtas() {
   const checkAutoRefresh = (ata) => {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
+
     const precisaAtualizar =
       stGravacao.includes("PROCESSANDO") ||
       stGravacao === "PENDENTE" ||
@@ -299,21 +521,29 @@ export default function CentralAtas() {
     if (!id) return;
     try {
       const { data, error } = await supabase.from("reunioes").select("*").eq("id", id).single();
+
       if (!error && data) {
         setSelectedAta((prev) => {
           if (JSON.stringify(prev) !== JSON.stringify(data)) return data;
           return prev;
         });
         setAtas((prev) => prev.map((r) => (r.id === data.id ? { ...r, ...data } : r)));
-        
+
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
+
         if (!stGravacao.includes("PROCESSANDO") && stGravacao !== "PENDENTE" && stGravacao !== "GRAVANDO") {
           stopPolling();
           hydrateMediaUrls(data);
           carregarDetalhes(data);
+
           if (data.pauta) {
             const dataBR = data.data_hora ? new Date(data.data_hora).toLocaleDateString("pt-BR") : "";
-            setEditedPauta(formatAtaMarkdown(data.pauta, { titulo: data.titulo || "Ata da Reunião", dataBR }));
+            setEditedPauta(
+              formatAtaMarkdown(data.pauta, {
+                titulo: data.titulo || "Ata da Reunião",
+                dataBR,
+              })
+            );
           }
         }
       }
@@ -343,7 +573,12 @@ export default function CentralAtas() {
   };
 
   const fetchAtas = async () => {
-    const { data, error } = await supabase.from("reunioes").select("*").eq("status", "Realizada").order("data_hora", { ascending: false });
+    const { data, error } = await supabase
+      .from("reunioes")
+      .select("*")
+      .eq("status", "Realizada")
+      .order("data_hora", { ascending: false });
+
     if (error) {
       console.error(error);
       return;
@@ -353,27 +588,48 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    const { data: criadas } = await supabase.from("acoes").select("*").eq("reuniao_id", ata.id).order("data_criacao", { ascending: false });
+    const { data: criadas } = await supabase
+      .from("acoes")
+      .select("*")
+      .eq("reuniao_id", ata.id)
+      .order("data_criacao", { ascending: false });
     setAcoesCriadas(criadas || []);
+
     try {
       const tituloBase = (ata.titulo || "").trim();
       if (!tituloBase) {
         setAcoesAnteriores([]);
         return;
       }
-      const { data: reunioesAnt } = await supabase.from("reunioes").select("id").eq("titulo", tituloBase).neq("id", ata.id).lt("data_hora", ata.data_hora).order("data_hora", { ascending: false }).limit(20);
+
+      const { data: reunioesAnt } = await supabase
+        .from("reunioes")
+        .select("id")
+        .eq("titulo", tituloBase)
+        .neq("id", ata.id)
+        .lt("data_hora", ata.data_hora)
+        .order("data_hora", { ascending: false })
+        .limit(20);
+
       const listaIds = (reunioesAnt || []).map((r) => r.id);
       if (!listaIds.length) {
         setAcoesAnteriores([]);
         return;
       }
-      const { data: anteriores } = await supabase.from("acoes").select("*").eq("status", "Aberta").in("reuniao_id", listaIds);
+
+      const { data: anteriores } = await supabase
+        .from("acoes")
+        .select("*")
+        .eq("status", "Aberta")
+        .in("reuniao_id", listaIds);
+
       setAcoesAnteriores(anteriores || []);
     } catch (err) {
       setAcoesAnteriores([]);
     }
   };
 
+  // ✅ IA: usa app_prompts SIM (slug="ata_reuniao"). Se não achar, usa fallback.
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -382,6 +638,7 @@ export default function CentralAtas() {
     try {
       const response = await fetch(audioUrl);
       if (!response.ok) throw new Error("Falha ao baixar o arquivo de mídia.");
+
       const blob = await response.blob();
       const reader = new FileReader();
       reader.readAsDataURL(blob);
@@ -390,28 +647,64 @@ export default function CentralAtas() {
         try {
           const base64data = reader.result.split(",")[1];
           const model = getGeminiFlash();
+
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
-          
-          let promptTemplate = `Você é uma secretária executiva experiente. Gere uma **ATA PROFISSIONAL**, clara e legível em **Markdown**. Regras: NÃO escreva "Certo"/"Claro". Use: ## Resumo, ## Decisões, ## Ações. Use parágrafos curtos. Destaque em negrito números-chave.`;
-          
-          const { data: promptData } = await supabase.from("app_prompts").select("prompt_text").eq("slug", "ata_reuniao").maybeSingle();
+
+          // ✅ Fallback PROFISSIONAL (caso app_prompts esteja vazio)
+          let promptTemplate = `
+Você é uma secretária executiva sênior, especializada em reuniões operacionais e táticas.
+
+Utilize EXCLUSIVAMENTE as informações contidas no áudio/vídeo fornecido.
+NÃO invente ou presuma dados.
+
+Gere a ATA em Markdown válido, com linguagem profissional, boa organização e parágrafos bem separados.
+
+Estrutura obrigatória:
+# {titulo}
+**Data:** {data}
+
+## 1. Resumo
+(Detalhado, com parágrafos e subtópicos quando fizer sentido)
+
+## 2. Decisões
+(Se não houver: "Nenhuma decisão foi formalizada nesta reunião.")
+
+## 3. Ações
+(Lista em bullets. Se não houver: "Nenhuma ação foi definida nesta reunião.")
+`.trim();
+
+          const { data: promptData } = await supabase
+            .from("app_prompts")
+            .select("prompt_text")
+            .eq("slug", "ata_reuniao")
+            .maybeSingle();
+
           if (promptData?.prompt_text) promptTemplate = promptData.prompt_text;
-          
+
           const finalPrompt = promptTemplate.replace(/{titulo}/g, titulo).replace(/{data}/g, dataBR);
           const mimeType = blob.type || "video/mp4";
-          
-          const result = await model.generateContent([finalPrompt, { inlineData: { data: base64data, mimeType } }]);
+
+          const result = await model.generateContent([
+            finalPrompt,
+            { inlineData: { data: base64data, mimeType } },
+          ]);
+
           const textoBruto = result.response.text();
+
+          // ✅ pós-processamento: agora separa parágrafos e remove “grudado”
           const textoFormatado = formatAtaMarkdown(textoBruto, { titulo, dataBR });
-          
-          await supabase.from("reunioes").update({ pauta: textoFormatado, ata_ia_status: "PRONTA" }).eq("id", selectedAta.id);
-          
+
+          await supabase
+            .from("reunioes")
+            .update({ pauta: textoFormatado, ata_ia_status: "PRONTA" })
+            .eq("id", selectedAta.id);
+
           setEditedPauta(textoFormatado);
           setIsEditing(false);
           setSelectedAta((prev) => ({ ...prev, pauta: textoFormatado, ata_ia_status: "PRONTA" }));
           setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: textoFormatado, ata_ia_status: "PRONTA" } : a)));
-          
+
           alert("Ata gerada e salva automaticamente!");
         } catch (err) {
           console.error(err);
@@ -426,30 +719,123 @@ export default function CentralAtas() {
     }
   };
 
+  // ✅ PDF: exporta SOMENTE a área da ATA (markdown)
+  const handleGerarPDF = async () => {
+    try {
+      if (!ataExportRef.current) return alert("Área da ATA não encontrada para exportar.");
+      setGeneratingPdf(true);
+
+      // força fundo branco e largura “limpa”
+      const el = ataExportRef.current;
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+
+      // A4 em pt
+      const pdf = new jsPDF("p", "pt", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const margin = 36; // 0.5"
+      const usableWidth = pageWidth - margin * 2;
+      const imgWidth = usableWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let y = margin;
+      let remainingHeight = imgHeight;
+
+      // desenha a primeira “fatia”
+      pdf.addImage(imgData, "PNG", margin, y, imgWidth, imgHeight);
+
+      // paginação: se a imagem exceder a página, recorta “por deslocamento”
+      // técnica: re-imprime a mesma imagem com y negativo nas próximas páginas
+      remainingHeight -= (pageHeight - margin * 2);
+
+      while (remainingHeight > 0) {
+        pdf.addPage();
+        y = margin - (imgHeight - remainingHeight);
+        pdf.addImage(imgData, "PNG", margin, y, imgWidth, imgHeight);
+        remainingHeight -= (pageHeight - margin * 2);
+      }
+
+      const titulo = (selectedAta?.titulo || "Ata").replace(/[\\/:*?"<>|]/g, " ").trim();
+      const dataBR = selectedAta?.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
+      const fileName = `ATA - ${titulo}${dataBR ? " - " + dataBR : ""}.pdf`;
+
+      // ✅ O que não falha: download direto
+      pdf.save(fileName);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao gerar PDF: " + (e?.message || "Falha desconhecida"));
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  // --- RESTO DO CÓDIGO (vídeo, anexos, etc.) permanece igual ao seu ---
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
+
     const GITHUB_USER = import.meta.env.VITE_GITHUB_USER;
     const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO;
     const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
-    
+
     if (!GITHUB_USER || !GITHUB_REPO || !GITHUB_TOKEN) {
-      alert("ERRO CONFIG GITHUB");
+      alert("ERRO DE CONFIGURAÇÃO:\nFaltam as variáveis de ambiente do GitHub no Render (VITE_GITHUB_...).");
       return;
     }
-    
+
+    if (selectedAta.gravacao_status === "CONCLUIDO") {
+      if (!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente?")) return;
+    }
+
     setRequestingVideo(true);
+
     try {
       await supabase.from("reunioes").update({ gravacao_status: "PENDENTE" }).eq("id", selectedAta.id);
-      await supabase.from("reuniao_processing_queue").delete().eq("reuniao_id", selectedAta.id).eq("job_type", "RENDER_FIX");
-      await supabase.from("reuniao_processing_queue").insert([{ reuniao_id: selectedAta.id, job_type: "RENDER_FIX", status: "FILA_GITHUB", log_text: "Solicitado Manualmente" }]);
-      
-      await fetch(`https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`, {
-        method: "POST",
-        headers: { Accept: "application/vnd.github.v3+json", Authorization: `Bearer ${GITHUB_TOKEN}` },
-        body: JSON.stringify({ ref: "main" })
-      });
-      
-      alert("Processamento solicitado!");
+
+      await supabase
+        .from("reuniao_processing_queue")
+        .delete()
+        .eq("reuniao_id", selectedAta.id)
+        .eq("job_type", "RENDER_FIX");
+
+      const { error } = await supabase.from("reuniao_processing_queue").insert([
+        {
+          reuniao_id: selectedAta.id,
+          job_type: "RENDER_FIX",
+          status: "FILA_GITHUB",
+          log_text: "Solicitado Manualmente (Disparo Imediato)",
+        },
+      ]);
+
+      if (error) throw error;
+
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/vnd.github.v3+json",
+            Authorization: `Bearer ${GITHUB_TOKEN}`,
+          },
+          body: JSON.stringify({ ref: "main" }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error("Falha ao chamar GitHub:", await response.text());
+        alert("Salvo na fila! O GitHub iniciará no próximo ciclo (ou tente novamente para forçar o início).");
+      } else {
+        alert("🚀 Sucesso! O Robô do GitHub foi acionado e já vai começar.");
+      }
+
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, gravacao_status: "PENDENTE" } : a)));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
@@ -462,7 +848,19 @@ export default function CentralAtas() {
 
   const handleNovaAcao = async () => {
     if (!selectedAta?.id) return;
-    const { data, error } = await supabase.from("acoes").insert([{ reuniao_id: selectedAta.id, status: "Aberta", descricao: "Nova Ação", data_criacao: new Date().toISOString() }]).select().single();
+    const { data, error } = await supabase
+      .from("acoes")
+      .insert([
+        {
+          reuniao_id: selectedAta.id,
+          status: "Aberta",
+          descricao: "Nova Ação",
+          data_criacao: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single();
+
     if (error) {
       alert("Erro: " + error.message);
       return;
@@ -472,6 +870,7 @@ export default function CentralAtas() {
 
   const handleSaveAta = async () => {
     const { error } = await supabase.from("reunioes").update({ pauta: editedPauta, ata_manual: ataManual }).eq("id", selectedAta.id);
+
     if (!error) {
       setIsEditing(false);
       setSelectedAta((prev) => ({ ...prev, pauta: editedPauta, ata_manual: ataManual }));
@@ -480,108 +879,6 @@ export default function CentralAtas() {
     } else {
       alert("Erro ao salvar ata: " + error.message);
     }
-  };
-
-  // ✅ FUNÇÃO DE DOWNLOAD PDF (NOVA)
-  const handleDownloadPDF = () => {
-    if (!selectedAta) return;
-
-    // Inicializa JS PDF
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4"
-    });
-
-    // Configurações de Fonte
-    doc.setFont("helvetica", "normal");
-    
-    let yPos = 20; // Posição vertical inicial
-    const leftMargin = 15;
-    const rightMargin = 15;
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const maxLineWidth = pageWidth - leftMargin - rightMargin;
-
-    // --- CABEÇALHO ---
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    doc.text((selectedAta.titulo || "ATA DE REUNIÃO").toUpperCase(), leftMargin, yPos);
-    
-    yPos += 10;
-    
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    
-    const dataStr = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "Data N/A";
-    const inicioStr = selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString("pt-BR", {hour: '2-digit', minute:'2-digit'}) : "--:--";
-    const fimStr = selectedAta.gravacao_fim ? new Date(selectedAta.gravacao_fim).toLocaleTimeString("pt-BR", {hour: '2-digit', minute:'2-digit'}) : "--:--";
-    const duracaoStr = calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim) || "N/A";
-
-    doc.text(`DATA: ${dataStr}`, leftMargin, yPos);
-    doc.text(`HORÁRIO: ${inicioStr} às ${fimStr} (${duracaoStr})`, leftMargin + 60, yPos);
-    
-    yPos += 5;
-    doc.setLineWidth(0.5);
-    doc.line(leftMargin, yPos, pageWidth - rightMargin, yPos);
-    yPos += 10;
-
-    // --- CONTEÚDO DA ATA ---
-    // Limpeza de símbolos markdown para o PDF ficar elegante
-    let textoLimpo = editedPauta || selectedAta.pauta || "Sem resumo.";
-    
-    // Remove cabeçalhos de markdown (##, ###) e negritos (**)
-    textoLimpo = textoLimpo.replace(/#{1,6}\s?/g, "").replace(/\*\*/g, ""); 
-    
-    doc.setFontSize(11);
-    
-    // Divide o texto em linhas que cabem na página
-    const linhas = doc.splitTextToSize(textoLimpo, maxLineWidth);
-    
-    // Loop para adicionar linhas e criar páginas novas se precisar
-    linhas.forEach(linha => {
-        if (yPos > 280) { // Fim da página A4 (aprox)
-            doc.addPage();
-            yPos = 20;
-        }
-        
-        // Simples detecção: se a linha for curta e maiúscula, provável título
-        const isTitle = linha.toUpperCase() === linha && linha.length > 3 && linha.length < 50;
-        if(isTitle) {
-             doc.setFont("helvetica", "bold");
-             yPos += 4; // Espaço extra antes de títulos
-        } else {
-             doc.setFont("helvetica", "normal");
-        }
-
-        doc.text(linha, leftMargin, yPos);
-        yPos += 6; // Altura da linha
-    });
-
-    // --- AÇÕES ---
-    if (acoesCriadas.length > 0) {
-        yPos += 10;
-        if (yPos > 270) { doc.addPage(); yPos = 20; }
-        
-        doc.setFont("helvetica", "bold");
-        doc.text("AÇÕES DEFINIDAS", leftMargin, yPos);
-        yPos += 2;
-        doc.line(leftMargin, yPos, leftMargin + 40, yPos);
-        yPos += 8;
-        
-        doc.setFont("helvetica", "normal");
-        acoesCriadas.forEach((acao, idx) => {
-            if (yPos > 280) { doc.addPage(); yPos = 20; }
-            const venc = acao.data_vencimento ? new Date(acao.data_vencimento).toLocaleDateString() : "S/ Data";
-            const textoAcao = `${idx + 1}. [${acao.responsavel || "?"}] ${acao.descricao} (Vence: ${venc})`;
-            
-            const linhasAcao = doc.splitTextToSize(textoAcao, maxLineWidth);
-            doc.text(linhasAcao, leftMargin, yPos);
-            yPos += (linhasAcao.length * 6) + 2;
-        });
-    }
-
-    // Gerar arquivo
-    doc.save(`ATA_${dataStr.replace(/\//g, '-')}_${(selectedAta.titulo || "Reuniao").replace(/[^a-z0-9]/gi, '_')}.pdf`);
   };
 
   const handleUploadMaterial = async (e) => {
@@ -630,7 +927,13 @@ export default function CentralAtas() {
     if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
     setDeleting(true);
     try {
-      const { data: usuario, error: errAuth } = await supabaseInove.from("usuarios_aprovadores").select("*").eq("login", delLogin).eq("senha", delSenha).eq("ativo", true).maybeSingle();
+      const { data: usuario, error: errAuth } = await supabaseInove
+        .from("usuarios_aprovadores")
+        .select("*")
+        .eq("login", delLogin)
+        .eq("senha", delSenha)
+        .eq("ativo", true)
+        .maybeSingle();
       if (errAuth || !usuario || usuario.nivel !== "Administrador") {
         alert("Apenas Administradores.");
         setDeleting(false);
@@ -653,19 +956,23 @@ export default function CentralAtas() {
 
   const getStatusBadge = (status) => {
     const st = String(status || "").toUpperCase();
-    if (st === "CONCLUIDO") return <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded font-bold border border-green-200">PRONTO</span>;
-    if (st.includes("PROCESSANDO") || st.includes("RENDER")) return <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-200 animate-pulse">PROCESSANDO</span>;
-    if (st === "PENDENTE") return <span className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">NA FILA</span>;
+    if (st === "CONCLUIDO")
+      return <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded font-bold border border-green-200">PRONTO</span>;
+    if (st.includes("PROCESSANDO") || st.includes("RENDER"))
+      return <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-200 animate-pulse">PROCESSANDO</span>;
+    if (st === "PENDENTE")
+      return <span className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded font-bold border border-amber-200">NA FILA</span>;
     return <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded font-bold border border-slate-200">AGUARDANDO</span>;
   };
 
   const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
-  const badgeClass = (tone) => ({
-    green: "bg-green-100 text-green-700 border-green-200",
-    blue: "bg-blue-100 text-blue-700 border-blue-200",
-    red: "bg-red-100 text-red-700 border-red-200",
-    gray: "bg-slate-100 text-slate-700 border-slate-200",
-  }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
+  const badgeClass = (tone) =>
+    ({
+      green: "bg-green-100 text-green-700 border-green-200",
+      blue: "bg-blue-100 text-blue-700 border-blue-200",
+      red: "bg-red-100 text-red-700 border-red-200",
+      gray: "bg-slate-100 text-slate-700 border-slate-200",
+    }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
 
   return (
     <Layout>
@@ -678,14 +985,18 @@ export default function CentralAtas() {
               <input className="border p-2 w-full mb-2 rounded" placeholder="Login" value={delLogin} onChange={(e) => setDelLogin(e.target.value)} />
               <input className="border p-2 w-full mb-4 rounded" type="password" placeholder="Senha" value={delSenha} onChange={(e) => setDelSenha(e.target.value)} />
               <div className="flex gap-2">
-                <button onClick={() => setShowDeleteAuth(false)} className="flex-1 p-2 bg-slate-100 rounded">Cancelar</button>
-                <button onClick={confirmarExclusao} className="flex-1 p-2 bg-red-600 text-white rounded">Excluir</button>
+                <button onClick={() => setShowDeleteAuth(false)} className="flex-1 p-2 bg-slate-100 rounded">
+                  Cancelar
+                </button>
+                <button onClick={confirmarExclusao} className="flex-1 p-2 bg-red-600 text-white rounded" disabled={deleting}>
+                  {deleting ? "Excluindo..." : "Excluir"}
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* MODAL CINEMA */}
+        {/* ✅ MODAL CINEMA (VÍDEO) */}
         {isVideoModalOpen && mediaUrls.video && (
           <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-200">
             <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10">
@@ -741,47 +1052,65 @@ export default function CentralAtas() {
                       </span>
                       {getStatusBadge(selectedAta.gravacao_status)}
                     </div>
-                    
+
                     <div className="mb-2 flex items-center gap-2 flex-wrap">
                       {selectedAta.ata_ia_status && (
-                        <span className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA" ? badgeClass("green") : iaStatusNorm.includes("PROCESSANDO") || iaStatusNorm.includes("PENDENTE") ? badgeClass("blue") : iaStatusNorm === "ERRO" ? badgeClass("red") : badgeClass("gray")}`}>
+                        <span
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${
+                            iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
+                              ? badgeClass("green")
+                              : iaStatusNorm.includes("PROCESSANDO") || iaStatusNorm.includes("PENDENTE")
+                              ? badgeClass("blue")
+                              : iaStatusNorm === "ERRO"
+                              ? badgeClass("red")
+                              : badgeClass("gray")
+                          }`}
+                        >
                           {(iaStatusNorm.includes("PROCESSANDO") || iaStatusNorm.includes("PENDENTE")) && <Loader2 size={10} className="animate-spin" />}
                           IA: {selectedAta.ata_ia_status}
                         </span>
                       )}
                     </div>
-                    
+
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">{selectedAta.titulo}</h1>
-                    
+
                     <div className="flex flex-col gap-1 text-sm text-slate-500 mt-3 bg-slate-50 p-3 rounded-lg border border-slate-100">
                       <div className="flex items-center gap-4">
-                        <span className="flex items-center gap-1.5"><Calendar size={16} className="text-slate-400" /> {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleDateString() : "Data N/A"}</span>
-                        <span className="flex items-center gap-1.5 text-slate-700 font-medium"><Clock size={16} className="text-slate-400" /> {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"} {" - "} {selectedAta.gravacao_fim ? new Date(selectedAta.gravacao_fim).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}</span>
+                        <span className="flex items-center gap-1.5">
+                          <Calendar size={16} className="text-slate-400" />{" "}
+                          {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleDateString() : "Data N/A"}
+                        </span>
+                        <span className="flex items-center gap-1.5 text-slate-700 font-medium">
+                          <Clock size={16} className="text-slate-400" />
+                          {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"} {" - "}
+                          {selectedAta.gravacao_fim ? new Date(selectedAta.gravacao_fim).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
+                        </span>
                       </div>
-                      {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (<div className="text-red-600 font-bold text-xs flex items-center gap-1 mt-1"><span>Essa reunião teve duração de:</span><span className="text-sm">{calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}</span></div>)}
+
+                      {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (
+                        <div className="text-red-600 font-bold text-xs flex items-center gap-1 mt-1">
+                          <span>Essa reunião teve duração de:</span>
+                          <span className="text-sm">{calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* AÇÕES NO HEADER */}
                   <div className="flex gap-2">
-                    <button
-                      onClick={handleDownloadPDF}
-                      className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold text-xs rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-all shadow-sm"
-                      title="Baixar Ata em PDF"
-                    >
-                        <FileDown size={16} /> Baixar PDF
+                    <button onClick={handleGerarPDF} disabled={generatingPdf} className="p-2 bg-slate-100 rounded hover:bg-slate-200" title="Gerar PDF da ATA">
+                      {generatingPdf ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                     </button>
-                    <div className="h-8 w-px bg-slate-200 mx-1"></div>
-                    <button onClick={() => setIsEditing(!isEditing)} className="p-2 bg-white border border-slate-200 shadow-sm rounded-lg hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all text-slate-600">
+
+                    <button onClick={() => setIsEditing(!isEditing)} className="p-2 bg-slate-100 rounded hover:bg-slate-200" title="Editar">
                       <Edit3 size={18} />
                     </button>
-                    <button onClick={handleDeleteClick} className="p-2 bg-white border border-slate-200 shadow-sm rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all text-slate-600">
+                    <button onClick={handleDeleteClick} className="p-2 bg-slate-100 rounded hover:text-red-600" title="Excluir">
                       <Trash2 size={18} />
                     </button>
                   </div>
                 </div>
 
-                {/* VÍDEO COMPILADO */}
+                {/* VÍDEO */}
                 <div className="mb-8">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -794,6 +1123,7 @@ export default function CentralAtas() {
                         </div>
                       )}
                     </div>
+
                     {mediaUrls.video && (
                       <button onClick={() => setIsVideoModalOpen(true)} className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-transparent hover:border-blue-100 transition-all">
                         <Maximize2 size={14} /> Modo Cinema
@@ -810,10 +1140,12 @@ export default function CentralAtas() {
                           Seu navegador não conseguiu reproduzir este vídeo.
                         </video>
                       </div>
+
                       <div className="flex justify-between items-center">
                         <a href={mediaUrls.video} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline flex items-center gap-1">
                           <ExternalLink size={12} /> Baixar Vídeo
                         </a>
+
                         {isAdmin && (
                           <button onClick={handleSolicitarVideo} className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-1 border border-transparent hover:border-red-200 px-2 py-1 rounded transition-colors" title="Admin: Refazer processamento">
                             <RefreshCw size={10} /> Refazer Compilação
@@ -826,7 +1158,9 @@ export default function CentralAtas() {
                       <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center gap-3 text-center min-h-[200px]">
                         {String(selectedAta.gravacao_status || "").includes("PROCESSANDO") ? (
                           <>
-                            <div className="p-4 bg-blue-100 rounded-full text-blue-600 animate-spin"><Loader2 size={32} /></div>
+                            <div className="p-4 bg-blue-100 rounded-full text-blue-600 animate-spin">
+                              <Loader2 size={32} />
+                            </div>
                             <div>
                               <h4 className="font-bold text-slate-700">Processando Vídeo...</h4>
                               <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">O GitHub está trabalhando na compressão. Aguarde...</p>
@@ -834,7 +1168,9 @@ export default function CentralAtas() {
                           </>
                         ) : String(selectedAta.gravacao_status || "").includes("PENDENTE") ? (
                           <>
-                            <div className="p-4 bg-amber-100 rounded-full text-amber-600 animate-pulse"><Hourglass size={32} /></div>
+                            <div className="p-4 bg-amber-100 rounded-full text-amber-600 animate-pulse">
+                              <Hourglass size={32} />
+                            </div>
                             <div>
                               <h4 className="font-bold text-slate-700">Na Fila de Espera</h4>
                               <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">Solicitado! O Robô iniciará no próximo ciclo (máx 10min).</p>
@@ -842,21 +1178,29 @@ export default function CentralAtas() {
                           </>
                         ) : (
                           <>
-                            <div className="p-4 bg-slate-200 rounded-full text-slate-400"><Video size={32} /></div>
+                            <div className="p-4 bg-slate-200 rounded-full text-slate-400">
+                              <Video size={32} />
+                            </div>
                             <p>Vídeo completo não disponível.</p>
                           </>
                         )}
                       </div>
-                      {(isAdmin || !selectedAta.gravacao_status || selectedAta.gravacao_status === "ERRO") && !String(selectedAta.gravacao_status || "").includes("PROCESSANDO") && (
-                        <button
-                          onClick={handleSolicitarVideo}
-                          disabled={requestingVideo || selectedAta.gravacao_status === "PENDENTE"}
-                          className={`w-full py-4 rounded-xl shadow-lg flex items-center justify-center gap-3 font-bold text-sm transition-all transform active:scale-[0.98] ${selectedAta.gravacao_status === "PENDENTE" ? "bg-slate-300 text-slate-500 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200"}`}
-                        >
-                          {requestingVideo ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
-                          {requestingVideo ? "Solicitando..." : selectedAta.gravacao_status === "PENDENTE" ? "Aguarde o início..." : "Gerar/Refazer Vídeo Completo"}
-                        </button>
-                      )}
+
+                      {(isAdmin || !selectedAta.gravacao_status || selectedAta.gravacao_status === "ERRO") &&
+                        !String(selectedAta.gravacao_status || "").includes("PROCESSANDO") && (
+                          <button
+                            onClick={handleSolicitarVideo}
+                            disabled={requestingVideo || selectedAta.gravacao_status === "PENDENTE"}
+                            className={`w-full py-4 rounded-xl shadow-lg flex items-center justify-center gap-3 font-bold text-sm transition-all transform active:scale-[0.98] ${
+                              selectedAta.gravacao_status === "PENDENTE"
+                                ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                                : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200"
+                            }`}
+                          >
+                            {requestingVideo ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
+                            {requestingVideo ? "Solicitando..." : selectedAta.gravacao_status === "PENDENTE" ? "Aguarde o início..." : "Gerar/Refazer Vídeo Completo"}
+                          </button>
+                        )}
                     </div>
                   )}
                 </div>
@@ -866,6 +1210,7 @@ export default function CentralAtas() {
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Player de Áudio
                   </div>
+
                   <div className="flex items-center gap-4">
                     <div className="flex-1">
                       {mediaUrls.audio ? (
@@ -874,6 +1219,7 @@ export default function CentralAtas() {
                         <div className="p-3 bg-slate-50 border rounded text-xs text-slate-400">Sem áudio.</div>
                       )}
                     </div>
+
                     {mediaUrls.audio && !isEditing && (
                       <button
                         onClick={handleRegenerateIA}
@@ -893,7 +1239,11 @@ export default function CentralAtas() {
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
                       <Paperclip size={14} /> Materiais e Anexos
                     </div>
-                    <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? "opacity-50 pointer-events-none" : ""}`}>
+                    <label
+                      className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${
+                        uploadingMaterial ? "opacity-50 pointer-events-none" : ""
+                      }`}
+                    >
                       {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                       {uploadingMaterial ? "Enviando..." : "Anexar Material"}
                       <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
@@ -911,13 +1261,19 @@ export default function CentralAtas() {
                                   {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-xs font-bold text-slate-700 truncate" title={item.name}>{item.name}</p>
+                                  <p className="text-xs font-bold text-slate-700 truncate" title={item.name}>
+                                    {item.name}
+                                  </p>
                                   <p className="text-[10px] text-slate-400 uppercase">Anexo</p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-1">
-                                <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"><Download size={16} /></a>
-                                <button onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"><Trash2 size={16} /></button>
+                                <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">
+                                  <Download size={16} />
+                                </a>
+                                <button onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors">
+                                  <Trash2 size={16} />
+                                </button>
                               </div>
                             </div>
                           );
@@ -929,66 +1285,38 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* PAUTA MARKDOWN - VISUAL OTIMIZADO (ESPAÇAMENTO) */}
-                <div className="mt-8">
+                {/* PAUTA MARKDOWN */}
+                <div className="mt-2">
                   {isEditing ? (
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-blue-200">
-                        <label className="text-xs font-bold text-blue-600 mb-2 block uppercase">Editando Ata</label>
-                        <textarea 
-                          className="w-full h-[500px] p-4 border border-slate-200 rounded-lg bg-slate-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none leading-relaxed" 
-                          value={editedPauta} 
-                          onChange={(e) => setEditedPauta(e.target.value)} 
-                        />
-                        <div className="flex justify-end gap-2 mt-3">
-                             <button onClick={() => setIsEditing(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                             <button onClick={handleSaveAta} className="px-4 py-2 text-sm bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Salvar Alterações</button>
-                        </div>
-                    </div>
+                    <textarea
+                      className="w-full h-64 p-4 border rounded-xl bg-slate-50 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={editedPauta}
+                      onChange={(e) => setEditedPauta(e.target.value)}
+                    />
                   ) : (
-                    // ✨ ESTILIZAÇÃO DO DOCUMENTO (Com espaçamentos corrigidos)
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-[400px]">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        className="prose prose-slate max-w-none
-                          
-                          /* Títulos */
-                          prose-headings:font-bold prose-headings:text-slate-800
-                          
-                          /* H1 - Título Principal */
-                          prose-h1:text-3xl prose-h1:uppercase prose-h1:tracking-tight prose-h1:mb-8 prose-h1:pb-4 prose-h1:border-b prose-h1:border-slate-200
-                          
-                          /* H2 - Seções (Agora com mt-12 para forçar afastamento) */
-                          prose-h2:text-lg prose-h2:text-blue-800 prose-h2:uppercase prose-h2:tracking-wider prose-h2:mt-12 prose-h2:mb-6 prose-h2:pb-2 prose-h2:border-b prose-h2:border-slate-100
-                          
-                          /* Parágrafos - Mais espaçados */
-                          prose-p:text-slate-600 prose-p:text-justify prose-p:leading-8 prose-p:mb-6
-                          
-                          /* Listas */
-                          prose-li:text-slate-600 prose-li:marker:text-blue-500 prose-li:mb-2
-                          prose-ul:mb-6 prose-ol:mb-6
-                          
-                          /* Negritos */
-                          prose-strong:text-slate-900 prose-strong:font-bold
-                          
-                          /* Divisor */
-                          prose-hr:border-slate-200 prose-hr:my-10
-                        "
-                      >
-                        {/* Se estiver vazio, exibe mensagem padrão */}
-                        {editedPauta || selectedAta.pauta || "_Nenhuma ata gerada para esta reunião._"}
-                      </ReactMarkdown>
-                      
-                      {/* Rodapé do documento */}
-                      <div className="mt-16 pt-8 border-t border-slate-100 flex justify-between text-[10px] text-slate-400 font-mono uppercase">
-                        <span>Documento gerado automaticamente pelo Sistema</span>
-                        <span>ID: {selectedAta.id.split('-')[0]}</span>
+                    <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
+                      {/* ✅ Este bloco é o que vai para o PDF */}
+                      <div ref={ataExportRef} className="bg-white rounded-xl p-6">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          className="prose prose-slate max-w-none
+                            prose-h1:text-2xl prose-h1:mb-4
+                            prose-h2:text-xl prose-h2:mt-6 prose-h2:mb-2
+                            prose-p:my-4 prose-li:my-2 prose-ul:my-3 prose-ol:my-3
+                            prose-strong:text-slate-900 prose-a:text-blue-700"
+                        >
+                          {formatAtaMarkdown(selectedAta.pauta || "", {
+                            titulo: selectedAta.titulo || "Ata da Reunião",
+                            dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
+                          }) || "Sem resumo."}
+                        </ReactMarkdown>
                       </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* AÇÕES E PENDÊNCIAS */}
+              {/* AÇÕES / ATA MANUAL (mantive igual ao seu código) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
@@ -1063,7 +1391,6 @@ export default function CentralAtas() {
                 </div>
               </div>
 
-              {/* ATA MANUAL */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                 <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                   <StickyNote size={18} /> Ata Manual / Observações
@@ -1085,7 +1412,7 @@ export default function CentralAtas() {
           )}
         </div>
 
-        {/* MODAL DE DETALHES DE AÇÃO */}
+        {/* MODAL */}
         {acaoParaModal && (
           <ModalDetalhesAcao
             aberto={!!acaoParaModal}
