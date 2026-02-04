@@ -221,9 +221,10 @@ function normalizeSectionsContent(md) {
   let t = String(md || "").trim();
 
   // remove repetição de headings iguais seguidas (ex: ## **Ações** ... ## **Ações**)
-  t = t.replace(/(##\s+\*\*A(ç|c)oes\*\*\s*\n)(\s*\n)*(##\s+\*\*A(ç|c)oes\*\*\s*\n)/gim, "$1");
-  t = t.replace(/(##\s+\*\*Decis(õ|o)es\*\*\s*\n)(\s*\n)*(##\s+\*\*Decis(õ|o)es\*\*\s*\n)/gim, "$1");
-  t = t.replace(/(##\s+\*\*Resumo\*\*\s*\n)(\s*\n)*(##\s+\*\*Resumo\*\*\s*\n)/gim, "$1");
+  // Versão melhorada: remove TODAS as duplicatas, não apenas pares
+  t = t.replace(/(##\s+\*\*A(ç|c)oes\*\*\s*\n)(\s*\n)+(##\s+\*\*A(ç|c)oes\*\*\s*\n)+/gim, "$1");
+  t = t.replace(/(##\s+\*\*Decis(õ|o)es\*\*\s*\n)(\s*\n)+(##\s+\*\*Decis(õ|o)es\*\*\s*\n)+/gim, "$1");
+  t = t.replace(/(##\s+\*\*Resumo\*\*\s*\n)(\s*\n)+(##\s+\*\*Resumo\*\*\s*\n)+/gim, "$1");
 
   return ensureSpacing(t);
 }
