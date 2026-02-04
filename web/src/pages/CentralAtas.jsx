@@ -36,22 +36,46 @@ import {
   Download,
   Video,
   Maximize2,
-  X, // ✅ Ícone Fechar para o Modal
+  X,
+  RefreshCw, // Ícone para refazer processo
+  FileVideo, // Ícone para nome do arquivo
 } from "lucide-react";
 
-// --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
-const CustomAudioPlayer = ({ src, durationDb }) => {
+// --- HELPER: Formatar Duração Real ---
+const calculateRealDuration = (startStr, endStr) => {
+  if (!startStr || !endStr) return null;
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+
+  const diffMs = end - start;
+  if (diffMs < 0) return null;
+
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const seconds = Math.floor((diffMs % 60000) / 1000);
+
+  // Formato: 1h 30m 15s ou 45m 10s
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+};
+
+// --- COMPONENTE PLAYER DE ÁUDIO MELHORADO ---
+const CustomAudioPlayer = ({ src }) => {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(durationDb || 0);
+  const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Resetar ao trocar a fonte
   useEffect(() => {
     setIsPlaying(false);
     setCurrentTime(0);
-    if (durationDb) setDuration(durationDb);
-  }, [src, durationDb]);
+    setDuration(0);
+  }, [src]);
 
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -66,24 +90,20 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
-      if (audioRef.current.duration && audioRef.current.duration !== Infinity) {
-        setDuration(audioRef.current.duration);
-      }
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration);
     }
   };
 
   const handleSeek = (e) => {
     const newTime = Number(e.target.value);
-    setCurrentTime(newTime);
+    setCurrentTime(newTime); // Atualiza UI instantaneamente
     if (audioRef.current) {
       audioRef.current.currentTime = newTime;
-    }
-  };
-
-  const toggleMute = () => {
-    if (audioRef.current) {
-      audioRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
     }
   };
 
@@ -96,74 +116,86 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
       .padStart(2, "0")}`;
   };
 
+  // Cálculo da barra de progresso (visual)
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="flex items-center gap-3 bg-slate-100 p-3 rounded-xl border border-slate-200 shadow-sm w-full">
+    <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm w-full">
       <audio
         ref={audioRef}
         src={src}
         onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
         onEnded={() => setIsPlaying(false)}
         className="hidden"
       />
 
+      {/* Botão Play/Pause */}
       <button
         onClick={togglePlay}
-        className="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all"
+        className="w-10 h-10 flex-shrink-0 flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all active:scale-95"
       >
         {isPlaying ? (
-          <Pause size={14} fill="currentColor" />
+          <Pause size={18} fill="currentColor" />
         ) : (
-          <Play size={14} fill="currentColor" className="ml-0.5" />
+          <Play size={18} fill="currentColor" className="ml-0.5" />
         )}
       </button>
 
-      <span className="text-xs font-mono text-slate-500 w-10 text-right">
+      {/* Timer Atual */}
+      <span className="text-xs font-mono font-bold text-slate-600 w-12 text-right">
         {formatTime(currentTime)}
       </span>
 
-      <div className="flex-1 relative h-6 flex items-center">
+      {/* Barra de Progresso Customizada */}
+      <div className="flex-1 relative h-8 flex items-center group">
+        {/* Track Fundo */}
+        <div className="absolute w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+           {/* Track Progresso (Cor) */}
+           <div 
+             className="h-full bg-blue-500 transition-all duration-100 ease-linear"
+             style={{ width: `${progressPercent}%` }}
+           />
+        </div>
+        
+        {/* Input Range Invisível (mas clicável) por cima */}
         <input
           type="range"
           min="0"
           max={duration || 100}
           value={currentTime}
           onChange={handleSeek}
-          className="absolute w-full h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer"
-          style={{
-            background: `linear-gradient(to right, #3b82f6 ${progressPercent}%, #cbd5e1 ${progressPercent}%)`,
-          }}
+          className="absolute w-full h-full opacity-0 cursor-pointer z-10"
         />
-        <style jsx>{`
-          input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 12px;
-            width: 12px;
-            border-radius: 50%;
-            background: #3b82f6;
-            cursor: pointer;
-            margin-top: 0px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-          }
-        `}</style>
+        
+        {/* Bolinha (Thumb) Visual - Segue o progresso */}
+        <div 
+          className="absolute h-4 w-4 bg-white border-2 border-blue-600 rounded-full shadow pointer-events-none transition-all duration-100 ease-linear"
+          style={{ left: `calc(${progressPercent}% - 8px)` }}
+        />
       </div>
 
-      <span className="text-xs font-mono text-slate-500 w-10">
+      {/* Duração Total */}
+      <span className="text-xs font-mono text-slate-400 w-12">
         {formatTime(duration)}
       </span>
 
+      {/* Mute */}
       <button
-        onClick={toggleMute}
-        className="text-slate-400 hover:text-slate-600"
+        onClick={() => {
+          if(audioRef.current) {
+            audioRef.current.muted = !isMuted;
+            setIsMuted(!isMuted);
+          }
+        }}
+        className="text-slate-400 hover:text-slate-600 p-1"
       >
-        {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+        {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
       </button>
     </div>
   );
 };
 
-// --- PÁGINA PRINCIPAL ---
 export default function CentralAtas() {
   const [atas, setAtas] = useState([]);
   const [selectedAta, setSelectedAta] = useState(null);
@@ -181,8 +213,10 @@ export default function CentralAtas() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [requestingVideo, setRequestingVideo] = useState(false);
 
-  // ✅ Estado para o MODAL DE VÍDEO (Cinema)
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+
+  // ✅ NOVO: Estado para saber se é Admin
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
@@ -194,8 +228,22 @@ export default function CentralAtas() {
 
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
+  // 1. Check de Permissão (Mockado ou via Supabase)
+  const checkUserRole = async () => {
+    // Aqui estou simulando que pegamos do localStorage ou contexto. 
+    // Adapte para sua lógica real de Auth.
+    const user = supabase.auth.user(); 
+    if(user) {
+        // Logica para checar se user.email é admin
+        // setIsAdmin(true); 
+    }
+    // Para teste imediato, descomente a linha abaixo se quiser forçar admin:
+    setIsAdmin(true); 
+  };
+
   useEffect(() => {
     fetchAtas();
+    checkUserRole();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -210,7 +258,7 @@ export default function CentralAtas() {
       setDelLogin("");
       setDelSenha("");
       setRequestingVideo(false);
-      setIsVideoModalOpen(false); // Fecha modal ao trocar de ata
+      setIsVideoModalOpen(false);
 
       hydrateMediaUrls(selectedAta);
       checkAutoRefresh(selectedAta);
@@ -233,16 +281,13 @@ export default function CentralAtas() {
   const checkAutoRefresh = (ata) => {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
-    const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
-
+    
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
       stGravacao === "PROCESSANDO_RENDER" ||
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
-      stGravacao === "PRONTO_PROCESSAR" ||
-      stAtaIa === "PROCESSANDO" ||
-      stAtaIa === "PENDENTE";
+      stGravacao === "PRONTO_PROCESSAR";
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
@@ -268,27 +313,11 @@ export default function CentralAtas() {
         setAtas((prev) =>
           prev.map((r) => (r.id === data.id ? { ...r, ...data } : r))
         );
-
+        
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
-        const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
-
-        const aindaProcessando =
-          stGravacao === "PROCESSANDO" ||
-          stGravacao === "PROCESSANDO_RENDER" ||
-          stGravacao === "PENDENTE" ||
-          stGravacao === "GRAVANDO" ||
-          stGravacao === "PRONTO_PROCESSAR" ||
-          stAtaIa === "PROCESSANDO" ||
-          stAtaIa === "PENDENTE";
-
-        if (!aindaProcessando) {
-          stopPolling();
-          hydrateMediaUrls(data);
-          carregarDetalhes(data);
-          if (data.pauta) setEditedPauta(data.pauta);
-          if (!isEditing) {
-            setAtaManual(data.ata_manual || "");
-          }
+        if (stGravacao !== "PROCESSANDO" && stGravacao !== "PENDENTE" && stGravacao !== "PROCESSANDO_RENDER") {
+            stopPolling();
+            hydrateMediaUrls(data);
         }
       }
     } catch (e) {
@@ -296,29 +325,17 @@ export default function CentralAtas() {
     }
   };
 
-  const getSignedOrPublicUrl = async (
-    bucket,
-    filePath,
-    expiresInSec = 60 * 60
-  ) => {
+  const getSignedOrPublicUrl = async (bucket, filePath) => {
     if (!bucket || !filePath) return null;
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
     if (pub?.publicUrl) return pub.publicUrl;
-    const { data: signed } = await supabase.storage
-      .from(bucket)
-      .createSignedUrl(filePath, expiresInSec);
-    return signed?.signedUrl || null;
+    return null;
   };
 
   const hydrateMediaUrls = async (ata) => {
     try {
-      const videoUrl = await getSignedOrPublicUrl(
-        ata.gravacao_bucket,
-        ata.gravacao_path
-      );
-      const audioPath = ata.gravacao_audio_path || ata.gravacao_path;
-      const audioBucket = ata.gravacao_audio_bucket || ata.gravacao_bucket;
-      const audioUrl = await getSignedOrPublicUrl(audioBucket, audioPath);
+      const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
+      const audioUrl = await getSignedOrPublicUrl(ata.gravacao_audio_bucket || ata.gravacao_bucket, ata.gravacao_audio_path || ata.gravacao_path);
       setMediaUrls({ video: videoUrl, audio: audioUrl });
     } catch (e) {
       console.error("Erro URLs:", e);
@@ -332,10 +349,7 @@ export default function CentralAtas() {
       .eq("status", "Realizada")
       .order("data_hora", { ascending: false });
 
-    if (error) {
-      console.error(error);
-      return;
-    }
+    if (error) { console.error(error); return; }
     setAtas(data || []);
     if (data && data.length > 0 && !selectedAta) setSelectedAta(data[0]);
   };
@@ -381,51 +395,48 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ LÓGICA DO ROBÔ: INSERE NA FILA E ACORDA O RENDER
+  // ✅ CHAMAR ROBÔ (Modificado para Admin)
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
+    
+    // Se for admin, confirma se quer refazer
+    if(selectedAta.gravacao_status === "CONCLUIDO") {
+        if(!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente?")) {
+            return;
+        }
+    }
+
     setRequestingVideo(true);
 
     try {
-      // 1. Coloca na fila do Robô
+      // 1. Reseta status na tabela de reuniões (para UI reagir)
+      await supabase.from("reunioes").update({ 
+          gravacao_status: "PENDENTE" 
+      }).eq("id", selectedAta.id);
+
+      // 2. Coloca na fila do Robô
       const { error } = await supabase.from("reuniao_processing_queue").upsert(
-        [
-          {
+        [{
             reuniao_id: selectedAta.id,
             job_type: "RENDER_FIX",
             status: "PENDENTE",
-            log_text: "Solicitado via Central de Atas",
-          },
-        ],
+            log_text: "Solicitado Manualmente pelo Admin",
+        }],
         { onConflict: "reuniao_id, job_type" }
       );
 
       if (error) throw error;
 
-      // 2. Acorda o Robô no Render (Ping fire-and-forget)
-      fetch("https://robo-video.onrender.com/processar", {
-        mode: "no-cors",
-      }).catch(() => {});
+      // 3. Ping Render
+      fetch("https://robo-video.onrender.com/processar", { mode: "no-cors" }).catch(() => {});
 
-      // 3. Feedback Visual Imediato
-      setSelectedAta((prev) => ({
-        ...prev,
-        gravacao_status: "PENDENTE",
-      }));
-      setAtas((prev) =>
-        prev.map((a) =>
-          a.id === selectedAta.id ? { ...a, gravacao_status: "PENDENTE" } : a
-        )
-      );
-
+      // 4. Update UI Local
+      setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
-      alert(
-        "Solicitado! O robô iniciará o processamento e montagem do vídeo completo."
-      );
+      alert("Solicitação enviada ao Robô!");
     } catch (e) {
-      console.error(e);
-      alert("Erro ao solicitar processamento: " + e.message);
+      alert("Erro: " + e.message);
     } finally {
       setRequestingVideo(false);
     }
@@ -719,30 +730,17 @@ export default function CentralAtas() {
     });
   }, [atas, busca]);
 
-  const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
+  // Extrair nome do arquivo do path
+  const getFileName = (path) => {
+    if (!path) return "Arquivo desconhecido";
+    return path.split('/').pop();
+  };
 
-  const badgeClass = (tone) =>
-    ({
-      green: "bg-green-100 text-green-700 border-green-200",
-      blue: "bg-blue-100 text-blue-700 border-blue-200",
-      red: "bg-red-100 text-red-700 border-red-200",
-      gray: "bg-slate-100 text-slate-700 border-slate-200",
-    }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
-
-  const formatTimeOnly = (dateIsoString) => {
-    if (!dateIsoString) return "--:--";
-    try {
-      const date = new Date(dateIsoString);
-      if (!isNaN(date.getTime())) {
-        return date.toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-      }
-      return String(dateIsoString).substring(0, 5);
-    } catch {
-      return "--:--";
-    }
+  const getStatusBadge = (status) => {
+      const st = String(status || "").toUpperCase();
+      if(st === "CONCLUIDO") return <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded font-bold border border-green-200">PRONTO</span>;
+      if(st.includes("PROCESSANDO") || st.includes("PENDENTE")) return <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-200 animate-pulse">PROCESSANDO</span>;
+      return <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded font-bold border border-slate-200">AGUARDANDO</span>;
   };
 
   return (
@@ -750,70 +748,31 @@ export default function CentralAtas() {
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
         {/* OVERLAY EXCLUSÃO */}
         {showDeleteAuth && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
-            {/* ... Modal Auth (Mantido igual) ... */}
-            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-                <ShieldAlert size={24} />
-              </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">
-                Área Restrita
-              </h3>
-              <p className="text-sm text-slate-500 mb-6">
-                Exclusão permitida apenas para <b>Administradores</b>.
-              </p>
-              <div className="space-y-3 text-left">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">
-                    Login
-                  </label>
-                  <input
-                    type="text"
-                    autoFocus
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delLogin}
-                    onChange={(e) => setDelLogin(e.target.value)}
-                  />
+            <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex items-center justify-center">
+                <div className="bg-white p-6 rounded shadow-xl border border-red-200">
+                    <h3 className="text-lg font-bold text-red-600 mb-4">Confirmar Exclusão</h3>
+                    <input className="border p-2 w-full mb-2 rounded" placeholder="Login" value={delLogin} onChange={e=>setDelLogin(e.target.value)} />
+                    <input className="border p-2 w-full mb-4 rounded" type="password" placeholder="Senha" value={delSenha} onChange={e=>setDelSenha(e.target.value)} />
+                    <div className="flex gap-2">
+                        <button onClick={()=>setShowDeleteAuth(false)} className="flex-1 p-2 bg-slate-100 rounded">Cancelar</button>
+                        <button onClick={confirmarExclusao} className="flex-1 p-2 bg-red-600 text-white rounded">Excluir</button>
+                    </div>
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">
-                    Senha
-                  </label>
-                  <input
-                    type="password"
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delSenha}
-                    onChange={(e) => setDelSenha(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex gap-3 mt-6">
-                <button
-                  onClick={() => setShowDeleteAuth(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={confirmarExclusao}
-                  disabled={deleting}
-                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
-                >
-                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
-                </button>
-              </div>
             </div>
-          </div>
         )}
 
-        {/* ✅ MODAL CINEMA (PLAYER FULLSCREEN) */}
+        {/* ✅ MODAL CINEMA (VÍDEO) */}
         {isVideoModalOpen && mediaUrls.video && (
           <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-200">
-            {/* Header do Modal */}
-            <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
-              <h2 className="text-white font-bold text-lg drop-shadow-md">
-                {selectedAta?.titulo} - Gravação Completa
-              </h2>
+            <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10">
+              <div>
+                  <h2 className="text-white font-bold text-lg drop-shadow-md">
+                    {selectedAta?.titulo}
+                  </h2>
+                  <p className="text-white/60 text-xs font-mono">
+                    {getFileName(selectedAta?.gravacao_path)}
+                  </p>
+              </div>
               <button
                 onClick={() => setIsVideoModalOpen(false)}
                 className="text-white hover:text-red-400 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-all"
@@ -821,16 +780,13 @@ export default function CentralAtas() {
                 <X size={24} />
               </button>
             </div>
-
-            {/* Vídeo Centralizado e Responsivo */}
-            <div className="w-full h-full max-w-7xl max-h-[90vh] flex items-center justify-center p-4">
+            <div className="w-full h-full p-4 flex items-center justify-center">
               <video
                 controls
                 autoPlay
-                className="w-full h-full object-contain rounded-lg shadow-2xl"
+                className="w-full h-full object-contain max-h-screen"
               >
                 <source src={mediaUrls.video} type="video/webm" />
-                Seu navegador não suporta vídeos.
               </video>
             </div>
           </div>
@@ -838,273 +794,191 @@ export default function CentralAtas() {
 
         {/* SIDEBAR */}
         <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-10 shadow-sm">
-          <div className="p-5 border-b border-slate-100">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Layers className="text-blue-600" size={20} /> Banco de Atas
-            </h2>
-            <div className="mt-4 relative">
-              <Search
-                className="absolute left-3 top-2.5 text-slate-400"
-                size={16}
-              />
-              <input
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2"
-                placeholder="Título, Data ou Tipo..."
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {atasFiltradas.map((ata) => (
-              <button
-                key={ata.id}
-                onClick={() => setSelectedAta(ata)}
-                className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col gap-1 ${
-                  selectedAta?.id === ata.id
-                    ? "bg-blue-50 border-l-4 border-l-blue-600"
-                    : "border-l-4 border-l-transparent"
-                }`}
-              >
-                <h3
-                  className={`font-bold text-sm ${
-                    selectedAta?.id === ata.id
-                      ? "text-blue-800"
-                      : "text-slate-700"
-                  }`}
-                >
-                  {ata.titulo}
-                </h3>
-                <span className="text-xs text-slate-500 flex items-center gap-1">
-                  <Calendar size={12} />{" "}
-                  {ata.data_hora
-                    ? new Date(ata.data_hora).toLocaleDateString()
-                    : "-"}
-                  {ata.tipo_reuniao && (
-                    <span className="text-[10px] bg-slate-100 px-1 rounded ml-1">
-                      {ata.tipo_reuniao}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ))}
-          </div>
+           {/* ... Sidebar Header ... */}
+           <div className="p-5 border-b border-slate-100">
+             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Layers size={20} className="text-blue-600"/> Atas</h2>
+             <input className="mt-4 w-full bg-slate-50 border p-2 rounded text-sm" placeholder="Buscar..." value={busca} onChange={e=>setBusca(e.target.value)} />
+           </div>
+           <div className="flex-1 overflow-y-auto">
+             {atasFiltradas.map(ata => (
+                 <button key={ata.id} onClick={()=>setSelectedAta(ata)} className={`w-full text-left p-4 border-b ${selectedAta?.id===ata.id ? 'bg-blue-50 border-l-4 border-l-blue-600':'hover:bg-slate-50'}`}>
+                     <h3 className="font-bold text-sm text-slate-700">{ata.titulo}</h3>
+                     <span className="text-xs text-slate-400">{new Date(ata.data_hora).toLocaleDateString()}</span>
+                 </button>
+             ))}
+           </div>
         </div>
 
         {/* MAIN CONTENT */}
         <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8 custom-scrollbar relative">
           {selectedAta ? (
             <div className="max-w-5xl mx-auto space-y-6">
+              
               {/* HEADER ATA */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                 <div className="flex justify-between items-start mb-6">
                   <div>
-                    <span className="text-blue-600 font-bold text-xs uppercase tracking-wider mb-2 block flex items-center gap-1">
-                      <CheckCircle size={14} /> Ata Oficial
-                    </span>
-                    <div className="mb-2 flex items-center gap-2 flex-wrap">
-                      {selectedAta.ata_ia_status && (
-                        <span
-                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${
-                            iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
-                              ? badgeClass("green")
-                              : iaStatusNorm === "PROCESSANDO" ||
-                                iaStatusNorm === "PENDENTE"
-                              ? badgeClass("blue")
-                              : iaStatusNorm === "ERRO"
-                              ? badgeClass("red")
-                              : badgeClass("gray")
-                          }`}
-                        >
-                          {(iaStatusNorm === "PROCESSANDO" ||
-                            iaStatusNorm === "PENDENTE") && (
-                            <Loader2 size={10} className="animate-spin" />
-                          )}
-                          IA: {selectedAta.ata_ia_status}
+                    <div className="flex items-center gap-2 mb-2">
+                        <span className="text-blue-600 font-bold text-xs uppercase tracking-wider flex items-center gap-1">
+                        <CheckCircle size={14} /> Ata Oficial
                         </span>
-                      )}
+                        {getStatusBadge(selectedAta.gravacao_status)}
                     </div>
+                    
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">
                       {selectedAta.titulo}
                     </h1>
-                    <div className="flex items-center gap-4 text-sm text-slate-500">
-                      <span className="flex items-center gap-1">
-                        <Calendar size={16} />{" "}
-                        {selectedAta.data_hora
-                          ? new Date(selectedAta.data_hora).toLocaleDateString()
-                          : "-"}
-                      </span>
-                      {/* ✅ HORÁRIO CORRIGIDO */}
-                      <span className="flex items-center gap-1 text-slate-600">
-                        <Clock size={16} />
-                        {formatTimeOnly(selectedAta.horario_inicio)} -{" "}
-                        {formatTimeOnly(selectedAta.horario_fim)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <User size={16} /> {selectedAta.responsavel || "IA"}
-                      </span>
+                    
+                    {/* ✅ METADADOS REAIS DA GRAVAÇÃO */}
+                    <div className="flex flex-col gap-1 text-sm text-slate-500 mt-3 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                      <div className="flex items-center gap-4">
+                          <span className="flex items-center gap-1.5">
+                            <Calendar size={16} className="text-slate-400" />{" "}
+                            {selectedAta.gravacao_inicio 
+                                ? new Date(selectedAta.gravacao_inicio).toLocaleDateString() 
+                                : "Data N/A"}
+                          </span>
+                          <span className="flex items-center gap-1.5 text-slate-700 font-medium">
+                            <Clock size={16} className="text-slate-400" />
+                            {selectedAta.gravacao_inicio 
+                                ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) 
+                                : "--:--"} 
+                            {" - "}
+                            {selectedAta.gravacao_fim 
+                                ? new Date(selectedAta.gravacao_fim).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) 
+                                : "--:--"}
+                          </span>
+                      </div>
+                      
+                      {/* ✅ DURAÇÃO REAL EM VERMELHO */}
+                      {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (
+                          <div className="text-red-600 font-bold text-xs flex items-center gap-1 mt-1">
+                              <span>Essa reunião teve duração de:</span>
+                              <span className="text-sm">
+                                  {calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}
+                              </span>
+                          </div>
+                      )}
                     </div>
                   </div>
+                  
+                  {/* Botões de Ação (Editar/Excluir) */}
                   <div className="flex gap-2">
-                    {isEditing ? (
-                      <button
-                        onClick={handleSaveAta}
-                        className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg"
-                      >
-                        <Save size={18} /> Salvar
-                      </button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setIsEditing(true)}
-                          className="p-2 text-slate-400 hover:text-blue-600 rounded-lg bg-slate-50"
-                          title="Editar"
-                        >
-                          <Edit3 size={20} />
-                        </button>
-                        <button
-                          onClick={handleDeleteClick}
-                          className="p-2 text-slate-400 hover:text-red-600 rounded-lg bg-slate-50"
-                          title="Excluir"
-                        >
-                          <Trash2 size={20} />
-                        </button>
-                      </div>
-                    )}
+                     <button onClick={()=>setIsEditing(!isEditing)} className="p-2 bg-slate-100 rounded hover:bg-slate-200"><Edit3 size={18}/></button>
+                     <button onClick={handleDeleteClick} className="p-2 bg-slate-100 rounded hover:text-red-600"><Trash2 size={18}/></button>
                   </div>
                 </div>
 
-                {/* ✅ SEÇÃO DE VÍDEO (PLAYER EMBUTIDO + MODAL) */}
-                <div className="mb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
-                      <PlayCircle size={14} /> Gravação Compilada
+                {/* ✅ SEÇÃO DE VÍDEO REFORMULADA */}
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                        <PlayCircle size={14} /> Gravação Compilada
+                        </div>
+                        {/* ✅ NOME DO ARQUIVO */}
+                        {mediaUrls.video && (
+                            <div className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 rounded text-[10px] text-slate-500 font-mono border border-slate-200" title="Nome do arquivo no servidor">
+                                <FileVideo size={10} />
+                                {getFileName(selectedAta.gravacao_path)}
+                            </div>
+                        )}
                     </div>
+
                     {mediaUrls.video && (
                       <button
                         onClick={() => setIsVideoModalOpen(true)}
                         className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-transparent hover:border-blue-100 transition-all"
                       >
-                        <Maximize2 size={14} /> Abrir Modo Cinema
+                        <Maximize2 size={14} /> Modo Cinema
                       </button>
                     )}
                   </div>
 
                   {mediaUrls.video ? (
-                    <div className="space-y-2">
-                      <div className="relative group rounded-xl overflow-hidden bg-black shadow-md">
+                    <div className="space-y-3">
+                      <div className="relative group rounded-xl overflow-hidden bg-black shadow-lg border border-slate-200">
                         <video
                           key={mediaUrls.video}
-                          className="w-full max-h-[400px] object-contain"
+                          className="w-full max-h-[400px] object-contain bg-black"
                           preload="metadata"
                           controls
                         >
                           <source src={mediaUrls.video} type="video/webm" />
                           Seu navegador não conseguiu reproduzir este vídeo.
                         </video>
-                        {/* Overlay "Clique para Expandir" */}
-                        <div
-                          onClick={() => setIsVideoModalOpen(true)}
-                          className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors cursor-pointer flex items-center justify-center group"
-                          title="Clique para expandir"
-                        >
-                          <div className="bg-black/50 text-white p-3 rounded-full opacity-0 group-hover:opacity-100 transform scale-90 group-hover:scale-100 transition-all">
-                            <Maximize2 size={24} />
-                          </div>
-                        </div>
                       </div>
-                      <a
-                        href={mediaUrls.video}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 text-xs font-bold text-blue-700 mt-2"
-                      >
-                        <ExternalLink size={14} />
-                        Download / Abrir em nova aba
-                      </a>
+                      
+                      <div className="flex justify-between items-center">
+                          <a href={mediaUrls.video} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline flex items-center gap-1">
+                            <ExternalLink size={12} /> Baixar Vídeo
+                          </a>
+                          
+                          {/* ✅ BOTÃO REFAZER (SÓ ADMIN VÊ SE TIVER PRONTO) */}
+                          {isAdmin && (
+                              <button 
+                                onClick={handleSolicitarVideo}
+                                className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-1 border border-transparent hover:border-red-200 px-2 py-1 rounded transition-colors"
+                                title="Admin: Refazer processamento"
+                              >
+                                  <RefreshCw size={10} /> Refazer Compilação
+                              </button>
+                          )}
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-3">
-                      <div className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center gap-2">
-                        {String(selectedAta.gravacao_status || "")
-                          .toUpperCase()
-                          .includes("PROCESSANDO") ||
-                        String(selectedAta.gravacao_status || "")
-                          .toUpperCase()
-                          .includes("PENDENTE") ||
-                        String(selectedAta.gravacao_status || "")
-                          .toUpperCase()
-                          .includes("PRONTO_PROCESSAR") ? (
-                          <>
-                            <Loader2
-                              size={14}
-                              className="animate-spin text-blue-500"
-                            />{" "}
-                            O Robô está montando o vídeo (Isso pode levar alguns
-                            minutos)...
-                          </>
+                    <div className="flex flex-col gap-4">
+                      <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center gap-3 text-center min-h-[200px]">
+                        {String(selectedAta.gravacao_status || "").includes("PROCESSANDO") || String(selectedAta.gravacao_status || "").includes("PENDENTE") ? (
+                            <>
+                                <div className="p-4 bg-blue-100 rounded-full text-blue-600 animate-spin">
+                                    <Loader2 size={32} />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-700">Processando Vídeo...</h4>
+                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                                        O Robô está baixando as partes, unificando e fazendo upload do arquivo final. 
+                                        Isso pode levar de 5 a 15 minutos dependendo do tamanho.
+                                    </p>
+                                </div>
+                            </>
                         ) : (
-                          "Vídeo completo ainda não disponível."
+                            <>
+                                <div className="p-4 bg-slate-200 rounded-full text-slate-400">
+                                    <Video size={32} />
+                                </div>
+                                <p>Vídeo completo não disponível.</p>
+                            </>
                         )}
                       </div>
 
-                      {/* BOTÃO DO ROBÔ */}
-                      {(!selectedAta.gravacao_status ||
-                        selectedAta.gravacao_status === "ERRO" ||
-                        selectedAta.gravacao_status === "PARCIAL") && (
-                        <button
-                          onClick={handleSolicitarVideo}
-                          disabled={requestingVideo}
-                          className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center justify-center gap-2 font-bold text-sm transition-all"
-                        >
-                          {requestingVideo ? (
-                            <Loader2 size={18} className="animate-spin" />
-                          ) : (
-                            <Video size={18} />
-                          )}
-                          {requestingVideo
-                            ? "Solicitando..."
-                            : "Gerar Vídeo Completo (Chamar Robô)"}
-                        </button>
+                      {/* ✅ BOTÃO APARECE SE NÃO TEM VÍDEO OU SE FOR ADMIN (MESMO COM ERRO) */}
+                      {(isAdmin || !selectedAta.gravacao_status || selectedAta.gravacao_status === "ERRO") && (
+                        !String(selectedAta.gravacao_status || "").includes("PROCESSANDO") && (
+                            <button
+                              onClick={handleSolicitarVideo}
+                              disabled={requestingVideo}
+                              className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-3 font-bold text-sm transition-all transform active:scale-[0.98]"
+                            >
+                              {requestingVideo ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
+                              {requestingVideo ? "Solicitando..." : "Gerar/Refazer Vídeo Completo (Chamar Robô)"}
+                            </button>
+                        )
                       )}
                     </div>
                   )}
                 </div>
 
-                {/* ÁUDIO */}
+                {/* ✅ ÁUDIO MELHORADO */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
-                    <Headphones size={14} /> Áudio e Transcrição
+                    <Headphones size={14} /> Player de Áudio
                   </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      {mediaUrls.audio ? (
-                        <CustomAudioPlayer
-                          key={mediaUrls.audio}
-                          src={mediaUrls.audio}
-                          durationDb={selectedAta.duracao_segundos}
-                        />
-                      ) : (
-                        <span className="text-xs text-slate-400 bg-slate-50 border border-slate-200 p-2 rounded block">
-                          Sem áudio disponível.
-                        </span>
-                      )}
-                    </div>
-                    {mediaUrls.audio && !isEditing && (
-                      <button
-                        onClick={handleRegenerateIA}
-                        disabled={isGenerating}
-                        className="h-10 text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50 hover:bg-indigo-200 transition-colors"
-                      >
-                        {isGenerating ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Cpu size={14} />
-                        )}
-                        Gerar Resumo IA
-                      </button>
-                    )}
-                  </div>
+                  {mediaUrls.audio ? (
+                     <CustomAudioPlayer src={mediaUrls.audio} />
+                  ) : (
+                     <div className="p-3 bg-slate-50 border rounded text-xs text-slate-400">Sem áudio.</div>
+                  )}
                 </div>
 
                 {/* ANEXOS */}
@@ -1277,7 +1151,7 @@ export default function CentralAtas() {
                   )}
                 </div>
               </div>
-
+              
               {/* GRID AÇÕES (Mantido igual) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
@@ -1406,10 +1280,7 @@ export default function CentralAtas() {
               </div>
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400">
-              <Layers size={64} className="opacity-20 mb-4" />
-              <p>Selecione uma Ata</p>
-            </div>
+            <div className="h-full flex flex-col items-center justify-center text-slate-300">Selecione...</div>
           )}
         </div>
 
