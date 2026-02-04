@@ -215,7 +215,7 @@ export default function CentralAtas() {
 
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 
-  // ✅ NOVO: Estado para saber se é Admin
+  // ✅ Estado para saber se é Admin
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
@@ -228,16 +228,9 @@ export default function CentralAtas() {
 
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
-  // 1. Check de Permissão (Mockado ou via Supabase)
+  // 1. Check de Permissão (Admin)
   const checkUserRole = async () => {
-    // Aqui estou simulando que pegamos do localStorage ou contexto. 
-    // Adapte para sua lógica real de Auth.
-    const user = supabase.auth.user(); 
-    if(user) {
-        // Logica para checar se user.email é admin
-        // setIsAdmin(true); 
-    }
-    // Para teste imediato, descomente a linha abaixo se quiser forçar admin:
+    // ⚠️ Ajuste se tiver lógica real de usuários. Por enquanto, força Admin para aparecer os botões.
     setIsAdmin(true); 
   };
 
@@ -281,13 +274,16 @@ export default function CentralAtas() {
   const checkAutoRefresh = (ata) => {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
+    const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
     
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
       stGravacao === "PROCESSANDO_RENDER" ||
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
-      stGravacao === "PRONTO_PROCESSAR";
+      stGravacao === "PRONTO_PROCESSAR" ||
+      stAtaIa === "PROCESSANDO" ||
+      stAtaIa === "PENDENTE";
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
@@ -315,9 +311,22 @@ export default function CentralAtas() {
         );
         
         const stGravacao = String(data.gravacao_status || "").toUpperCase();
-        if (stGravacao !== "PROCESSANDO" && stGravacao !== "PENDENTE" && stGravacao !== "PROCESSANDO_RENDER") {
+        const stAtaIa = String(data.ata_ia_status || "").toUpperCase();
+
+        const aindaProcessando =
+          stGravacao === "PROCESSANDO" ||
+          stGravacao === "PROCESSANDO_RENDER" ||
+          stGravacao === "PENDENTE" ||
+          stGravacao === "GRAVANDO" ||
+          stGravacao === "PRONTO_PROCESSAR" ||
+          stAtaIa === "PROCESSANDO" ||
+          stAtaIa === "PENDENTE";
+
+        if (!aindaProcessando) {
             stopPolling();
-            hydrateMediaUrls(data);
+            hydrateMediaUrls(data); // Recarrega URLs se acabou
+            carregarDetalhes(data);
+            if (data.pauta) setEditedPauta(data.pauta);
         }
       }
     } catch (e) {
@@ -399,9 +408,9 @@ export default function CentralAtas() {
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     
-    // Se for admin, confirma se quer refazer
+    // Confirmação para Admin se já existe algo
     if(selectedAta.gravacao_status === "CONCLUIDO") {
-        if(!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente?")) {
+        if(!window.confirm("ATENÇÃO ADMIN:\nEsta reunião já possui vídeo. Deseja apagar o atual e gerar novamente pelo Robô?")) {
             return;
         }
     }
@@ -409,7 +418,7 @@ export default function CentralAtas() {
     setRequestingVideo(true);
 
     try {
-      // 1. Reseta status na tabela de reuniões (para UI reagir)
+      // 1. Reseta status na tabela de reuniões (para UI reagir imediatamente)
       await supabase.from("reunioes").update({ 
           gravacao_status: "PENDENTE" 
       }).eq("id", selectedAta.id);
@@ -427,14 +436,16 @@ export default function CentralAtas() {
 
       if (error) throw error;
 
-      // 3. Ping Render
+      // 3. Ping Render (Fire and forget)
       fetch("https://robo-video.onrender.com/processar", { mode: "no-cors" }).catch(() => {});
 
       // 4. Update UI Local
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
+      setAtas((prev) => prev.map(a => a.id === selectedAta.id ? {...a, gravacao_status: 'PENDENTE'} : a));
+      
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
-      alert("Solicitação enviada ao Robô!");
+      alert("Solicitação enviada ao Robô! Aguarde o processamento.");
     } catch (e) {
       alert("Erro: " + e.message);
     } finally {
@@ -743,6 +754,32 @@ export default function CentralAtas() {
       return <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded font-bold border border-slate-200">AGUARDANDO</span>;
   };
 
+  const iaStatusNorm = String(selectedAta?.ata_ia_status || "").toUpperCase();
+
+  const badgeClass = (tone) =>
+    ({
+      green: "bg-green-100 text-green-700 border-green-200",
+      blue: "bg-blue-100 text-blue-700 border-blue-200",
+      red: "bg-red-100 text-red-700 border-red-200",
+      gray: "bg-slate-100 text-slate-700 border-slate-200",
+    }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
+
+  const formatTimeOnly = (dateIsoString) => {
+    if (!dateIsoString) return "--:--";
+    try {
+      const date = new Date(dateIsoString);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      return String(dateIsoString).substring(0, 5);
+    } catch {
+      return "--:--";
+    }
+  };
+
   return (
     <Layout>
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
@@ -825,6 +862,30 @@ export default function CentralAtas() {
                         {getStatusBadge(selectedAta.gravacao_status)}
                     </div>
                     
+                    {/* STATUS IA */}
+                    <div className="mb-2 flex items-center gap-2 flex-wrap">
+                      {selectedAta.ata_ia_status && (
+                        <span
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase border flex items-center gap-1 w-fit ${
+                            iaStatusNorm === "PRONTO" || iaStatusNorm === "PRONTA"
+                              ? badgeClass("green")
+                              : iaStatusNorm === "PROCESSANDO" ||
+                                iaStatusNorm === "PENDENTE"
+                              ? badgeClass("blue")
+                              : iaStatusNorm === "ERRO"
+                              ? badgeClass("red")
+                              : badgeClass("gray")
+                          }`}
+                        >
+                          {(iaStatusNorm === "PROCESSANDO" ||
+                            iaStatusNorm === "PENDENTE") && (
+                            <Loader2 size={10} className="animate-spin" />
+                          )}
+                          IA: {selectedAta.ata_ia_status}
+                        </span>
+                      )}
+                    </div>
+
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">
                       {selectedAta.titulo}
                     </h1>
@@ -969,16 +1030,36 @@ export default function CentralAtas() {
                   )}
                 </div>
 
-                {/* ✅ ÁUDIO MELHORADO */}
+                {/* ✅ ÁUDIO MELHORADO + BOTÃO IA RESTAURADO */}
                 <div className="mb-6">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Player de Áudio
                   </div>
-                  {mediaUrls.audio ? (
-                     <CustomAudioPlayer src={mediaUrls.audio} />
-                  ) : (
-                     <div className="p-3 bg-slate-50 border rounded text-xs text-slate-400">Sem áudio.</div>
-                  )}
+                  
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      {mediaUrls.audio ? (
+                        <CustomAudioPlayer src={mediaUrls.audio} />
+                      ) : (
+                        <div className="p-3 bg-slate-50 border rounded text-xs text-slate-400">Sem áudio.</div>
+                      )}
+                    </div>
+                    {/* ✅ BOTÃO IA RESTAURADO AQUI */}
+                    {mediaUrls.audio && !isEditing && (
+                      <button
+                        onClick={handleRegenerateIA}
+                        disabled={isGenerating}
+                        className="h-10 text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50 hover:bg-indigo-200 transition-colors"
+                      >
+                        {isGenerating ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Cpu size={14} />
+                        )}
+                        Gerar Resumo IA
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* ANEXOS */}
@@ -1280,7 +1361,10 @@ export default function CentralAtas() {
               </div>
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-slate-300">Selecione...</div>
+            <div className="h-full flex flex-col items-center justify-center text-slate-400">
+              <Layers size={64} className="opacity-20 mb-4" />
+              <p>Selecione uma Ata</p>
+            </div>
           )}
         </div>
 
