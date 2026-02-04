@@ -215,7 +215,7 @@ export default function CentralAtas() {
 
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 
-  // ✅ Estado para saber se é Admin
+  // ✅ NOVO: Estado para saber se é Admin
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
@@ -228,7 +228,7 @@ export default function CentralAtas() {
 
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
-  // 1. Check de Permissão (Admin)
+  // 1. Check de Permissão
   const checkUserRole = async () => {
     // ⚠️ Ajuste se tiver lógica real de usuários. Por enquanto, força Admin para aparecer os botões.
     setIsAdmin(true); 
@@ -274,16 +274,13 @@ export default function CentralAtas() {
   const checkAutoRefresh = (ata) => {
     stopPolling();
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
-    const stAtaIa = String(ata.ata_ia_status || "").toUpperCase();
     
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
       stGravacao === "PROCESSANDO_RENDER" ||
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
-      stGravacao === "PRONTO_PROCESSAR" ||
-      stAtaIa === "PROCESSANDO" ||
-      stAtaIa === "PENDENTE";
+      stGravacao === "PRONTO_PROCESSAR";
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
@@ -404,7 +401,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ CHAMAR ROBÔ (Modificado para Admin)
+  // ✅ LÓGICA DO ROBÔ CORRIGIDA: DELETE + INSERT (SEM UPSERT)
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     
@@ -423,23 +420,28 @@ export default function CentralAtas() {
           gravacao_status: "PENDENTE" 
       }).eq("id", selectedAta.id);
 
-      // 2. Coloca na fila do Robô
-      const { error } = await supabase.from("reuniao_processing_queue").upsert(
+      // 2. Limpa fila antiga (Remove o erro ON CONFLICT)
+      await supabase.from("reuniao_processing_queue")
+        .delete()
+        .eq("reuniao_id", selectedAta.id)
+        .eq("job_type", "RENDER_FIX");
+
+      // 3. Insere novo job limpo
+      const { error } = await supabase.from("reuniao_processing_queue").insert(
         [{
             reuniao_id: selectedAta.id,
             job_type: "RENDER_FIX",
             status: "PENDENTE",
             log_text: "Solicitado Manualmente pelo Admin",
-        }],
-        { onConflict: "reuniao_id, job_type" }
+        }]
       );
 
       if (error) throw error;
 
-      // 3. Ping Render (Fire and forget)
+      // 4. Ping Render (Fire and forget)
       fetch("https://robo-video.onrender.com/processar", { mode: "no-cors" }).catch(() => {});
 
-      // 4. Update UI Local
+      // 5. Update UI Local
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map(a => a.id === selectedAta.id ? {...a, gravacao_status: 'PENDENTE'} : a));
       
@@ -447,7 +449,8 @@ export default function CentralAtas() {
 
       alert("Solicitação enviada ao Robô! Aguarde o processamento.");
     } catch (e) {
-      alert("Erro: " + e.message);
+      console.error(e);
+      alert("Erro ao solicitar: " + e.message);
     } finally {
       setRequestingVideo(false);
     }
