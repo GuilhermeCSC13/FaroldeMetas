@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
 import { useNavigate } from "react-router-dom";
-import ParticipantesTipoReuniao from "./ParticipantesTipoReuniao"; // Importar o novo componente
+import ParticipantesTipoReuniao from "../components/tatico/ParticipantesTipoReuniao";
 import {
   Tags,
   Search,
