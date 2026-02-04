@@ -34,7 +34,9 @@ import {
   Paperclip,
   FileText,
   Download,
-  Video, // ✅ Ícone para o botão de gerar vídeo
+  Video,
+  Maximize2, // ✅ Ícone Expandir
+  Minimize2, // ✅ Ícone Reduzir
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -177,7 +179,10 @@ export default function CentralAtas() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedPauta, setEditedPauta] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [requestingVideo, setRequestingVideo] = useState(false); // ✅ Estado para botão de vídeo
+  const [requestingVideo, setRequestingVideo] = useState(false);
+
+  // ✅ Estado para Modo Teatro (Expandir Tela)
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
@@ -234,7 +239,7 @@ export default function CentralAtas() {
 
     const precisaAtualizar =
       stGravacao === "PROCESSANDO" ||
-      stGravacao === "PROCESSANDO_RENDER" || // Adicionado status do robô
+      stGravacao === "PROCESSANDO_RENDER" ||
       stGravacao === "PENDENTE" ||
       stGravacao === "GRAVANDO" ||
       stGravacao === "PRONTO_PROCESSAR" ||
@@ -385,12 +390,11 @@ export default function CentralAtas() {
 
     try {
       // 1. Coloca na fila do Robô
-      // Usamos Upsert para garantir que se já existir uma falha, ele tenta de novo
       const { error } = await supabase.from("reuniao_processing_queue").upsert(
         [
           {
             reuniao_id: selectedAta.id,
-            job_type: "RENDER_FIX", // Tipo usado pelo Robô
+            job_type: "RENDER_FIX",
             status: "PENDENTE",
             log_text: "Solicitado via Central de Atas",
           },
@@ -401,7 +405,6 @@ export default function CentralAtas() {
       if (error) throw error;
 
       // 2. Acorda o Robô no Render (Ping fire-and-forget)
-      // Usamos no-cors pois só queremos "tocar" a URL, não ler a resposta
       fetch("https://robo-video.onrender.com/processar", {
         mode: "no-cors",
       }).catch(() => {});
@@ -417,7 +420,6 @@ export default function CentralAtas() {
         )
       );
 
-      // 4. Inicia Polling
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
       alert(
@@ -509,7 +511,6 @@ export default function CentralAtas() {
             ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR")
             : "";
 
-          // 1. Busca Prompt
           let promptTemplate = "";
           const { data: promptData } = await supabase
             .from("app_prompts")
@@ -527,14 +528,12 @@ export default function CentralAtas() {
             .replace(/{titulo}/g, titulo)
             .replace(/{data}/g, dataBR);
 
-          // 2. Gera
           const result = await model.generateContent([
             finalPrompt,
             { inlineData: { data: base64data, mimeType: "video/webm" } },
           ]);
           const texto = result.response.text();
 
-          // 3. Salva
           const { error: saveErr } = await supabase
             .from("reunioes")
             .update({
@@ -545,7 +544,6 @@ export default function CentralAtas() {
 
           if (saveErr) throw saveErr;
 
-          // 4. Atualiza Interface
           setEditedPauta(texto);
           setIsEditing(false);
 
@@ -576,7 +574,6 @@ export default function CentralAtas() {
     }
   };
 
-  // UPLOAD DE MATERIAIS
   const handleUploadMaterial = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -736,13 +733,13 @@ export default function CentralAtas() {
 
   const formatTimeOnly = (timeStr) => {
     if (!timeStr) return "--:--";
-    return timeStr.substring(0, 5); // Pega apenas HH:mm
+    return timeStr.substring(0, 5);
   };
 
   return (
     <Layout>
       <div className="flex h-screen bg-slate-50 font-sans overflow-hidden relative">
-        {/* OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+        {/* OVERLAY EXCLUSÃO */}
         {showDeleteAuth && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
             <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
@@ -755,7 +752,6 @@ export default function CentralAtas() {
               <p className="text-sm text-slate-500 mb-6">
                 Exclusão permitida apenas para <b>Administradores</b>.
               </p>
-
               <div className="space-y-3 text-left">
                 <div>
                   <label className="text-xs font-bold text-slate-600 uppercase">
@@ -781,7 +777,6 @@ export default function CentralAtas() {
                   />
                 </div>
               </div>
-
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={() => setShowDeleteAuth(false)}
@@ -859,7 +854,11 @@ export default function CentralAtas() {
         {/* MAIN CONTENT */}
         <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8 custom-scrollbar relative">
           {selectedAta ? (
-            <div className="max-w-5xl mx-auto space-y-6">
+            <div
+              className={`mx-auto space-y-6 transition-all duration-300 ${
+                isTheaterMode ? "w-full max-w-none px-4" : "max-w-5xl"
+              }`}
+            >
               {/* HEADER ATA */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                 <div className="flex justify-between items-start mb-6">
@@ -867,8 +866,6 @@ export default function CentralAtas() {
                     <span className="text-blue-600 font-bold text-xs uppercase tracking-wider mb-2 block flex items-center gap-1">
                       <CheckCircle size={14} /> Ata Oficial
                     </span>
-
-                    {/* STATUS IA */}
                     <div className="mb-2 flex items-center gap-2 flex-wrap">
                       {selectedAta.ata_ia_status && (
                         <span
@@ -891,7 +888,6 @@ export default function CentralAtas() {
                         </span>
                       )}
                     </div>
-
                     <h1 className="text-3xl font-bold text-slate-900 mb-2">
                       {selectedAta.titulo}
                     </h1>
@@ -902,7 +898,6 @@ export default function CentralAtas() {
                           ? new Date(selectedAta.data_hora).toLocaleDateString()
                           : "-"}
                       </span>
-                      {/* ✅ NOVA EXIBIÇÃO DE HORÁRIO INÍCIO/FIM */}
                       <span className="flex items-center gap-1 text-slate-600">
                         <Clock size={16} />
                         {formatTimeOnly(selectedAta.horario_inicio)} -{" "}
@@ -913,7 +908,6 @@ export default function CentralAtas() {
                       </span>
                     </div>
                   </div>
-
                   <div className="flex gap-2">
                     {isEditing ? (
                       <button
@@ -943,23 +937,54 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* VÍDEO COMPILADO */}
+                {/* ✅ SEÇÃO DE VÍDEO MELHORADA */}
                 <div className="mb-6">
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
-                    <PlayCircle size={14} /> Gravação Compilada
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                      <PlayCircle size={14} /> Gravação Compilada
+                    </div>
+                    {mediaUrls.video && (
+                      <button
+                        onClick={() => setIsTheaterMode(!isTheaterMode)}
+                        className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                        title={isTheaterMode ? "Reduzir" : "Expandir Tela"}
+                      >
+                        {isTheaterMode ? (
+                          <>
+                            <Minimize2 size={14} /> Reduzir
+                          </>
+                        ) : (
+                          <>
+                            <Maximize2 size={14} /> Expandir Modo Cinema
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
 
                   {mediaUrls.video ? (
                     <div className="space-y-2">
-                      <video
-                        key={mediaUrls.video}
-                        controls
-                        className="w-full rounded-xl bg-black"
-                        preload="metadata"
+                      {/* ✅ CONTAINER RESIZÁVEL (ARRASTAR PARA AUMENTAR) */}
+                      <div
+                        className="relative w-full overflow-hidden rounded-xl bg-black shadow-lg group resize-y min-h-[360px]"
+                        style={{ height: "480px" }} // Altura inicial
                       >
-                        <source src={mediaUrls.video} type="video/webm" />
-                        Seu navegador não conseguiu reproduzir este vídeo.
-                      </video>
+                        <video
+                          key={mediaUrls.video}
+                          controls
+                          className="w-full h-full object-contain"
+                          preload="metadata"
+                        >
+                          <source src={mediaUrls.video} type="video/webm" />
+                          Seu navegador não conseguiu reproduzir este vídeo.
+                        </video>
+                        
+                        {/* Dica visual de arraste no canto inferior direito */}
+                        <div className="absolute bottom-1 right-1 pointer-events-none opacity-0 group-hover:opacity-50 transition-opacity">
+                          <div className="w-4 h-4 bg-white/30 rounded-br-sm backdrop-blur-sm transform rotate-45 border-r border-b border-white/50"></div>
+                        </div>
+                      </div>
+
                       <a
                         href={mediaUrls.video}
                         target="_blank"
@@ -987,15 +1012,13 @@ export default function CentralAtas() {
                               size={14}
                               className="animate-spin text-blue-500"
                             />{" "}
-                            Processando vídeo (Isso pode levar alguns
-                            minutos)...
+                            Processando vídeo (Isso pode levar alguns minutos)...
                           </>
                         ) : (
                           "Vídeo completo ainda não disponível."
                         )}
                       </div>
 
-                      {/* ✅ BOTÃO PARA CHAMAR O ROBÔ */}
                       {(!selectedAta.gravacao_status ||
                         selectedAta.gravacao_status === "ERRO" ||
                         selectedAta.gravacao_status === "PARCIAL") && (
@@ -1023,7 +1046,6 @@ export default function CentralAtas() {
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
                     <Headphones size={14} /> Áudio e Transcrição
                   </div>
-
                   <div className="flex items-center gap-4">
                     <div className="flex-1">
                       {mediaUrls.audio ? (
@@ -1038,7 +1060,6 @@ export default function CentralAtas() {
                         </span>
                       )}
                     </div>
-
                     {mediaUrls.audio && !isEditing && (
                       <button
                         onClick={handleRegenerateIA}
@@ -1056,13 +1077,12 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* SEÇÃO DE MATERIAIS DE APOIO */}
+                {/* ANEXOS */}
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
                       <Paperclip size={14} /> Materiais e Anexos
                     </div>
-
                     <label
                       className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${
                         uploadingMaterial
@@ -1085,7 +1105,6 @@ export default function CentralAtas() {
                       />
                     </label>
                   </div>
-
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                     {selectedAta.materiais &&
                     selectedAta.materiais.length > 0 ? (
@@ -1123,7 +1142,6 @@ export default function CentralAtas() {
                                   </p>
                                 </div>
                               </div>
-
                               <div className="flex items-center gap-1">
                                 <a
                                   href={item.url}
@@ -1230,9 +1248,8 @@ export default function CentralAtas() {
                 </div>
               </div>
 
-              {/* GRID AÇÕES */}
+              {/* GRID AÇÕES (Mantido igual) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* COLUNA 1 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -1246,7 +1263,6 @@ export default function CentralAtas() {
                       <Plus size={14} /> Nova Ação
                     </button>
                   </div>
-
                   <div className="flex-1 space-y-2">
                     {acoesCriadas.map((acao) => (
                       <div
@@ -1306,7 +1322,6 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* COLUNA 2 */}
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col h-full">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4">
                     <div className="w-2 h-2 bg-amber-500 rounded-full"></div>{" "}
@@ -1368,7 +1383,7 @@ export default function CentralAtas() {
           )}
         </div>
 
-        {/* MODAL DE AÇÃO INTEGRADO */}
+        {/* MODAL DE AÇÃO */}
         {acaoParaModal && (
           <ModalDetalhesAcao
             aberto={!!acaoParaModal}
