@@ -231,15 +231,7 @@ function normalizeSectionsContent(md) {
 
 function ensureMinimumSections(md) {
   let t = String(md || "").trim();
-
-  const hasResumo = /##\s+\*\*Resumo\*\*/i.test(t);
-  const hasDecisoes = /##\s+\*\*Decis(õ|o)es\*\*/i.test(t);
-  const hasAcoes = /##\s+\*\*A(ç|c)oes\*\*/i.test(t);
-
-  if (!hasResumo) t = `${t}\n\n## **Resumo**\n\n—`;
-  if (!hasDecisoes) t = `${t}\n\n## **Decisões**\n\n*Nenhuma decisão foi formalizada nesta reunião.*`;
-  if (!hasAcoes) t = `${t}\n\n## **Ações**\n\n*Nenhuma ação foi definida nesta reunião.*`;
-
+  // Nao adiciona seções vazias - apenas retorna o conteúdo como está
   return ensureSpacing(t);
 }
 
