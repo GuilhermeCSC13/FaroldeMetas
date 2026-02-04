@@ -89,9 +89,7 @@ const CustomAudioPlayer = ({ src, durationDb }) => {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime);
       
-      // Fallback para duração se o navegador se perder
       if (!Number.isFinite(audioRef.current.duration) && durationDb > 0) {
-          // Mantém visualmente a duração do banco
       } else if (Number.isFinite(audioRef.current.duration) && audioRef.current.duration > 0) {
           setDuration(audioRef.current.duration);
       }
@@ -377,7 +375,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ BOTÃO AGORA SÓ INSERE NA FILA (NÃO CHAMA RENDER)
+  // ✅ LÓGICA CORRIGIDA: SEM FETCH PARA O RENDER
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     
@@ -403,18 +401,21 @@ export default function CentralAtas() {
             reuniao_id: selectedAta.id,
             job_type: "RENDER_FIX",
             status: "PENDENTE",
-            log_text: "Solicitado Manualmente (Aguardando GitHub)",
+            log_text: "Solicitado via Central (Aguardando GitHub)",
         }]
       );
 
       if (error) throw error;
+
+      // ⚠️ IMPORTANTE: REMOVI O FETCH PARA O RENDER AQUI
+      // Agora apenas esperamos o GitHub rodar no tempo dele (ou acionamos manualmente lá)
 
       // 4. Update UI Local
       setSelectedAta((prev) => ({ ...prev, gravacao_status: "PENDENTE" }));
       setAtas((prev) => prev.map(a => a.id === selectedAta.id ? {...a, gravacao_status: 'PENDENTE'} : a));
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
-      alert("Solicitação enviada para a fila! O Robô do GitHub iniciará em breve (Verifique a aba Actions ou aguarde até 10min).");
+      alert("Solicitação enviada para a fila! O Robô do GitHub iniciará em breve.");
     } catch (e) {
       alert("Erro: " + e.message);
     } finally {
@@ -749,7 +750,7 @@ export default function CentralAtas() {
                                 <div className="p-4 bg-blue-100 rounded-full text-blue-600 animate-spin"><Loader2 size={32} /></div>
                                 <div>
                                     <h4 className="font-bold text-slate-700">Processando Vídeo...</h4>
-                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">O Robô (GitHub) está baixando as partes, unificando e fazendo upload do arquivo final. Isso pode levar de 5 a 15 minutos dependendo do tamanho.</p>
+                                    <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">O Robô está baixando as partes, unificando e fazendo upload do arquivo final. Isso pode levar de 5 a 15 minutos dependendo do tamanho.</p>
                                 </div>
                             </>
                         ) : (
@@ -784,6 +785,7 @@ export default function CentralAtas() {
                         <div className="p-3 bg-slate-50 border rounded text-xs text-slate-400">Sem áudio.</div>
                       )}
                     </div>
+                    {/* ✅ BOTÃO IA RESTAURADO AQUI */}
                     {mediaUrls.audio && !isEditing && (
                       <button onClick={handleRegenerateIA} disabled={isGenerating} className="h-10 text-xs bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 disabled:opacity-50 hover:bg-indigo-200 transition-colors">
                         {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Cpu size={14} />}
