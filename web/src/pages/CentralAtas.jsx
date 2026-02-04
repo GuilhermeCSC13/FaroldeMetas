@@ -35,8 +35,8 @@ import {
   FileText,
   Download,
   Video,
-  Maximize2, // ✅ Ícone Expandir
-  Minimize2, // ✅ Ícone Reduzir
+  Maximize2,
+  X, // ✅ Ícone Fechar para o Modal
 } from "lucide-react";
 
 // --- COMPONENTE PLAYER DE ÁUDIO CUSTOMIZADO ---
@@ -181,19 +181,17 @@ export default function CentralAtas() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [requestingVideo, setRequestingVideo] = useState(false);
 
-  // ✅ Estado para Modo Teatro (Expandir Tela)
-  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  // ✅ Estado para o MODAL DE VÍDEO (Cinema)
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 
   const [acaoParaModal, setAcaoParaModal] = useState(null);
   const pollingRef = useRef(null);
 
-  // Estados para Exclusão Segura
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
   const [delSenha, setDelSenha] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // Estado de Upload
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
   useEffect(() => {
@@ -208,11 +206,11 @@ export default function CentralAtas() {
       setAtaManual(selectedAta.ata_manual || "");
       setIsEditing(false);
 
-      // Reset delete modal
       setShowDeleteAuth(false);
       setDelLogin("");
       setDelSenha("");
       setRequestingVideo(false);
+      setIsVideoModalOpen(false); // Fecha modal ao trocar de ata
 
       hydrateMediaUrls(selectedAta);
       checkAutoRefresh(selectedAta);
@@ -383,7 +381,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ CHAMAR ROBÔ (PROCESSAR VÍDEO)
+  // ✅ LÓGICA DO ROBÔ: INSERE NA FILA E ACORDA O RENDER
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
     setRequestingVideo(true);
@@ -423,7 +421,7 @@ export default function CentralAtas() {
       checkAutoRefresh({ ...selectedAta, gravacao_status: "PENDENTE" });
 
       alert(
-        "Processamento solicitado com sucesso! O robô está gerando o vídeo completo. Isso pode levar alguns minutos."
+        "Solicitado! O robô iniciará o processamento e montagem do vídeo completo."
       );
     } catch (e) {
       console.error(e);
@@ -731,9 +729,20 @@ export default function CentralAtas() {
       gray: "bg-slate-100 text-slate-700 border-slate-200",
     }[tone] || "bg-slate-100 text-slate-700 border-slate-200");
 
-  const formatTimeOnly = (timeStr) => {
-    if (!timeStr) return "--:--";
-    return timeStr.substring(0, 5);
+  const formatTimeOnly = (dateIsoString) => {
+    if (!dateIsoString) return "--:--";
+    try {
+      const date = new Date(dateIsoString);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      return String(dateIsoString).substring(0, 5);
+    } catch {
+      return "--:--";
+    }
   };
 
   return (
@@ -742,6 +751,7 @@ export default function CentralAtas() {
         {/* OVERLAY EXCLUSÃO */}
         {showDeleteAuth && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
+            {/* ... Modal Auth (Mantido igual) ... */}
             <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
               <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
                 <ShieldAlert size={24} />
@@ -792,6 +802,36 @@ export default function CentralAtas() {
                   {deleting ? "Verificando..." : "Confirmar Exclusão"}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ MODAL CINEMA (PLAYER FULLSCREEN) */}
+        {isVideoModalOpen && mediaUrls.video && (
+          <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-200">
+            {/* Header do Modal */}
+            <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
+              <h2 className="text-white font-bold text-lg drop-shadow-md">
+                {selectedAta?.titulo} - Gravação Completa
+              </h2>
+              <button
+                onClick={() => setIsVideoModalOpen(false)}
+                className="text-white hover:text-red-400 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-all"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Vídeo Centralizado e Responsivo */}
+            <div className="w-full h-full max-w-7xl max-h-[90vh] flex items-center justify-center p-4">
+              <video
+                controls
+                autoPlay
+                className="w-full h-full object-contain rounded-lg shadow-2xl"
+              >
+                <source src={mediaUrls.video} type="video/webm" />
+                Seu navegador não suporta vídeos.
+              </video>
             </div>
           </div>
         )}
@@ -854,11 +894,7 @@ export default function CentralAtas() {
         {/* MAIN CONTENT */}
         <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8 custom-scrollbar relative">
           {selectedAta ? (
-            <div
-              className={`mx-auto space-y-6 transition-all duration-300 ${
-                isTheaterMode ? "w-full max-w-none px-4" : "max-w-5xl"
-              }`}
-            >
+            <div className="max-w-5xl mx-auto space-y-6">
               {/* HEADER ATA */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                 <div className="flex justify-between items-start mb-6">
@@ -898,6 +934,7 @@ export default function CentralAtas() {
                           ? new Date(selectedAta.data_hora).toLocaleDateString()
                           : "-"}
                       </span>
+                      {/* ✅ HORÁRIO CORRIGIDO */}
                       <span className="flex items-center gap-1 text-slate-600">
                         <Clock size={16} />
                         {formatTimeOnly(selectedAta.horario_inicio)} -{" "}
@@ -937,7 +974,7 @@ export default function CentralAtas() {
                   </div>
                 </div>
 
-                {/* ✅ SEÇÃO DE VÍDEO MELHORADA */}
+                {/* ✅ SEÇÃO DE VÍDEO (PLAYER EMBUTIDO + MODAL) */}
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
@@ -945,54 +982,45 @@ export default function CentralAtas() {
                     </div>
                     {mediaUrls.video && (
                       <button
-                        onClick={() => setIsTheaterMode(!isTheaterMode)}
-                        className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-2 py-1 rounded transition-colors"
-                        title={isTheaterMode ? "Reduzir" : "Expandir Tela"}
+                        onClick={() => setIsVideoModalOpen(true)}
+                        className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-transparent hover:border-blue-100 transition-all"
                       >
-                        {isTheaterMode ? (
-                          <>
-                            <Minimize2 size={14} /> Reduzir
-                          </>
-                        ) : (
-                          <>
-                            <Maximize2 size={14} /> Expandir Modo Cinema
-                          </>
-                        )}
+                        <Maximize2 size={14} /> Abrir Modo Cinema
                       </button>
                     )}
                   </div>
 
                   {mediaUrls.video ? (
                     <div className="space-y-2">
-                      {/* ✅ CONTAINER RESIZÁVEL (ARRASTAR PARA AUMENTAR) */}
-                      <div
-                        className="relative w-full overflow-hidden rounded-xl bg-black shadow-lg group resize-y min-h-[360px]"
-                        style={{ height: "480px" }} // Altura inicial
-                      >
+                      <div className="relative group rounded-xl overflow-hidden bg-black shadow-md">
                         <video
                           key={mediaUrls.video}
-                          controls
-                          className="w-full h-full object-contain"
+                          className="w-full max-h-[400px] object-contain"
                           preload="metadata"
+                          controls
                         >
                           <source src={mediaUrls.video} type="video/webm" />
                           Seu navegador não conseguiu reproduzir este vídeo.
                         </video>
-                        
-                        {/* Dica visual de arraste no canto inferior direito */}
-                        <div className="absolute bottom-1 right-1 pointer-events-none opacity-0 group-hover:opacity-50 transition-opacity">
-                          <div className="w-4 h-4 bg-white/30 rounded-br-sm backdrop-blur-sm transform rotate-45 border-r border-b border-white/50"></div>
+                        {/* Overlay "Clique para Expandir" */}
+                        <div
+                          onClick={() => setIsVideoModalOpen(true)}
+                          className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors cursor-pointer flex items-center justify-center group"
+                          title="Clique para expandir"
+                        >
+                          <div className="bg-black/50 text-white p-3 rounded-full opacity-0 group-hover:opacity-100 transform scale-90 group-hover:scale-100 transition-all">
+                            <Maximize2 size={24} />
+                          </div>
                         </div>
                       </div>
-
                       <a
                         href={mediaUrls.video}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-2 text-xs font-bold text-blue-700"
+                        className="inline-flex items-center gap-2 text-xs font-bold text-blue-700 mt-2"
                       >
                         <ExternalLink size={14} />
-                        Abrir vídeo em nova aba
+                        Download / Abrir em nova aba
                       </a>
                     </div>
                   ) : (
@@ -1012,13 +1040,15 @@ export default function CentralAtas() {
                               size={14}
                               className="animate-spin text-blue-500"
                             />{" "}
-                            Processando vídeo (Isso pode levar alguns minutos)...
+                            O Robô está montando o vídeo (Isso pode levar alguns
+                            minutos)...
                           </>
                         ) : (
                           "Vídeo completo ainda não disponível."
                         )}
                       </div>
 
+                      {/* BOTÃO DO ROBÔ */}
                       {(!selectedAta.gravacao_status ||
                         selectedAta.gravacao_status === "ERRO" ||
                         selectedAta.gravacao_status === "PARCIAL") && (
