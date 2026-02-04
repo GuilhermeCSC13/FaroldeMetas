@@ -19,17 +19,18 @@ import {
   List as ListIcon,
   Hash,
   CheckCircle2,
-  AlertTriangle,
   ShieldAlert,
-  Users,   // ✅ Adicionado
-  Loader2, // ✅ Adicionado
-  User     // ✅ Adicionado
+  Users,
+  Loader2,
+  User,
 } from "lucide-react";
 
-/**
- * COMPONENTE INTERNO: PARTICIPANTES
- * Gerencia a lista de participantes padrão dentro do Modal
- */
+/* =========================================================
+   COMPONENTE INTERNO: PARTICIPANTES (FIX)
+   - Mesma lógica do Organizador:
+     Busca no supabaseInove (usuarios_aprovadores)
+     Salva no supabase principal por chave estável: login/email
+========================================================= */
 function ParticipantesInterno({ tipoId, editavel }) {
   const [participantes, setParticipantes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -41,96 +42,143 @@ function ParticipantesInterno({ tipoId, editavel }) {
       fetchParticipantes();
       fetchUsuariosInove();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoId]);
 
+  const getUserKey = (u) => String(u?.login || u?.email || "").trim().toLowerCase();
+
   const fetchUsuariosInove = async () => {
-    const { data } = await supabaseInove
+    const { data, error } = await supabaseInove
       .from("usuarios_aprovadores")
-      .select("id, nome, email, cargo, ativo")
+      .select("id, nome, email, cargo, ativo, login")
       .eq("ativo", true)
       .order("nome");
+
+    if (error) {
+      console.warn("Erro ao carregar usuarios_aprovadores:", error.message);
+      setUsuariosInove([]);
+      return;
+    }
     setUsuariosInove(data || []);
   };
 
   const fetchParticipantes = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("participantes_tipo_reuniao")
-      .select("*")
-      .eq("tipo_reuniao_id", tipoId);
+      .select("id, tipo_reuniao_id, usuario_login, nome, email, cargo")
+      .eq("tipo_reuniao_id", tipoId)
+      .order("nome", { ascending: true });
+
+    if (error) {
+      console.warn("Erro ao carregar participantes_tipo_reuniao:", error.message);
+      setParticipantes([]);
+      setLoading(false);
+      return;
+    }
+
     setParticipantes(data || []);
     setLoading(false);
   };
 
   const adicionar = async (usuario) => {
-    if (participantes.some(p => p.usuario_id === usuario.id)) return;
+    const key = getUserKey(usuario);
+    if (!key) return;
+
+    if (participantes.some((p) => String(p.usuario_login || "").toLowerCase() === key)) return;
+
+    const payload = {
+      tipo_reuniao_id: tipoId,
+      usuario_login: key,
+      nome: usuario.nome || null,
+      email: usuario.email || null,
+      cargo: usuario.cargo || null,
+    };
 
     const { data, error } = await supabase
       .from("participantes_tipo_reuniao")
-      .insert({
-        tipo_reuniao_id: tipoId,
-        usuario_id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        cargo: usuario.cargo
-      })
+      .insert(payload)
       .select();
 
-    if (!error && data) {
-      setParticipantes([...participantes, data[0]]);
+    if (error) {
+      console.warn("Erro ao inserir participante:", error.message);
+      return;
+    }
+
+    if (data?.[0]) {
+      setParticipantes((prev) => [...prev, data[0]]);
       setBusca("");
     }
   };
 
   const remover = async (id) => {
-    const { error } = await supabase
-      .from("participantes_tipo_reuniao")
-      .delete()
-      .eq("id", id);
-    
-    if (!error) {
-      setParticipantes(participantes.filter(p => p.id !== id));
-    }
+    const { error } = await supabase.from("participantes_tipo_reuniao").delete().eq("id", id);
+    if (!error) setParticipantes((prev) => prev.filter((p) => p.id !== id));
+    else console.warn("Erro ao remover participante:", error.message);
   };
 
-  const usuariosFiltrados = usuariosInove.filter(u => 
-    !participantes.some(p => p.usuario_id === u.id) &&
-    (u.nome.toLowerCase().includes(busca.toLowerCase()) || 
-     u.email.toLowerCase().includes(busca.toLowerCase()))
-  ).slice(0, 5);
+  const usuariosFiltrados = useMemo(() => {
+    const term = busca.trim().toLowerCase();
+    if (!term) return [];
+
+    return (usuariosInove || [])
+      .filter((u) => {
+        const key = getUserKey(u);
+        if (!key) return false;
+
+        const jaExiste = participantes.some(
+          (p) => String(p.usuario_login || "").toLowerCase() === key
+        );
+        if (jaExiste) return false;
+
+        const nome = String(u?.nome || "").toLowerCase();
+        const email = String(u?.email || "").toLowerCase();
+        const login = String(u?.login || "").toLowerCase();
+        return nome.includes(term) || email.includes(term) || login.includes(term);
+      })
+      .slice(0, 5);
+  }, [usuariosInove, participantes, busca]);
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-4">
       <div className="flex items-center justify-between mb-2">
         <label className="block text-xs font-bold text-gray-500 uppercase flex items-center gap-2">
-          <Users size={14} /> Participantes Padrão 
-          <span className="bg-gray-100 text-gray-600 px-1.5 rounded-full ml-1">{participantes.length}</span>
+          <Users size={14} /> Participantes Padrão
+          <span className="bg-gray-100 text-gray-600 px-1.5 rounded-full ml-1">
+            {participantes.length}
+          </span>
         </label>
       </div>
 
       {editavel && (
         <div className="relative mb-3">
           <div className="flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-blue-100">
-            <div className="pl-2 text-gray-400"><Search size={14} /></div>
-            <input 
+            <div className="pl-2 text-gray-400">
+              <Search size={14} />
+            </div>
+            <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar nome ou email para adicionar..."
+              placeholder="Buscar nome, login ou email para adicionar..."
               className="w-full text-sm p-2 outline-none"
             />
           </div>
+
           {busca.length > 0 && usuariosFiltrados.length > 0 && (
             <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden">
-              {usuariosFiltrados.map(u => (
-                <button 
-                  key={u.id} 
+              {usuariosFiltrados.map((u) => (
+                <button
+                  key={u.id}
                   type="button"
                   onClick={() => adicionar(u)}
                   className="w-full text-left p-2 hover:bg-blue-50 text-sm flex justify-between items-center group border-b border-gray-50 last:border-0"
                 >
-                  <div>
-                    <div className="font-bold text-gray-700">{u.nome}</div>
-                    <div className="text-[10px] text-gray-400">{u.email}</div>
+                  <div className="min-w-0">
+                    <div className="font-bold text-gray-700 truncate">{u.nome}</div>
+                    <div className="text-[10px] text-gray-400 truncate">
+                      {u.login ? `${u.login} • ` : ""}
+                      {u.email}
+                    </div>
                   </div>
                   <Plus size={14} className="text-blue-600" />
                 </button>
@@ -142,25 +190,37 @@ function ParticipantesInterno({ tipoId, editavel }) {
 
       <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
         {loading ? (
-          <div className="text-center py-2"><Loader2 className="animate-spin mx-auto text-gray-400" size={16} /></div>
+          <div className="text-center py-2">
+            <Loader2 className="animate-spin mx-auto text-gray-400" size={16} />
+          </div>
         ) : participantes.length === 0 ? (
           <div className="text-xs text-gray-400 italic text-center p-2 border border-dashed rounded bg-gray-50">
             Nenhum participante fixo definido.
           </div>
         ) : (
-          participantes.map(p => (
-            <div key={p.id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 shadow-sm">
+          participantes.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 shadow-sm"
+            >
               <div className="min-w-0 flex items-center gap-2">
                 <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold shrink-0">
                   {p.nome?.charAt(0)}
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-gray-800 truncate">{p.nome}</p>
-                  <p className="text-[10px] text-gray-500 truncate">{p.email}</p>
+                  <p className="text-[10px] text-gray-500 truncate">
+                    {p.usuario_login ? `${p.usuario_login} • ` : ""}
+                    {p.email}
+                  </p>
                 </div>
               </div>
               {editavel && (
-                <button type="button" onClick={() => remover(p.id)} className="text-gray-300 hover:text-red-500 p-1 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => remover(p.id)}
+                  className="text-gray-300 hover:text-red-500 p-1 transition-colors"
+                >
                   <Trash2 size={14} />
                 </button>
               )}
@@ -171,7 +231,6 @@ function ParticipantesInterno({ tipoId, editavel }) {
     </div>
   );
 }
-
 // --- FIM COMPONENTE INTERNO ---
 
 const REUNIOES_TIPO_FIELD = "tipo_reuniao";
@@ -256,7 +315,7 @@ export default function TiposReuniao() {
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState("create");
   const [saving, setSaving] = useState(false);
-  
+
   // ✅ Form State com campo responsavel_id
   const [form, setForm] = useState({
     id: null,
@@ -269,10 +328,10 @@ export default function TiposReuniao() {
     ata_principal: "",
     cor: "#111827",
     ordem: null,
-    responsavel_id: "" // ✅ Novo campo
+    responsavel_id: "",
   });
 
-  // ✅ Lista de Usuários para o Select
+  // ✅ Lista de Usuários para o Select (Organizador)
   const [usuariosAprovadores, setUsuariosAprovadores] = useState([]);
 
   // ✅ Estados para Exclusão Segura
@@ -286,9 +345,8 @@ export default function TiposReuniao() {
 
   useEffect(() => {
     fetchTipos();
-    fetchUsuariosAprovadores(); // ✅ Buscar usuários ao montar
-    
-    // Ler nível do usuário
+    fetchUsuariosAprovadores();
+
     try {
       const stored = localStorage.getItem("usuario_externo");
       if (stored) {
@@ -298,14 +356,22 @@ export default function TiposReuniao() {
     } catch (e) {
       console.error("Erro ao ler usuario_externo", e);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchUsuariosAprovadores = async () => {
-    const { data } = await supabaseInove
+    const { data, error } = await supabaseInove
       .from("usuarios_aprovadores")
       .select("id, nome, email")
       .eq("ativo", true)
       .order("nome");
+
+    if (error) {
+      console.warn("Erro ao carregar usuarios_aprovadores:", error.message);
+      setUsuariosAprovadores([]);
+      return;
+    }
+
     setUsuariosAprovadores(data || []);
   };
 
@@ -313,8 +379,9 @@ export default function TiposReuniao() {
     setLoading(true);
     const { data, error } = await supabase
       .from("tipos_reuniao")
-      // ✅ Incluir responsavel_id na query
-      .select("id, nome, slug, periodicidade, dias_semana, horario_inicio, horario_fim, ata_principal, cor, ordem, responsavel_id")
+      .select(
+        "id, nome, slug, periodicidade, dias_semana, horario_inicio, horario_fim, ata_principal, cor, ordem, responsavel_id"
+      )
       .order("ordem", { ascending: true, nullsFirst: false })
       .order("nome", { ascending: true });
 
@@ -441,7 +508,7 @@ export default function TiposReuniao() {
       ata_principal: "",
       cor: "#111827",
       ordem: null,
-      responsavel_id: "", // ✅ Reset
+      responsavel_id: "",
     });
     setFormOpen(true);
   };
@@ -456,14 +523,12 @@ export default function TiposReuniao() {
       slug: tipo?.slug ?? "",
       periodicidade: tipo?.periodicidade ?? "SEMANAL",
       dias_semana: Array.isArray(tipo?.dias_semana) ? tipo.dias_semana : [],
-      horario_inicio:
-        formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
-      horario_fim:
-        formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim),
+      horario_inicio: formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
+      horario_fim: formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim),
       ata_principal: tipo?.ata_principal ?? "",
       cor: tipo?.cor ?? "#111827",
       ordem: tipo?.ordem ?? null,
-      responsavel_id: tipo?.responsavel_id || "", // ✅ Carregar valor
+      responsavel_id: tipo?.responsavel_id || "",
     });
     setFormOpen(true);
   };
@@ -512,24 +577,21 @@ export default function TiposReuniao() {
           form.ordem === "" || form.ordem === null || Number.isNaN(Number(form.ordem))
             ? null
             : Number(form.ordem),
-        responsavel_id: form.responsavel_id || null, // ✅ Salvar
+        responsavel_id: form.responsavel_id || null,
       };
 
       if (formMode === "create") {
         const { error } = await supabase.from("tipos_reuniao").insert(payload);
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from("tipos_reuniao")
-          .update(payload)
-          .eq("id", form.id);
+        const { error } = await supabase.from("tipos_reuniao").update(payload).eq("id", form.id);
         if (error) throw error;
       }
 
       setFormOpen(false);
       fetchTipos();
-    } catch (err) {
-      console.error(err);
+    } catch (err2) {
+      console.error(err2);
       alert("Erro ao salvar.");
     } finally {
       setSaving(false);
@@ -572,19 +634,15 @@ export default function TiposReuniao() {
         return;
       }
 
-      const { error: delError } = await supabase
-        .from("tipos_reuniao")
-        .delete()
-        .eq("id", selectedTipo.id);
-
+      const { error: delError } = await supabase.from("tipos_reuniao").delete().eq("id", selectedTipo.id);
       if (delError) throw delError;
 
       setShowDeleteAuth(false);
       setSelectedTipo(null);
       fetchTipos();
       alert("Tipo excluído com sucesso.");
-    } catch (err) {
-      console.error(err);
+    } catch (err3) {
+      console.error(err3);
       alert("Erro ao excluir.");
     } finally {
       setDeleting(false);
@@ -604,18 +662,14 @@ export default function TiposReuniao() {
               </div>
               <div className="p-5 space-y-4">
                 <p className="text-sm text-gray-600">
-                  Esta ação é irreversível. Informe suas credenciais de{" "}
-                  <b>Gestor</b> ou <b>Administrador</b> para confirmar a exclusão de:
+                  Esta ação é irreversível. Informe suas credenciais de <b>Gestor</b> ou{" "}
+                  <b>Administrador</b> para confirmar a exclusão de:
                   <br />
-                  <span className="font-bold text-gray-900">
-                    {selectedTipo?.nome}
-                  </span>
+                  <span className="font-bold text-gray-900">{selectedTipo?.nome}</span>
                 </p>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    Login
-                  </label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Login</label>
                   <input
                     value={delLogin}
                     onChange={(e) => setDelLogin(e.target.value)}
@@ -625,9 +679,7 @@ export default function TiposReuniao() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    Senha
-                  </label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha</label>
                   <input
                     type="password"
                     value={delSenha}
@@ -665,12 +717,8 @@ export default function TiposReuniao() {
               <Tags size={24} />
             </div>
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold text-gray-800 truncate">
-                Tipos de Reunião
-              </h1>
-              <p className="text-xs text-gray-500">
-                Cadastro • periodicidade • ATA principal • reuniões vinculadas
-              </p>
+              <h1 className="text-2xl font-bold text-gray-800 truncate">Tipos de Reunião</h1>
+              <p className="text-xs text-gray-500">Cadastro • periodicidade • ATA principal • reuniões vinculadas</p>
             </div>
           </div>
 
@@ -686,11 +734,7 @@ export default function TiposReuniao() {
                   className="w-full bg-transparent outline-none text-sm text-gray-700"
                 />
                 {q?.length > 0 && (
-                  <button
-                    onClick={() => setQ("")}
-                    className="text-gray-400 hover:text-gray-700"
-                    title="Limpar"
-                  >
+                  <button onClick={() => setQ("")} className="text-gray-400 hover:text-gray-700" title="Limpar">
                     <X size={16} />
                   </button>
                 )}
@@ -745,9 +789,7 @@ export default function TiposReuniao() {
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
             <p className="text-sm text-gray-600">
               {loading ? "Carregando..." : `${tiposFiltrados.length} tipo(s)`}
-              {countsLoading && (
-                <span className="ml-2 text-xs text-gray-400">(contando reuniões...)</span>
-              )}
+              {countsLoading && <span className="ml-2 text-xs text-gray-400">(contando reuniões...)</span>}
             </p>
 
             <button
@@ -762,20 +804,14 @@ export default function TiposReuniao() {
 
           <div className="p-5 overflow-y-auto flex-1">
             {loading ? (
-              <div className="text-gray-400 text-center py-20">
-                Carregando Tipos de Reunião...
-              </div>
+              <div className="text-gray-400 text-center py-20">Carregando Tipos de Reunião...</div>
             ) : tiposFiltrados.length === 0 ? (
-              <div className="text-gray-400 text-center py-20">
-                Nenhum tipo encontrado.
-              </div>
+              <div className="text-gray-400 text-center py-20">Nenhum tipo encontrado.</div>
             ) : view === "cards" ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {tiposFiltrados.map((t) => {
                   const periodicidade =
-                    PERIODICIDADES.find((p) => p.value === t?.periodicidade)?.label ||
-                    t?.periodicidade ||
-                    "—";
+                    PERIODICIDADES.find((p) => p.value === t?.periodicidade)?.label || t?.periodicidade || "—";
                   const dias = formatDiasSemana(t?.dias_semana);
                   const horaIni = formatHora(t?.horario_inicio);
                   const horaFim = formatHora(t?.horario_fim);
@@ -788,17 +824,11 @@ export default function TiposReuniao() {
                       className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow group"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <button
-                          onClick={() => openDrawer(t)}
-                          className="min-w-0 text-left"
-                          title="Abrir detalhes"
-                        >
+                        <button onClick={() => openDrawer(t)} className="min-w-0 text-left" title="Abrir detalhes">
                           <h3 className="font-bold text-gray-900 text-base truncate group-hover:text-blue-700 transition-colors">
                             {t?.nome || "Sem nome"}
                           </h3>
-                          <p className="text-xs text-gray-500 mt-0.5 truncate">
-                            {t?.slug ? `slug: ${t.slug}` : "slug: —"}
-                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5 truncate">{t?.slug ? `slug: ${t.slug}` : "slug: —"}</p>
                         </button>
 
                         <div className="flex items-center gap-2">
@@ -807,18 +837,10 @@ export default function TiposReuniao() {
                             style={{ backgroundColor: t?.cor || "#111827" }}
                             title={t?.cor || "Sem cor"}
                           />
-                          <button
-                            onClick={() => openEdit(t)}
-                            className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"
-                            title="Editar"
-                          >
+                          <button onClick={() => openEdit(t)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600" title="Editar">
                             <Pencil size={16} />
                           </button>
-                          <button
-                            onClick={() => requestDelete(t)}
-                            className="p-2 rounded-lg hover:bg-red-50 text-red-600"
-                            title="Excluir"
-                          >
+                          <button onClick={() => requestDelete(t)} className="p-2 rounded-lg hover:bg-red-50 text-red-600" title="Excluir">
                             <Trash2 size={16} />
                           </button>
                         </div>
@@ -839,9 +861,7 @@ export default function TiposReuniao() {
                           <FileText size={14} />
                           ATA Principal
                         </div>
-                        <p className="text-sm text-gray-700 mt-1 line-clamp-3">
-                          {preview || "Sem ATA cadastrada."}
-                        </p>
+                        <p className="text-sm text-gray-700 mt-1 line-clamp-3">{preview || "Sem ATA cadastrada."}</p>
                       </div>
 
                       <div className="mt-4 flex items-center justify-between">
@@ -872,33 +892,23 @@ export default function TiposReuniao() {
                   <tbody className="border border-gray-200">
                     {tiposFiltrados.map((t) => {
                       const periodicidade =
-                        PERIODICIDADES.find((p) => p.value === t?.periodicidade)?.label ||
-                        t?.periodicidade ||
-                        "—";
+                        PERIODICIDADES.find((p) => p.value === t?.periodicidade)?.label || t?.periodicidade || "—";
                       const c = counts[t.id];
 
                       return (
                         <tr key={t.id} className="border-t border-gray-100 hover:bg-blue-50/20">
                           <td className="px-3 py-2">
-                            <button
-                              onClick={() => openDrawer(t)}
-                              className="font-bold text-gray-900 hover:text-blue-700"
-                              title="Abrir detalhes"
-                            >
+                            <button onClick={() => openDrawer(t)} className="font-bold text-gray-900 hover:text-blue-700" title="Abrir detalhes">
                               {t?.nome || "Sem nome"}
                             </button>
-                            <div className="text-xs text-gray-500">
-                              {t?.slug ? `slug: ${t.slug}` : "slug: —"}
-                            </div>
+                            <div className="text-xs text-gray-500">{t?.slug ? `slug: ${t.slug}` : "slug: —"}</div>
                           </td>
                           <td className="px-3 py-2">{periodicidade}</td>
                           <td className="px-3 py-2">{formatDiasSemana(t?.dias_semana)}</td>
                           <td className="px-3 py-2">
                             {formatHora(t?.horario_inicio)} • {formatHora(t?.horario_fim)}
                           </td>
-                          <td className="px-3 py-2">
-                            {c === null || c === undefined ? "—" : c}
-                          </td>
+                          <td className="px-3 py-2">{c === null || c === undefined ? "—" : c}</td>
                           <td className="px-3 py-2">
                             <div className="flex items-center justify-end gap-2">
                               <button
@@ -933,25 +943,14 @@ export default function TiposReuniao() {
             <div className="w-full max-w-2xl h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col">
               <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: selectedTipo?.cor || "#111827" }}
-                  />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedTipo?.cor || "#111827" }} />
                   <div className="min-w-0">
-                    <h3 className="font-bold text-gray-900 truncate">
-                      {selectedTipo?.nome}
-                    </h3>
-                    <p className="text-xs text-gray-500 truncate">
-                      {selectedTipo?.slug ? `slug: ${selectedTipo.slug}` : ""}
-                    </p>
+                    <h3 className="font-bold text-gray-900 truncate">{selectedTipo?.nome}</h3>
+                    <p className="text-xs text-gray-500 truncate">{selectedTipo?.slug ? `slug: ${selectedTipo.slug}` : ""}</p>
                   </div>
                 </div>
 
-                <button
-                  onClick={closeDrawer}
-                  className="text-gray-400 hover:text-red-500"
-                  title="Fechar"
-                >
+                <button onClick={closeDrawer} className="text-gray-400 hover:text-red-500" title="Fechar">
                   <X size={20} />
                 </button>
               </div>
@@ -960,9 +959,7 @@ export default function TiposReuniao() {
                 {/* Metadados */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                    <p className="text-xs font-bold text-gray-500 uppercase">
-                      Periodicidade
-                    </p>
+                    <p className="text-xs font-bold text-gray-500 uppercase">Periodicidade</p>
                     <p className="text-sm font-bold text-gray-900 mt-1">
                       {PERIODICIDADES.find((p) => p.value === selectedTipo?.periodicidade)?.label ||
                         selectedTipo?.periodicidade ||
@@ -971,32 +968,21 @@ export default function TiposReuniao() {
                   </div>
 
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                    <p className="text-xs font-bold text-gray-500 uppercase">
-                      Dias
-                    </p>
+                    <p className="text-xs font-bold text-gray-500 uppercase">Dias</p>
+                    <p className="text-sm font-bold text-gray-900 mt-1">{formatDiasSemana(selectedTipo?.dias_semana)}</p>
+                  </div>
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-xs font-bold text-gray-500 uppercase">Horário</p>
                     <p className="text-sm font-bold text-gray-900 mt-1">
-                      {formatDiasSemana(selectedTipo?.dias_semana)}
+                      {formatHora(selectedTipo?.horario_inicio)} • {formatHora(selectedTipo?.horario_fim)}
                     </p>
                   </div>
 
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                    <p className="text-xs font-bold text-gray-500 uppercase">
-                      Horário
-                    </p>
+                    <p className="text-xs font-bold text-gray-500 uppercase">Reuniões</p>
                     <p className="text-sm font-bold text-gray-900 mt-1">
-                      {formatHora(selectedTipo?.horario_inicio)} •{" "}
-                      {formatHora(selectedTipo?.horario_fim)}
-                    </p>
-                  </div>
-
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                    <p className="text-xs font-bold text-gray-500 uppercase">
-                      Reuniões
-                    </p>
-                    <p className="text-sm font-bold text-gray-900 mt-1">
-                      {counts[selectedTipo?.id] === null || counts[selectedTipo?.id] === undefined
-                        ? "—"
-                        : counts[selectedTipo?.id]}
+                      {counts[selectedTipo?.id] === null || counts[selectedTipo?.id] === undefined ? "—" : counts[selectedTipo?.id]}
                     </p>
                   </div>
                 </div>
@@ -1042,7 +1028,7 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* ✅ PARTICIPANTES INTERNOS NO DRAWER */}
+                {/* PARTICIPANTES (apenas leitura no drawer) */}
                 <ParticipantesInterno tipoId={selectedTipo?.id} editavel={false} />
 
                 {/* Reuniões vinculadas */}
@@ -1060,9 +1046,7 @@ export default function TiposReuniao() {
                     {reunioesLoading ? (
                       <div className="p-4 text-sm text-gray-500">Carregando reuniões...</div>
                     ) : reunioesTipo.length === 0 ? (
-                      <div className="p-4 text-sm text-gray-500">
-                        Nenhuma reunião encontrada para este tipo.
-                      </div>
+                      <div className="p-4 text-sm text-gray-500">Nenhuma reunião encontrada para este tipo.</div>
                     ) : (
                       <div className="divide-y divide-gray-100">
                         {reunioesTipo.map((r) => {
@@ -1091,17 +1075,10 @@ export default function TiposReuniao() {
                                     <Clock size={12} /> {dtStr}
                                   </p>
                                 </div>
-                                <ArrowRight
-                                  size={18}
-                                  className="text-gray-300 group-hover:text-blue-500"
-                                />
+                                <ArrowRight size={18} className="text-gray-300 group-hover:text-blue-500" />
                               </div>
 
-                              {r.pauta && (
-                                <p className="text-xs text-gray-600 mt-2 line-clamp-2">
-                                  {snippet(r.pauta, 220)}
-                                </p>
-                              )}
+                              {r.pauta && <p className="text-xs text-gray-600 mt-2 line-clamp-2">{snippet(r.pauta, 220)}</p>}
                             </button>
                           );
                         })}
@@ -1131,16 +1108,10 @@ export default function TiposReuniao() {
                 <div className="flex items-center gap-2">
                   <Tags size={18} className="text-gray-700" />
                   <h3 className="font-bold text-gray-900">
-                    {formMode === "create"
-                      ? "Novo tipo de reunião"
-                      : "Editar tipo de reunião"}
+                    {formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}
                   </h3>
                 </div>
-                <button
-                  onClick={() => setFormOpen(false)}
-                  className="text-gray-400 hover:text-red-500"
-                  title="Fechar"
-                >
+                <button onClick={() => setFormOpen(false)} className="text-gray-400 hover:text-red-500" title="Fechar">
                   <X size={20} />
                 </button>
               </div>
@@ -1149,9 +1120,7 @@ export default function TiposReuniao() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Nome */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Nome
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
                     <input
                       value={form.nome}
                       onChange={(e) => {
@@ -1160,10 +1129,7 @@ export default function TiposReuniao() {
                           ...p,
                           nome: v,
                           slug:
-                            formMode === "create" &&
-                            (!p.slug || p.slug === slugify(p.nome))
-                              ? slugify(v)
-                              : p.slug,
+                            formMode === "create" && (!p.slug || p.slug === slugify(p.nome)) ? slugify(v) : p.slug,
                         }));
                       }}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
@@ -1173,9 +1139,7 @@ export default function TiposReuniao() {
 
                   {/* Slug */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Slug
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Slug</label>
                     <input
                       value={form.slug}
                       onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))}
@@ -1189,14 +1153,10 @@ export default function TiposReuniao() {
 
                   {/* Periodicidade */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Periodicidade
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Periodicidade</label>
                     <select
                       value={form.periodicidade}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, periodicidade: e.target.value }))
-                      }
+                      onChange={(e) => setForm((p) => ({ ...p, periodicidade: e.target.value }))}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                     >
                       {PERIODICIDADES.map((p) => (
@@ -1209,9 +1169,7 @@ export default function TiposReuniao() {
 
                   {/* Ordem */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Ordem (opcional)
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ordem (opcional)</label>
                     <input
                       type="number"
                       value={form.ordem ?? ""}
@@ -1223,39 +1181,29 @@ export default function TiposReuniao() {
 
                   {/* Horário início */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Horário (início)
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (início)</label>
                     <input
                       type="time"
                       value={form.horario_inicio || ""}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, horario_inicio: e.target.value }))
-                      }
+                      onChange={(e) => setForm((p) => ({ ...p, horario_inicio: e.target.value }))}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                     />
                   </div>
 
                   {/* Horário fim */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Horário (término)
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (término)</label>
                     <input
                       type="time"
                       value={form.horario_fim || ""}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, horario_fim: e.target.value }))
-                      }
+                      onChange={(e) => setForm((p) => ({ ...p, horario_fim: e.target.value }))}
                       className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                     />
                   </div>
 
                   {/* Dias */}
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
-                      Dias da semana
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Dias da semana</label>
                     <div className="flex flex-wrap gap-2">
                       {DIAS_UI.map((d) => {
                         const active = (form.dias_semana || []).includes(d.value);
@@ -1281,49 +1229,41 @@ export default function TiposReuniao() {
                         );
                       })}
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-2">
-                      Você pode marcar mais de um dia (ex.: Seg/Qua/Sex).
-                    </p>
+                    <p className="text-[11px] text-gray-400 mt-2">Você pode marcar mais de um dia (ex.: Seg/Qua/Sex).</p>
                   </div>
 
-                  {/* ✅ Campo Responsável */}
+                  {/* Responsável */}
                   <div className="md:col-span-2">
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-2">
-                        <User size={14}/> Responsável Padrão (Organizador)
+                      <User size={14} /> Responsável Padrão (Organizador)
                     </label>
                     <select
-                        value={form.responsavel_id}
-                        onChange={(e) => setForm(prev => ({ ...prev, responsavel_id: e.target.value }))}
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white"
+                      value={form.responsavel_id}
+                      onChange={(e) => setForm((prev) => ({ ...prev, responsavel_id: e.target.value }))}
+                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white"
                     >
-                        <option value="">Selecione um responsável...</option>
-                        {usuariosAprovadores.map(u => (
-                            <option key={u.id} value={u.id}>
-                                {u.nome} ({u.email})
-                            </option>
-                        ))}
+                      <option value="">Selecione um responsável...</option>
+                      {usuariosAprovadores.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.nome} ({u.email})
+                        </option>
+                      ))}
                     </select>
                   </div>
 
                   {/* Cor */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                      Cor
-                    </label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cor</label>
                     <div className="flex items-center gap-3">
                       <input
                         type="color"
                         value={form.cor || "#111827"}
-                        onChange={(e) =>
-                          setForm((p) => ({ ...p, cor: e.target.value }))
-                        }
+                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
                         className="h-10 w-14 border border-gray-300 rounded"
                       />
                       <input
                         value={form.cor || ""}
-                        onChange={(e) =>
-                          setForm((p) => ({ ...p, cor: e.target.value }))
-                        }
+                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
                         className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
                         placeholder="#111827"
                       />
@@ -1331,25 +1271,21 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* ✅ Seção de Participantes dentro do Modal */}
-                {formMode === 'edit' && form.id ? (
-                    <ParticipantesInterno tipoId={form.id} editavel={true} />
+                {/* Participantes dentro do Modal */}
+                {formMode === "edit" && form.id ? (
+                  <ParticipantesInterno tipoId={form.id} editavel={true} />
                 ) : (
-                    <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
-                        Você poderá adicionar participantes padrão após salvar este tipo de reunião pela primeira vez.
-                    </div>
+                  <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
+                    Você poderá adicionar participantes padrão após salvar este tipo de reunião pela primeira vez.
+                  </div>
                 )}
 
                 {/* ATA Principal */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    ATA Principal
-                  </label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">ATA Principal</label>
                   <textarea
                     value={form.ata_principal}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, ata_principal: e.target.value }))
-                    }
+                    onChange={(e) => setForm((p) => ({ ...p, ata_principal: e.target.value }))}
                     rows={10}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none font-sans text-sm whitespace-pre-wrap"
                     placeholder="Cole aqui a ata principal..."
