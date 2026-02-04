@@ -20,14 +20,160 @@ import {
   Hash,
   CheckCircle2,
   AlertTriangle,
-  ShieldAlert // ✅ Ícone de segurança
+  ShieldAlert,
+  Users,   // ✅ Adicionado
+  Loader2, // ✅ Adicionado
+  User     // ✅ Adicionado
 } from "lucide-react";
 
 /**
- * TABELAS ESPERADAS
- * - public.tipos_reuniao
- * - public.reunioes
+ * COMPONENTE INTERNO: PARTICIPANTES
+ * Gerencia a lista de participantes padrão dentro do Modal
  */
+function ParticipantesInterno({ tipoId, editavel }) {
+  const [participantes, setParticipantes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [usuariosInove, setUsuariosInove] = useState([]);
+  const [busca, setBusca] = useState("");
+
+  useEffect(() => {
+    if (tipoId) {
+      fetchParticipantes();
+      fetchUsuariosInove();
+    }
+  }, [tipoId]);
+
+  const fetchUsuariosInove = async () => {
+    const { data } = await supabaseInove
+      .from("usuarios_aprovadores")
+      .select("id, nome, email, cargo, ativo")
+      .eq("ativo", true)
+      .order("nome");
+    setUsuariosInove(data || []);
+  };
+
+  const fetchParticipantes = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("participantes_tipo_reuniao")
+      .select("*")
+      .eq("tipo_reuniao_id", tipoId);
+    setParticipantes(data || []);
+    setLoading(false);
+  };
+
+  const adicionar = async (usuario) => {
+    if (participantes.some(p => p.usuario_id === usuario.id)) return;
+
+    const { data, error } = await supabase
+      .from("participantes_tipo_reuniao")
+      .insert({
+        tipo_reuniao_id: tipoId,
+        usuario_id: usuario.id,
+        nome: usuario.nome,
+        email: usuario.email,
+        cargo: usuario.cargo
+      })
+      .select();
+
+    if (!error && data) {
+      setParticipantes([...participantes, data[0]]);
+      setBusca("");
+    }
+  };
+
+  const remover = async (id) => {
+    const { error } = await supabase
+      .from("participantes_tipo_reuniao")
+      .delete()
+      .eq("id", id);
+    
+    if (!error) {
+      setParticipantes(participantes.filter(p => p.id !== id));
+    }
+  };
+
+  const usuariosFiltrados = usuariosInove.filter(u => 
+    !participantes.some(p => p.usuario_id === u.id) &&
+    (u.nome.toLowerCase().includes(busca.toLowerCase()) || 
+     u.email.toLowerCase().includes(busca.toLowerCase()))
+  ).slice(0, 5);
+
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-4">
+      <div className="flex items-center justify-between mb-2">
+        <label className="block text-xs font-bold text-gray-500 uppercase flex items-center gap-2">
+          <Users size={14} /> Participantes Padrão 
+          <span className="bg-gray-100 text-gray-600 px-1.5 rounded-full ml-1">{participantes.length}</span>
+        </label>
+      </div>
+
+      {editavel && (
+        <div className="relative mb-3">
+          <div className="flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-blue-100">
+            <div className="pl-2 text-gray-400"><Search size={14} /></div>
+            <input 
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar nome ou email para adicionar..."
+              className="w-full text-sm p-2 outline-none"
+            />
+          </div>
+          {busca.length > 0 && usuariosFiltrados.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden">
+              {usuariosFiltrados.map(u => (
+                <button 
+                  key={u.id} 
+                  type="button"
+                  onClick={() => adicionar(u)}
+                  className="w-full text-left p-2 hover:bg-blue-50 text-sm flex justify-between items-center group border-b border-gray-50 last:border-0"
+                >
+                  <div>
+                    <div className="font-bold text-gray-700">{u.nome}</div>
+                    <div className="text-[10px] text-gray-400">{u.email}</div>
+                  </div>
+                  <Plus size={14} className="text-blue-600" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+        {loading ? (
+          <div className="text-center py-2"><Loader2 className="animate-spin mx-auto text-gray-400" size={16} /></div>
+        ) : participantes.length === 0 ? (
+          <div className="text-xs text-gray-400 italic text-center p-2 border border-dashed rounded bg-gray-50">
+            Nenhum participante fixo definido.
+          </div>
+        ) : (
+          participantes.map(p => (
+            <div key={p.id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200 shadow-sm">
+              <div className="min-w-0 flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+                  {p.nome?.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-gray-800 truncate">{p.nome}</p>
+                  <p className="text-[10px] text-gray-500 truncate">{p.email}</p>
+                </div>
+              </div>
+              {editavel && (
+                <button type="button" onClick={() => remover(p.id)} className="text-gray-300 hover:text-red-500 p-1 transition-colors">
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- FIM COMPONENTE INTERNO ---
+
 const REUNIOES_TIPO_FIELD = "tipo_reuniao";
 
 const DIAS_UI = [
@@ -79,6 +225,15 @@ function snippet(text, max = 160) {
   return clean.length > max ? clean.slice(0, max) + "..." : clean;
 }
 
+function badge(icon, label) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+      {icon}
+      {label}
+    </span>
+  );
+}
+
 export default function TiposReuniao() {
   const navigate = useNavigate();
 
@@ -101,6 +256,8 @@ export default function TiposReuniao() {
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState("create");
   const [saving, setSaving] = useState(false);
+  
+  // ✅ Form State com campo responsavel_id
   const [form, setForm] = useState({
     id: null,
     nome: "",
@@ -112,7 +269,11 @@ export default function TiposReuniao() {
     ata_principal: "",
     cor: "#111827",
     ordem: null,
+    responsavel_id: "" // ✅ Novo campo
   });
+
+  // ✅ Lista de Usuários para o Select
+  const [usuariosAprovadores, setUsuariosAprovadores] = useState([]);
 
   // ✅ Estados para Exclusão Segura
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
@@ -125,6 +286,7 @@ export default function TiposReuniao() {
 
   useEffect(() => {
     fetchTipos();
+    fetchUsuariosAprovadores(); // ✅ Buscar usuários ao montar
     
     // Ler nível do usuário
     try {
@@ -138,13 +300,21 @@ export default function TiposReuniao() {
     }
   }, []);
 
+  const fetchUsuariosAprovadores = async () => {
+    const { data } = await supabaseInove
+      .from("usuarios_aprovadores")
+      .select("id, nome, email")
+      .eq("ativo", true)
+      .order("nome");
+    setUsuariosAprovadores(data || []);
+  };
+
   const fetchTipos = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("tipos_reuniao")
-      .select(
-        "id, nome, slug, periodicidade, dias_semana, horario_inicio, horario_fim, ata_principal, cor, ordem"
-      )
+      // ✅ Incluir responsavel_id na query
+      .select("id, nome, slug, periodicidade, dias_semana, horario_inicio, horario_fim, ata_principal, cor, ordem, responsavel_id")
       .order("ordem", { ascending: true, nullsFirst: false })
       .order("nome", { ascending: true });
 
@@ -271,6 +441,7 @@ export default function TiposReuniao() {
       ata_principal: "",
       cor: "#111827",
       ordem: null,
+      responsavel_id: "", // ✅ Reset
     });
     setFormOpen(true);
   };
@@ -292,6 +463,7 @@ export default function TiposReuniao() {
       ata_principal: tipo?.ata_principal ?? "",
       cor: tipo?.cor ?? "#111827",
       ordem: tipo?.ordem ?? null,
+      responsavel_id: tipo?.responsavel_id || "", // ✅ Carregar valor
     });
     setFormOpen(true);
   };
@@ -340,6 +512,7 @@ export default function TiposReuniao() {
           form.ordem === "" || form.ordem === null || Number.isNaN(Number(form.ordem))
             ? null
             : Number(form.ordem),
+        responsavel_id: form.responsavel_id || null, // ✅ Salvar
       };
 
       if (formMode === "create") {
@@ -354,154 +527,132 @@ export default function TiposReuniao() {
       }
 
       setFormOpen(false);
-      await fetchTipos();
-
-      if (selectedTipo?.id && formMode === "edit" && selectedTipo.id === form.id) {
-        const updated = (tipos || []).find((t) => t.id === form.id);
-        if (updated) setSelectedTipo(updated);
-        await fetchReunioesTipo(updated || selectedTipo);
-      }
-    } catch (e) {
-      console.error(e);
-      alert(`Erro ao salvar: ${e?.message || "falha"}`);
+      fetchTipos();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao salvar.");
     } finally {
       setSaving(false);
     }
   };
 
-  // ---------- DELETE (COM AUTH) ----------
   const requestDelete = (tipo) => {
-    // Abre o modal de autenticação em vez de deletar direto
+    if (!checkEditPermission()) return;
     setSelectedTipo(tipo);
-    setShowDeleteAuth(true);
     setDelLogin("");
     setDelSenha("");
+    setShowDeleteAuth(true);
   };
 
-  const confirmarExclusao = async () => {
-    if (!selectedTipo?.id) return;
-    if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
-    
+  const confirmDelete = async () => {
+    if (!delLogin || !delSenha) {
+      alert("Informe login e senha para excluir.");
+      return;
+    }
     setDeleting(true);
     try {
-      // 1. Validar Usuário (INOVE)
-      const { data: usuario, error: errAuth } = await supabaseInove
+      const { data: usuario, error: authError } = await supabaseInove
         .from("usuarios_aprovadores")
-        .select("id, login, senha, nivel, ativo")
+        .select("id, nivel, ativo")
         .eq("login", delLogin)
         .eq("senha", delSenha)
         .eq("ativo", true)
         .maybeSingle();
 
-      if (errAuth) throw errAuth;
-
+      if (authError) throw authError;
       if (!usuario) {
-        alert("Credenciais inválidas.");
+        alert("Login ou senha incorretos ou usuário inativo.");
         setDeleting(false);
         return;
       }
 
-      // 2. Apenas ADMINISTRADOR pode excluir
-      if (usuario.nivel !== "Administrador") {
-        alert("Permissão negada. Apenas Administradores podem excluir Tipos de Reunião.");
+      if (usuario.nivel !== "Administrador" && usuario.nivel !== "Gestor") {
+        alert("Apenas Administradores e Gestores podem excluir tipos.");
         setDeleting(false);
         return;
       }
 
-      // 3. Verificar se há reuniões vinculadas
-      const tipoKey = selectedTipo?.nome || selectedTipo?.slug || "";
-      const { count } = await supabase
-        .from("reunioes")
-        .select("id", { count: "exact", head: true })
-        .eq(REUNIOES_TIPO_FIELD, tipoKey);
+      const { error: delError } = await supabase
+        .from("tipos_reuniao")
+        .delete()
+        .eq("id", selectedTipo.id);
 
-      if ((count ?? 0) > 0) {
-        const ok = window.confirm(
-          `ATENÇÃO: Existem ${count} reunião(ões) vinculadas a este tipo.\n\nSe você apagar, elas ficarão sem categoria.\n\nDeseja continuar mesmo assim?`
-        );
-        if (!ok) {
-          setDeleting(false);
-          return;
-        }
-      }
-
-      // 4. Excluir
-      const { error } = await supabase.from("tipos_reuniao").delete().eq("id", selectedTipo.id);
-      if (error) throw error;
+      if (delError) throw delError;
 
       setShowDeleteAuth(false);
-      closeDrawer();
-      await fetchTipos();
+      setSelectedTipo(null);
+      fetchTipos();
       alert("Tipo excluído com sucesso.");
-
-    } catch (e) {
-      console.error(e);
-      alert(`Erro ao excluir: ${e?.message || "falha"}`);
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir.");
     } finally {
       setDeleting(false);
     }
   };
 
-  // ---------- UI helpers ----------
-  const badge = (icon, text) => (
-    <span className="inline-flex items-center gap-1 text-xs font-bold text-gray-700 bg-gray-100 border border-gray-200 px-2 py-1 rounded-full">
-      {icon}
-      {text}
-    </span>
-  );
-
   return (
-    <Layout>
-      <div className="p-6 h-full flex flex-col font-sans bg-gray-50 relative">
-        
-        {/* ✅ OVERLAY DE EXCLUSÃO (LOGIN/SENHA) */}
+    <Layout title="Tipos de Reunião">
+      <div className="flex flex-col h-full relative">
+        {/* Modal Auth Delete */}
         {showDeleteAuth && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur flex flex-col items-center justify-center p-8 animate-in fade-in duration-200">
-            <div className="w-full max-w-sm bg-white border border-red-100 shadow-2xl rounded-2xl p-6 text-center">
-              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-                <ShieldAlert size={24} />
+          <div className="absolute inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-100 flex items-center gap-3 bg-red-50 text-red-700">
+                <ShieldAlert size={20} />
+                <h3 className="font-bold">Autorização de Exclusão</h3>
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Confirmar Exclusão</h3>
-              <p className="text-sm text-slate-500 mb-6">
-                Ação restrita a <b>Administradores</b>.
-              </p>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-gray-600">
+                  Esta ação é irreversível. Informe suas credenciais de{" "}
+                  <b>Gestor</b> ou <b>Administrador</b> para confirmar a exclusão de:
+                  <br />
+                  <span className="font-bold text-gray-900">
+                    {selectedTipo?.nome}
+                  </span>
+                </p>
 
-              <div className="space-y-3 text-left">
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
-                  <input 
-                    type="text" 
-                    autoFocus
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Login
+                  </label>
+                  <input
                     value={delLogin}
-                    onChange={e => setDelLogin(e.target.value)}
+                    onChange={(e) => setDelLogin(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-red-100"
+                    placeholder="Seu login"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
-                  <input 
-                    type="password" 
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-                    value={delSenha}
-                    onChange={e => setDelSenha(e.target.value)}
-                  />
-                </div>
-              </div>
 
-              <div className="flex gap-3 mt-6">
-                <button 
-                  onClick={() => setShowDeleteAuth(false)}
-                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={confirmarExclusao}
-                  disabled={deleting}
-                  className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
-                >
-                  {deleting ? "Verificando..." : "Confirmar Exclusão"}
-                </button>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Senha
+                  </label>
+                  <input
+                    type="password"
+                    value={delSenha}
+                    onChange={(e) => setDelSenha(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-red-100"
+                    placeholder="Sua senha"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowDeleteAuth(false)}
+                    className="flex-1 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 font-bold text-gray-800"
+                    disabled={deleting}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold"
+                    disabled={deleting}
+                  >
+                    {deleting ? "Verificando..." : "Confirmar Exclusão"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -700,14 +851,6 @@ export default function TiposReuniao() {
                         >
                           Ver reuniões <ArrowRight size={16} />
                         </button>
-
-                        <button
-                          onClick={() => navigate("/central-reunioes")}
-                          className="text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold"
-                          title="Abrir Agenda Tática"
-                        >
-                          Agenda
-                        </button>
                       </div>
                     </div>
                   );
@@ -899,6 +1042,9 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
+                {/* ✅ PARTICIPANTES INTERNOS NO DRAWER */}
+                <ParticipantesInterno tipoId={selectedTipo?.id} editavel={false} />
+
                 {/* Reuniões vinculadas */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -922,8 +1068,11 @@ export default function TiposReuniao() {
                         {reunioesTipo.map((r) => {
                           const dt = new Date(r.data_hora);
                           const dtStr = dt.toLocaleString("pt-BR", {
-                            dateStyle: "short",
-                            timeStyle: "short",
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           });
 
                           return (
@@ -996,7 +1145,7 @@ export default function TiposReuniao() {
                 </button>
               </div>
 
-              <div className="p-6 space-y-5">
+              <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Nome */}
                   <div>
@@ -1137,6 +1286,25 @@ export default function TiposReuniao() {
                     </p>
                   </div>
 
+                  {/* ✅ Campo Responsável */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-2">
+                        <User size={14}/> Responsável Padrão (Organizador)
+                    </label>
+                    <select
+                        value={form.responsavel_id}
+                        onChange={(e) => setForm(prev => ({ ...prev, responsavel_id: e.target.value }))}
+                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white"
+                    >
+                        <option value="">Selecione um responsável...</option>
+                        {usuariosAprovadores.map(u => (
+                            <option key={u.id} value={u.id}>
+                                {u.nome} ({u.email})
+                            </option>
+                        ))}
+                    </select>
+                  </div>
+
                   {/* Cor */}
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
@@ -1162,6 +1330,15 @@ export default function TiposReuniao() {
                     </div>
                   </div>
                 </div>
+
+                {/* ✅ Seção de Participantes dentro do Modal */}
+                {formMode === 'edit' && form.id ? (
+                    <ParticipantesInterno tipoId={form.id} editavel={true} />
+                ) : (
+                    <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
+                        Você poderá adicionar participantes padrão após salvar este tipo de reunião pela primeira vez.
+                    </div>
+                )}
 
                 {/* ATA Principal */}
                 <div>
