@@ -443,6 +443,10 @@ export default function Copiloto() {
   const togglePresenca = async (participante) => {
     if (!selecionada?.id) return;
     
+    const reuniaoFinalizada =
+    String(selecionada?.status || "").trim().toUpperCase() === "REALIZADA";
+  if (reuniaoFinalizada) return;
+    
     const novoStatus = !participante.presente;
 
     // Atualização Otimista na UI
@@ -1262,38 +1266,32 @@ export default function Copiloto() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pr-1">
                           {participantesLista.map((p) => (
                             <button
-                              key={p.id || `manual-${p.nome}-${Math.random()}`}
+                              key={p.id || `manual-${p.nome}-${p.usuario_id || "x"}`}
+                              type="button"
+                              disabled={reuniaoFinalizada}
+                              title={reuniaoFinalizada ? "Reunião finalizada: presença bloqueada." : "Clique para marcar presença"}
                               onClick={() => {
                                 if (reuniaoFinalizada) return;
                                 togglePresenca(p);
                               }}
-                              disabled={reuniaoFinalizada}
-                              title={reuniaoFinalizada ? "Reunião finalizada: presença bloqueada." : "Clique para marcar presença"}
-                              className={`flex items-center justify-between p-2 rounded-xl border transition-all group
-                                ${
-                                  p.presente
-                                    ? "bg-green-50 border-green-200"
-                                    : "bg-white border-slate-100 hover:bg-slate-50"
-                                }
-                                ${reuniaoFinalizada ? "opacity-60 cursor-not-allowed pointer-events-none" : ""}
-                              `}
+                              className={[
+                                "flex items-center justify-between p-2 rounded-xl border transition-all group",
+                                p.presente ? "bg-green-50 border-green-200" : "bg-white border-slate-100 hover:bg-slate-50",
+                                reuniaoFinalizada ? "opacity-60 cursor-not-allowed" : ""
+                              ].join(" ")}
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <div
-                                  className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
-                                    p.presente
-                                      ? "bg-green-100 text-green-700 border-green-200"
-                                      : "bg-slate-100 text-slate-500 border-slate-200"
-                                  }`}
+                                  className={[
+                                    "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border",
+                                    p.presente ? "bg-green-100 text-green-700 border-green-200" : "bg-slate-100 text-slate-500 border-slate-200"
+                                  ].join(" ")}
                                 >
                                   {p.nome ? p.nome.charAt(0) : "?"}
                                 </div>
+                            
                                 <div className="min-w-0 text-left">
-                                  <div
-                                    className={`text-xs font-bold truncate ${
-                                      p.presente ? "text-green-800" : "text-slate-700"
-                                    }`}
-                                  >
+                                  <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
                                     {p.nome || "Sem nome"}
                                   </div>
                                   <div className="text-[10px] text-slate-400 truncate">{p.email || "-"}</div>
