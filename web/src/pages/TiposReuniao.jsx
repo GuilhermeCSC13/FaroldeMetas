@@ -23,9 +23,190 @@ import {
   Users,
   Loader2,
   User,
+  Mail,
 } from "lucide-react";
-import EditMeetingTypeForm from "./EditMeetingTypeForm";
-import ParticipantesTipoReuniao from "../components/tatico/ParticipantesTipoReuniao";
+
+/**
+ * PARTICIPANTES (mesma fonte do organizador)
+ * - NÃO busca usuários aqui dentro
+ * - Recebe `usuariosAprovadores` do pai (mesma query que funciona)
+ */
+function ParticipantesInterno({ tipoId, editavel, usuariosAprovadores = [] }) {
+  const [participantes, setParticipantes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busca, setBusca] = useState("");
+
+  useEffect(() => {
+    if (tipoId) fetchParticipantes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoId]);
+
+  const fetchParticipantes = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("participantes_tipo_reuniao")
+      .select("*")
+      .eq("tipo_reuniao_id", tipoId)
+      .order("nome", { ascending: true });
+
+    if (error) {
+      console.warn("Erro ao carregar participantes_tipo_reuniao:", error.message);
+      setParticipantes([]);
+      setLoading(false);
+      return;
+    }
+
+    setParticipantes(data || []);
+    setLoading(false);
+  };
+
+  const adicionar = async (usuario) => {
+    if (!tipoId || !usuario?.id) return;
+
+    // ✅ dedupe por usuario_id (id do usuarios_aprovadores)
+    if (participantes.some((p) => String(p.usuario_id) === String(usuario.id))) return;
+
+    const payload = {
+      tipo_reuniao_id: tipoId,
+      usuario_id: usuario.id,
+      nome: usuario.nome,
+      email: usuario.email,
+    };
+
+    const { data, error } = await supabase
+      .from("participantes_tipo_reuniao")
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn("Erro ao inserir participante:", error.message);
+      alert("Erro ao adicionar participante.");
+      return;
+    }
+
+    setParticipantes((prev) => [...prev, data]);
+    setBusca("");
+  };
+
+  const remover = async (id) => {
+    const { error } = await supabase.from("participantes_tipo_reuniao").delete().eq("id", id);
+    if (error) {
+      console.warn("Erro ao remover participante:", error.message);
+      alert("Erro ao remover participante.");
+      return;
+    }
+    setParticipantes((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const usuariosFiltrados = useMemo(() => {
+    const term = busca.trim().toLowerCase();
+    if (!term) return [];
+
+    return (usuariosAprovadores || [])
+      .filter((u) => {
+        if (!u?.id) return false;
+
+        // não mostrar quem já está adicionado
+        const jaExiste = participantes.some((p) => String(p.usuario_id) === String(u.id));
+        if (jaExiste) return false;
+
+        const nome = String(u?.nome || "").toLowerCase();
+        const email = String(u?.email || "").toLowerCase();
+
+        return nome.includes(term) || email.includes(term);
+      })
+      .slice(0, 5);
+  }, [usuariosAprovadores, participantes, busca]);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-3">
+        <label className="block text-xs font-bold text-gray-500 uppercase flex items-center gap-2">
+          <Users size={14} /> Participantes Padrão
+        </label>
+        <span className="bg-gray-100 text-gray-600 px-2 py-0.5 text-xs font-bold rounded-full">
+          {participantes.length}
+        </span>
+      </div>
+
+      {editavel && (
+        <div className="relative mb-3">
+          <div className="flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-blue-100">
+            <div className="pl-3 text-gray-400">
+              <Search size={14} />
+            </div>
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar..."
+              className="w-full text-sm p-2 outline-none placeholder:text-gray-400"
+            />
+          </div>
+
+          {busca.length > 0 && usuariosFiltrados.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 shadow-xl rounded-lg overflow-hidden">
+              {usuariosFiltrados.map((u) => (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => adicionar(u)}
+                  className="w-full text-left p-2 hover:bg-blue-50 text-sm flex justify-between items-center group border-b border-gray-50 last:border-0"
+                >
+                  <div className="min-w-0">
+                    <div className="font-bold text-gray-700 truncate">{u.nome}</div>
+                    <div className="text-[10px] text-gray-400 truncate">{u.email}</div>
+                  </div>
+                  <Plus size={14} className="text-blue-600 shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2 overflow-y-auto pr-1 flex-1 min-h-[100px] max-h-[300px]">
+        {loading ? (
+          <div className="text-center py-2">
+            <Loader2 className="animate-spin mx-auto text-gray-400" size={16} />
+          </div>
+        ) : participantes.length === 0 ? (
+          <div className="text-xs text-gray-400 italic text-center p-4 border border-dashed rounded-lg bg-gray-50">
+            Nenhum participante fixo.
+          </div>
+        ) : (
+          participantes.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm"
+            >
+              <div className="min-w-0 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-xs font-bold shrink-0 uppercase border border-green-200">
+                  {String(p.nome || "?").charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-gray-800 truncate">{p.nome || "-"}</p>
+                  <p className="text-[10px] text-gray-500 truncate">{p.email || "-"}</p>
+                </div>
+              </div>
+
+              {editavel && (
+                <button
+                  type="button"
+                  onClick={() => remover(p.id)}
+                  className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded transition-all"
+                  title="Remover"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
 
 // -----------------------------
 const REUNIOES_TIPO_FIELD = "tipo_reuniao";
@@ -117,7 +298,7 @@ export default function TiposReuniao() {
     horario_inicio: "09:00",
     horario_fim: "",
     ata_principal: "",
-    cor: "#111827",
+    cor: "#3B82F6", // Default blueish
     ordem: null,
     responsavel_id: "",
   });
@@ -148,7 +329,7 @@ export default function TiposReuniao() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ MESMA QUERY DO ORGANIZADOR (e agora é a única usada)
+  // ✅ MESMA QUERY DO ORGANIZADOR
   const fetchUsuariosAprovadores = async () => {
     const { data, error } = await supabaseInove
       .from("usuarios_aprovadores")
@@ -292,7 +473,7 @@ export default function TiposReuniao() {
       horario_inicio: "09:00",
       horario_fim: "",
       ata_principal: "",
-      cor: "#111827",
+      cor: "#3B82F6",
       ordem: null,
       responsavel_id: "",
     });
@@ -312,7 +493,7 @@ export default function TiposReuniao() {
       horario_inicio: formatHora(tipo?.horario_inicio) === "—" ? "" : formatHora(tipo?.horario_inicio),
       horario_fim: formatHora(tipo?.horario_fim) === "—" ? "" : formatHora(tipo?.horario_fim),
       ata_principal: tipo?.ata_principal ?? "",
-      cor: tipo?.cor ?? "#111827",
+      cor: tipo?.cor ?? "#3B82F6",
       ordem: tipo?.ordem ?? null,
       responsavel_id: tipo?.responsavel_id || "",
     });
@@ -430,6 +611,12 @@ export default function TiposReuniao() {
     }
   };
 
+  // Helper para mostrar dados do Responsável
+  const selectedResponsavel = useMemo(() => {
+    if (!form.responsavel_id) return null;
+    return usuariosAprovadores.find((u) => String(u.id) === String(form.responsavel_id));
+  }, [form.responsavel_id, usuariosAprovadores]);
+
   return (
     <Layout title="Tipos de Reunião">
       <div className="flex flex-col h-full relative">
@@ -529,6 +716,7 @@ export default function TiposReuniao() {
                   className={`px-3 py-2 rounded-md flex items-center gap-2 text-sm font-bold transition-all ${
                     view === "cards" ? "bg-white text-blue-600 shadow" : "text-gray-500"
                   }`}
+                  title="Cards"
                 >
                   <LayoutGrid size={16} /> Cards
                 </button>
@@ -613,7 +801,7 @@ export default function TiposReuniao() {
                         <div className="flex items-center gap-2">
                           <div
                             className="w-3 h-3 rounded-full mt-1 shrink-0"
-                            style={{ backgroundColor: t?.cor || "#111827" }}
+                            style={{ backgroundColor: t?.cor || "#3B82F6" }}
                             title={t?.cor || "Sem cor"}
                           />
                           <button onClick={() => openEdit(t)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600" title="Editar">
@@ -716,15 +904,16 @@ export default function TiposReuniao() {
           </div>
         </div>
 
-        {/* DRAWER - Mantém a estrutura original */}
+        {/* DRAWER */}
         {drawerOpen && selectedTipo && (
           <div className="absolute inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
             <div className="w-full max-w-2xl h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col">
               <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedTipo?.cor || "#111827" }} />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedTipo?.cor || "#3B82F6" }} />
                   <div className="min-w-0">
-                    <h2 className="font-bold text-gray-900 truncate">{selectedTipo?.nome}</h2>
+                    <h3 className="font-bold text-gray-900 truncate">{selectedTipo?.nome}</h3>
+                    <p className="text-xs text-gray-500 truncate">{selectedTipo?.slug ? `slug: ${selectedTipo.slug}` : ""}</p>
                   </div>
                 </div>
 
@@ -803,8 +992,8 @@ export default function TiposReuniao() {
                   </div>
                 </div>
 
-                {/* ✅ PARTICIPANTES no drawer (mesma fonte do organizador) */}
-                <ParticipantesTipoReuniao
+                {/* ✅ PARTICIPANTES no drawer */}
+                <ParticipantesInterno
                   tipoId={selectedTipo?.id}
                   editavel={false}
                   usuariosAprovadores={usuariosAprovadores}
@@ -878,16 +1067,259 @@ export default function TiposReuniao() {
           </div>
         )}
 
-        {/* MODAL FORM - Novo componente EditMeetingTypeForm */}
+        {/* MODAL CREATE/EDIT */}
         {formOpen && (
-          <EditMeetingTypeForm
-            mode={formMode}
-            initialData={form}
-            usuariosAprovadores={usuariosAprovadores}
-            onSave={saveTipo}
-            onCancel={() => setFormOpen(false)}
-            isLoading={saving}
-          />
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col border border-gray-200">
+              <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Tags size={18} className="text-gray-700" />
+                  <h3 className="font-bold text-gray-900">
+                    {formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}
+                  </h3>
+                </div>
+                <button onClick={() => setFormOpen(false)} className="text-gray-400 hover:text-red-500" title="Fechar">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Flex Container for Columns */}
+              <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+                {/* ---------------- LEFT COLUMN (Config) ---------------- */}
+                <div className="flex-1 p-6 overflow-y-auto lg:border-r border-gray-100 space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Nome */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
+                      <input
+                        value={form.nome}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setForm((p) => ({
+                            ...p,
+                            nome: v,
+                            slug: formMode === "create" && (!p.slug || p.slug === slugify(p.nome)) ? slugify(v) : p.slug,
+                          }));
+                        }}
+                        className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                        placeholder="Ex.: DBO"
+                      />
+                    </div>
+
+                    {/* Slug */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Slug</label>
+                      <input
+                        value={form.slug}
+                        onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))}
+                        className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                        placeholder="Ex.: dbo"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        Usado para identificação. Se deixar vazio, será gerado automaticamente.
+                      </p>
+                    </div>
+
+                    {/* Periodicidade */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Periodicidade</label>
+                      <select
+                        value={form.periodicidade}
+                        onChange={(e) => setForm((p) => ({ ...p, periodicidade: e.target.value }))}
+                        className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white text-gray-800"
+                      >
+                        {PERIODICIDADES.map((p) => (
+                          <option key={p.value} value={p.value}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Ordem */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ordem (opcional)</label>
+                      <input
+                        type="number"
+                        value={form.ordem ?? ""}
+                        onChange={(e) => setForm((p) => ({ ...p, ordem: e.target.value }))}
+                        className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                        placeholder="Ex.: 1"
+                      />
+                    </div>
+
+                    {/* Horário início */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (início)</label>
+                      <div className="relative">
+                        <input
+                          type="time"
+                          value={form.horario_inicio || ""}
+                          onChange={(e) => setForm((p) => ({ ...p, horario_inicio: e.target.value }))}
+                          className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                        />
+                        <Clock className="absolute right-3 top-3 text-gray-400 pointer-events-none" size={16} />
+                      </div>
+                    </div>
+
+                    {/* Horário fim */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (término)</label>
+                      <div className="relative">
+                        <input
+                          type="time"
+                          value={form.horario_fim || ""}
+                          onChange={(e) => setForm((p) => ({ ...p, horario_fim: e.target.value }))}
+                          className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                        />
+                        <Clock className="absolute right-3 top-3 text-gray-400 pointer-events-none" size={16} />
+                      </div>
+                    </div>
+
+                    {/* Dias */}
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Dias da semana</label>
+                      <div className="flex flex-wrap gap-2">
+                        {DIAS_UI.map((d) => {
+                          const active = (form.dias_semana || []).includes(d.value);
+                          return (
+                            <button
+                              type="button"
+                              key={d.value}
+                              onClick={() => toggleDia(d.value)}
+                              className={`px-3 py-2 rounded-lg border text-sm font-bold transition-colors ${
+                                active
+                                  ? "bg-blue-50 text-blue-700 border-blue-200 ring-1 ring-blue-200"
+                                  : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                              }`}
+                            >
+                              {active ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <CheckCircle2 size={14} /> {d.label}
+                                </span>
+                              ) : (
+                                d.label
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-2">Você pode marcar mais de um dia (ex.: Seg/Qua/Sex).</p>
+                    </div>
+
+                    {/* Cor */}
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cor</label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="color"
+                          value={form.cor || "#3B82F6"}
+                          onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
+                          className="h-10 w-14 border border-gray-300 rounded cursor-pointer"
+                        />
+                        <input
+                          value={form.cor || ""}
+                          onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
+                          className="w-32 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-gray-800"
+                          placeholder="#3B82F6"
+                        />
+                      </div>
+                    </div>
+
+                    {/* ATA Principal */}
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">ATA Principal</label>
+                      <textarea
+                        value={form.ata_principal}
+                        onChange={(e) => setForm((p) => ({ ...p, ata_principal: e.target.value }))}
+                        rows={6}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none font-sans text-sm whitespace-pre-wrap"
+                        placeholder="Cole aqui a ata principal..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* ---------------- RIGHT COLUMN (People) ---------------- */}
+                <div className="w-full lg:w-96 p-6 overflow-y-auto bg-gray-50/50 flex flex-col gap-8">
+                  {/* Organizador */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                      <User size={14} /> Organizador
+                    </label>
+                    <select
+                      value={form.responsavel_id}
+                      onChange={(e) => setForm((prev) => ({ ...prev, responsavel_id: e.target.value }))}
+                      className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white text-gray-800 mb-2"
+                    >
+                      <option value="">Selecione...</option>
+                      {usuariosAprovadores.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.nome}
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedResponsavel && (
+                      <div className="bg-white border border-blue-100 rounded-lg p-3 shadow-sm flex items-center gap-3 mt-3 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 bg-blue-50 text-blue-700 text-[9px] font-bold px-2 py-0.5 rounded-bl-lg">
+                          Organizador padrão
+                        </div>
+                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm shrink-0 uppercase border border-blue-200">
+                          {selectedResponsavel.nome.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-gray-900 text-sm truncate">{selectedResponsavel.nome}</div>
+                          <div className="text-xs text-gray-500 truncate flex items-center gap-1">
+                             {selectedResponsavel.email}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Participantes */}
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {formMode === "edit" && form.id ? (
+                      <ParticipantesInterno
+                        tipoId={form.id}
+                        editavel={true}
+                        usuariosAprovadores={usuariosAprovadores}
+                      />
+                    ) : (
+                      <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
+                        Salve o tipo de reunião primeiro para adicionar participantes padrão.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 shrink-0">
+                <button
+                  onClick={() => setFormOpen(false)}
+                  className="px-5 py-2.5 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 font-bold text-gray-700 shadow-sm transition-colors"
+                  disabled={saving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={saveTipo}
+                  className="px-5 py-2.5 rounded-lg bg-gray-900 hover:bg-gray-950 text-white font-bold shadow-lg shadow-gray-200 transition-colors flex items-center gap-2"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" /> Salvando...
+                    </>
+                  ) : (
+                    "Salvar"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </Layout>
