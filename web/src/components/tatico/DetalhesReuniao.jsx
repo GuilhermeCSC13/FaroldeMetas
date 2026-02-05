@@ -14,7 +14,9 @@ import {
   ShieldAlert,
   User,
   X,
-  Users, // ✅ NOVO
+  Users,
+  UserPlus, // ✅ Ícone novo
+  Mail      // ✅ Ícone novo
 } from "lucide-react";
 import { format, isValid } from "date-fns";
 import { supabase, supabaseInove } from "../../supabaseClient";
@@ -61,9 +63,15 @@ export default function DetalhesReuniao({
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [showSugestoesResp, setShowSugestoesResp] = useState(false);
 
-  // ✅ Participantes do tipo selecionado (lista completa)
+  // ✅ Participantes do TIPO (Padrão - Somente Leitura)
   const [participantesTipo, setParticipantesTipo] = useState([]);
   const [loadingParticipantesTipo, setLoadingParticipantesTipo] = useState(false);
+
+  // ✅ Participantes MANUAIS (Adicionais - Edição)
+  const [participantesManuais, setParticipantesManuais] = useState([]);
+  const [loadingManuais, setLoadingManuais] = useState(false);
+  const [novoParticipante, setNovoParticipante] = useState({ nome: "", email: "" });
+  const [addingPart, setAddingPart] = useState(false);
 
   // Estados para Exclusão de Material
   const [showAuthMaterial, setShowAuthMaterial] = useState(false);
@@ -96,7 +104,7 @@ export default function DetalhesReuniao({
     fetchResponsaveis();
   }, []);
 
-  // ✅ Nome do responsável padrão (Organizador) vindo do tipo (tipos_reuniao.responsavel_id)
+  // ✅ Nome do responsável padrão (Organizador) vindo do tipo
   const responsavelPadraoNome = useMemo(() => {
     const rid = selectedTipo?.responsavel_id;
     if (!rid) return "";
@@ -118,9 +126,9 @@ export default function DetalhesReuniao({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [responsavelPadraoNome, selectedTipo?.id]);
 
-  // ✅ Carregar participantes padrão do tipo selecionado (lista completa)
+  // ✅ Carregar participantes padrão do TIPO selecionado
   useEffect(() => {
-    const loadParticipantes = async () => {
+    const loadParticipantesTipo = async () => {
       const tipoId = selectedTipo?.id;
       if (!tipoId) {
         setParticipantesTipo([]);
@@ -135,20 +143,51 @@ export default function DetalhesReuniao({
           .eq("tipo_reuniao_id", tipoId)
           .order("nome", { ascending: true });
 
-        if (error) {
-          console.warn("Erro participantes_tipo_reuniao:", error.message);
-          setParticipantesTipo([]);
-          return;
-        }
-
+        if (error) throw error;
         setParticipantesTipo(data || []);
+      } catch (err) {
+        console.warn("Erro participantes_tipo_reuniao:", err.message);
+        setParticipantesTipo([]);
       } finally {
         setLoadingParticipantesTipo(false);
       }
     };
 
-    loadParticipantes();
+    loadParticipantesTipo();
   }, [selectedTipo?.id]);
+
+  // ✅ Carregar participantes MANUAIS da reunião (se for edição)
+  useEffect(() => {
+    const loadParticipantesManuais = async () => {
+      // Se estamos editando, busca do banco
+      if (editingReuniao?.id) {
+        setLoadingManuais(true);
+        try {
+          const { data, error } = await supabase
+            .from("participantes_reuniao")
+            .select("*")
+            .eq("reuniao_id", editingReuniao.id)
+            .order("nome", { ascending: true });
+
+          if (error) throw error;
+          setParticipantesManuais(data || []);
+        } catch (err) {
+          console.warn("Erro participantes_reuniao:", err.message);
+        } finally {
+          setLoadingManuais(false);
+        }
+      } else {
+        // Se é nova reunião, verifica se já salvamos algo no formData
+        if (formData.participantes_manuais) {
+          setParticipantesManuais(formData.participantes_manuais);
+        } else {
+          setParticipantesManuais([]);
+        }
+      }
+    };
+
+    loadParticipantesManuais();
+  }, [editingReuniao?.id]);
 
   // Efeito para carregar dados iniciais
   useEffect(() => {
@@ -159,7 +198,7 @@ export default function DetalhesReuniao({
         "09:00";
       const horaFim = extractTime(editingReuniao.horario_fim) || "10:00";
 
-      // ✅ Garante que materiais sempre seja um array, mesmo se vier null do banco
+      // Garante que materiais sempre seja um array
       const materiaisSeguros = Array.isArray(editingReuniao.materiais)
         ? editingReuniao.materiais
         : [];
@@ -180,6 +219,68 @@ export default function DetalhesReuniao({
     const guia = selectedTipo?.ata_principal || "";
     if (!guia) return;
     handleChange("ata", guia);
+  };
+
+  // ✅ ADICIONAR PARTICIPANTE MANUAL
+  const handleAddParticipante = async () => {
+    if (!novoParticipante.nome.trim()) return alert("Informe o nome do participante.");
+    
+    setAddingPart(true);
+    try {
+      if (editingReuniao?.id) {
+        // Se a reunião JÁ EXISTE, salva direto no banco
+        const { data, error } = await supabase
+          .from("participantes_reuniao")
+          .insert({
+            reuniao_id: editingReuniao.id,
+            nome: novoParticipante.nome,
+            email: novoParticipante.email,
+            presente: false // Default
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        setParticipantesManuais((prev) => [...prev, data]);
+      } else {
+        // Se a reunião é NOVA, salva no estado local e no formData
+        const tempId = `temp-${Date.now()}`;
+        const novo = { ...novoParticipante, id: tempId, is_temp: true };
+        const novaLista = [...participantesManuais, novo];
+        setParticipantesManuais(novaLista);
+        handleChange("participantes_manuais", novaLista);
+      }
+      // Limpa inputs
+      setNovoParticipante({ nome: "", email: "" });
+    } catch (err) {
+      alert("Erro ao adicionar participante: " + err.message);
+    } finally {
+      setAddingPart(false);
+    }
+  };
+
+  // ✅ REMOVER PARTICIPANTE MANUAL
+  const handleRemoveParticipante = async (id) => {
+    try {
+      if (editingReuniao?.id && !String(id).startsWith("temp-")) {
+        // Remove do banco
+        const { error } = await supabase
+          .from("participantes_reuniao")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
+      }
+      
+      // Remove do estado local
+      const novaLista = participantesManuais.filter(p => p.id !== id);
+      setParticipantesManuais(novaLista);
+      
+      if (!editingReuniao?.id) {
+        handleChange("participantes_manuais", novaLista);
+      }
+    } catch (err) {
+      alert("Erro ao remover participante: " + err.message);
+    }
   };
 
   // ✅ UPLOAD COM SALVAMENTO IMEDIATO NO BANCO
@@ -519,11 +620,11 @@ export default function DetalhesReuniao({
             </div>
           </div>
 
-          {/* ✅ PARTICIPANTES DA REUNIÃO (Padrão do Tipo) */}
+          {/* ✅ PARTICIPANTES DO TIPO (Padrão - Somente Leitura) */}
           <div className="bg-white border border-slate-200 rounded-xl p-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-2">
               <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2">
-                <Users size={14} /> Participantes da Reunião
+                <Users size={14} /> Padrão do Tipo
               </p>
               <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200">
                 {participantesTipo.length}
@@ -531,25 +632,24 @@ export default function DetalhesReuniao({
             </div>
 
             {loadingParticipantesTipo ? (
-              <div className="mt-2 text-slate-400 text-xs flex items-center gap-2">
+              <div className="text-slate-400 text-xs flex items-center gap-2">
                 <Loader2 size={14} className="animate-spin" /> Carregando...
               </div>
             ) : participantesTipo.length === 0 ? (
-              <div className="mt-2 text-slate-400 text-xs italic">
-                Nenhum participante padrão definido para este tipo.
+              <div className="text-slate-400 text-xs italic">
+                Nenhum participante padrão definido.
               </div>
             ) : (
-              <div className="mt-2 space-y-2 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                 {participantesTipo.map((p) => (
                   <div
                     key={p.id}
-                    className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"
+                    className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 opacity-80"
                   >
                     <div className="min-w-0 flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[11px] font-bold shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold shrink-0">
                         {String(p.nome || "?").charAt(0)}
                       </div>
-
                       <div className="min-w-0">
                         <div className="text-xs font-bold text-slate-800 truncate">
                           {p.nome || "-"}
@@ -557,13 +657,99 @@ export default function DetalhesReuniao({
                         <div className="text-[10px] text-slate-500 truncate">
                           {p.email || ""}
                         </div>
-                        {p.cargo && (
-                          <div className="text-[10px] text-slate-400 truncate">
-                            {p.cargo}
-                          </div>
-                        )}
                       </div>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ✅ PARTICIPANTES MANUAIS / ADICIONAIS */}
+          <div className="bg-white border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2">
+                <UserPlus size={14} /> Adicionais / Manuais
+              </p>
+              <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                {participantesManuais.length}
+              </span>
+            </div>
+
+            {/* Inputs para adicionar (apenas se não realizada) */}
+            {!isRealizada && (
+              <div className="flex gap-2 mb-3 items-center">
+                <input
+                  placeholder="Nome do participante"
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
+                  value={novoParticipante.nome}
+                  onChange={(e) =>
+                    setNovoParticipante((prev) => ({ ...prev, nome: e.target.value }))
+                  }
+                />
+                <input
+                  placeholder="Email (opcional)"
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
+                  value={novoParticipante.email}
+                  onChange={(e) =>
+                    setNovoParticipante((prev) => ({ ...prev, email: e.target.value }))
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={handleAddParticipante}
+                  disabled={addingPart}
+                  className="bg-blue-600 text-white p-1.5 rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+                  title="Adicionar"
+                >
+                  {addingPart ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Lista de Manuais */}
+            {loadingManuais ? (
+              <div className="text-slate-400 text-xs flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Carregando...
+              </div>
+            ) : participantesManuais.length === 0 ? (
+              <div className="text-slate-400 text-xs italic">
+                Nenhum participante adicional.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                {participantesManuais.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-sm"
+                  >
+                    <div className="min-w-0 flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-[10px] font-bold shrink-0">
+                        {String(p.nome || "?").charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">
+                          {p.nome || "-"}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {p.email || ""}
+                        </div>
+                      </div>
+                    </div>
+                    {!isRealizada && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveParticipante(p.id)}
+                        className="text-slate-300 hover:text-red-500 p-1 rounded-md transition-colors"
+                        title="Remover"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
