@@ -1848,6 +1848,3 @@ function AcaoCard({ acao, onClick }) {
     </button>
   );
 }
-
-
-Revisa tudo
