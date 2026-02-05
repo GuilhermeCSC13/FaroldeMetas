@@ -1263,31 +1263,47 @@ export default function Copiloto() {
                           {participantesLista.map((p) => (
                             <button
                               key={p.id || `manual-${p.nome}-${Math.random()}`}
-                              onClick={() => togglePresenca(p)}
-                              className={`flex items-center justify-between p-2 rounded-xl border transition-all group ${
-                                p.presente 
-                                  ? "bg-green-50 border-green-200" 
-                                  : "bg-white border-slate-100 hover:bg-slate-50"
-                              }`}
+                              onClick={() => {
+                                if (reuniaoFinalizada) return;
+                                togglePresenca(p);
+                              }}
+                              disabled={reuniaoFinalizada}
+                              title={reuniaoFinalizada ? "Reunião finalizada: presença bloqueada." : "Clique para marcar presença"}
+                              className={`flex items-center justify-between p-2 rounded-xl border transition-all group
+                                ${
+                                  p.presente
+                                    ? "bg-green-50 border-green-200"
+                                    : "bg-white border-slate-100 hover:bg-slate-50"
+                                }
+                                ${reuniaoFinalizada ? "opacity-60 cursor-not-allowed pointer-events-none" : ""}
+                              `}
                             >
                               <div className="flex items-center gap-2 min-w-0">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
-                                  p.presente 
-                                    ? "bg-green-100 text-green-700 border-green-200" 
-                                    : "bg-slate-100 text-slate-500 border-slate-200"
-                                }`}>
+                                <div
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
+                                    p.presente
+                                      ? "bg-green-100 text-green-700 border-green-200"
+                                      : "bg-slate-100 text-slate-500 border-slate-200"
+                                  }`}
+                                >
                                   {p.nome ? p.nome.charAt(0) : "?"}
                                 </div>
                                 <div className="min-w-0 text-left">
-                                  <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
+                                  <div
+                                    className={`text-xs font-bold truncate ${
+                                      p.presente ? "text-green-800" : "text-slate-700"
+                                    }`}
+                                  >
                                     {p.nome || "Sem nome"}
                                   </div>
                                   <div className="text-[10px] text-slate-400 truncate">{p.email || "-"}</div>
                                 </div>
                               </div>
-                              
+                            
                               <div className="shrink-0 ml-2">
-                                {p.presente ? (
+                                {reuniaoFinalizada ? (
+                                  <Lock size={16} className="text-slate-400" />
+                                ) : p.presente ? (
                                   <CheckCircle2 size={18} className="text-green-500" />
                                 ) : (
                                   <XCircle size={18} className="text-slate-200 group-hover:text-slate-300" />
