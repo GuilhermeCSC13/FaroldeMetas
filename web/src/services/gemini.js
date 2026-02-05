@@ -25,7 +25,7 @@ export const getGeminiFlash = () => {
  */
 export const getGeminiPro = () => {
   // Tente esta versão primeiro (geralmente resolve o 404):
-  return genAI.getGenerativeModel({ model: "gemini-1.5-pro-001" });
+  return genAI.getGenerativeModel({ model: "gemini-2.0-pro-001" });
   
   // OBS: Se o "latest" ainda der erro 404, troque a linha acima por:
   // return genAI.getGenerativeModel({ model: "gemini-1.5-pro-001" });
