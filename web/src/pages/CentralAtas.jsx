@@ -66,7 +66,6 @@ const calculateRealDuration = (startStr, endStr) => {
 // ==========================
 function cleanLeadingSalutation(md) {
   let t = String(md || "").replace(/\r\n/g, "\n").trim();
-  // remove linhas iniciais tipo "Certo, aqui está a ATA..."
   t = t.replace(/^(certo|claro)[^\n]*\n+/gim, "");
   t = t.replace(/^(aqui\s+est[aá]\s+a\s+ata[^\n]*)\n+/gim, "");
   t = t.trim();
@@ -82,9 +81,6 @@ function ensureSpacing(md) {
 }
 
 function boldSectionTitles(md) {
-  // transforma "1. Resumo" -> "## **Resumo**"
-  // transforma "2. Decisões" -> "## **Decisões**"
-  // transforma "3. Ações" -> "## **Ações**"
   let t = String(md || "");
 
   const map = [
@@ -92,12 +88,10 @@ function boldSectionTitles(md) {
     { re: /^\s*(\d+)\s*[\.\)]\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
     { re: /^\s*(\d+)\s*[\.\)]\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
 
-    // se vier em negrito solto
     { re: /^\s*\*\*Resumo\*\*\s*$/gim, rep: "## **Resumo**" },
     { re: /^\s*\*\*Decis(õ|o)es\*\*\s*$/gim, rep: "## **Decisões**" },
     { re: /^\s*\*\*A(ç|c)oes\*\*\s*$/gim, rep: "## **Ações**" },
 
-    // sem numeração
     { re: /^\s*Resumo\s*$/gim, rep: "## **Resumo**" },
     { re: /^\s*Decis(õ|o)es\s*$/gim, rep: "## **Decisões**" },
     { re: /^\s*A(ç|c)oes\s*$/gim, rep: "## **Ações**" },
@@ -113,15 +107,10 @@ function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
   const safeTitulo = String(titulo || "").trim();
   const safeData = String(dataBR || "").trim();
 
-  // cabeçalho padrão:
-  // # Título
-  // **Data:** dd/mm/aaaa
-  // (em markdown, bem renderizado no ReactMarkdown)
   let header = "";
   if (safeTitulo) header += `# ${safeTitulo}\n`;
   if (safeData) header += `**Data:** ${safeData}\n`;
 
-  // remove duplicação de título/data no começo se houver
   const lines = t.split("\n");
   let i = 0;
   while (i < lines.length && !lines[i].trim()) i++;
@@ -131,9 +120,7 @@ function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
   const startsWithDBO = /^d\s*b\s*o\s*[\-–—]/i.test(first) || /^dbo\b/i.test(first);
 
   if (!startsWithHeading) {
-    // se começa com DBO ou com o título solto, substitui por header
     if (startsWithDBO) {
-      // corta linhas iniciais até achar a primeira seção
       let cut = i;
       let guard = 0;
       while (cut < lines.length && guard < 10) {
@@ -152,7 +139,6 @@ function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
       const rest = lines.slice(cut).join("\n").trim();
       t = `${header}\n${rest}`.trim();
     } else {
-      // prefixa se não tem Data cedo
       const hasEarlyDate = lines.slice(0, Math.min(lines.length, 8)).some((l) => /^\s*data\s*:/i.test(l));
       if (!hasEarlyDate && (safeTitulo || safeData)) {
         t = `${header}\n${t}`.trim();
@@ -160,28 +146,24 @@ function normalizeTitleAndDate(raw, { titulo, dataBR } = {}) {
     }
   }
 
-  // normaliza "Data:" perdida
   t = t.replace(/^\s*data\s*:\s*(.+)$/gim, (_, v) => `**Data:** ${String(v).trim()}`);
 
   return t.trim();
 }
 
 function enforceParagraphBreaks(md) {
-  // ✅ O pulo do gato: Markdown ignora newline simples.
-  // Aqui a gente transforma "linhas comuns" em parágrafos reais,
-  // preservando headings (#/##), listas (-/*/1.), blockquote, etc.
   const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
   const out = [];
 
   const isSpecialLine = (s) => {
     const t = s.trim();
-    if (!t) return true; // já é separador
-    if (/^#{1,6}\s+/.test(t)) return true; // headings
-    if (/^(\-|\*|\+)\s+/.test(t)) return true; // listas
-    if (/^\d+\.\s+/.test(t)) return true; // listas numeradas
-    if (/^>\s+/.test(t)) return true; // blockquote
-    if (/^---$/.test(t)) return true; // hr
-    if (/^\*\*Data:\*\*/.test(t)) return true; // linha de data
+    if (!t) return true;
+    if (/^#{1,6}\s+/.test(t)) return true;
+    if (/^(\-|\*|\+)\s+/.test(t)) return true;
+    if (/^\d+\.\s+/.test(t)) return true;
+    if (/^>\s+/.test(t)) return true;
+    if (/^---$/.test(t)) return true;
+    if (/^\*\*Data:\*\*/.test(t)) return true;
     return false;
   };
 
@@ -194,11 +176,10 @@ function enforceParagraphBreaks(md) {
     const curTrim = cur.trim();
     const nextTrim = (next || "").trim();
 
-    if (!curTrim) continue; // já tem quebra
-    if (!nextTrim) continue; // próxima já é quebra
+    if (!curTrim) continue;
+    if (!nextTrim) continue;
     if (isSpecialLine(cur) || isSpecialLine(next)) continue;
 
-    // Se são duas linhas "normais", coloca uma linha em branco entre elas
     out.push("");
   }
 
@@ -207,15 +188,12 @@ function enforceParagraphBreaks(md) {
 
 function negritarPercentuais(md) {
   let t = String(md || "");
-  // 98% -> **98%**
   t = t.replace(/(\b\d{1,3})\s*%/g, "**$1%**");
-  // percentuais com decimal:
   t = t.replace(/(\b\d{1,3}(?:[.,]\d{1,2})?)\s*%/g, "**$1%**");
   return t;
 }
 
 function normalizeSectionsContent(md) {
-  // Remove duplicações tipo "Ações" repetido várias vezes no final
   let t = String(md || "").trim();
 
   t = t.replace(/(##\s+\*\*A(ç|c)oes\*\*\s*\n)(\s*\n)+(##\s+\*\*A(ç|c)oes\*\*\s*\n)+/gim, "$1");
@@ -231,7 +209,6 @@ function ensureMinimumSections(md) {
 }
 
 function bulletizeAcoesSection(md) {
-  // Se a IA vier com "Ações" e linhas soltas, transforma em bullets.
   let t = String(md || "");
 
   const split = t.split(/##\s+\*\*A(ç|c)oes\*\*/i);
@@ -432,6 +409,13 @@ export default function CentralAtas() {
   const [presenca, setPresenca] = useState({ presentes: [], ausentes: [], total: 0 });
   const [loadingPresenca, setLoadingPresenca] = useState(false);
 
+  // ✅ NOVO: nome do arquivo de áudio para mostrar igual na gravação
+  const audioFileName = useMemo(() => {
+    if (!selectedAta) return null;
+    const p = selectedAta?.gravacao_audio_path || selectedAta?.gravacao_path;
+    return p ? p.split("/").pop() : null;
+  }, [selectedAta?.id, selectedAta?.gravacao_audio_path, selectedAta?.gravacao_path]);
+
   const checkUserRole = async () => {
     setIsAdmin(true);
   };
@@ -450,10 +434,7 @@ export default function CentralAtas() {
     }
     setLoadingPresenca(true);
     try {
-      const { data, error } = await supabase
-        .from("participantes_reuniao")
-        .select("reuniao_id, nome, email, presente")
-        .eq("reuniao_id", ataId);
+      const { data, error } = await supabase.from("participantes_reuniao").select("reuniao_id, nome, email, presente").eq("reuniao_id", ataId);
 
       if (error) {
         console.error("Erro carregarPresenca:", error);
@@ -492,11 +473,10 @@ export default function CentralAtas() {
   useEffect(() => {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
-      carregarPresenca(selectedAta.id); // ✅ NOVO
+      carregarPresenca(selectedAta.id);
 
       const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-      // ✅ sempre abrir já padronizado
       setEditedPauta(
         formatAtaMarkdown(selectedAta.pauta || "", {
           titulo: selectedAta.titulo || "Ata da Reunião",
@@ -518,7 +498,7 @@ export default function CentralAtas() {
     } else {
       setMediaUrls({ video: null, audio: null });
       stopPolling();
-      setPresenca({ presentes: [], ausentes: [], total: 0 }); // ✅ NOVO
+      setPresenca({ presentes: [], ausentes: [], total: 0 });
     }
 
     return () => stopPolling();
@@ -537,10 +517,7 @@ export default function CentralAtas() {
     const stGravacao = String(ata.gravacao_status || "").toUpperCase();
 
     const precisaAtualizar =
-      stGravacao.includes("PROCESSANDO") ||
-      stGravacao === "PENDENTE" ||
-      stGravacao === "GRAVANDO" ||
-      stGravacao === "PRONTO_PROCESSAR";
+      stGravacao.includes("PROCESSANDO") || stGravacao === "PENDENTE" || stGravacao === "GRAVANDO" || stGravacao === "PRONTO_PROCESSAR";
 
     if (precisaAtualizar) {
       pollingRef.current = setInterval(() => {
@@ -567,7 +544,7 @@ export default function CentralAtas() {
           stopPolling();
           hydrateMediaUrls(data);
           carregarDetalhes(data);
-          carregarPresenca(data.id); // ✅ NOVO
+          carregarPresenca(data.id);
 
           if (data.pauta) {
             const dataBR = data.data_hora ? new Date(data.data_hora).toLocaleDateString("pt-BR") : "";
@@ -595,10 +572,7 @@ export default function CentralAtas() {
   const hydrateMediaUrls = async (ata) => {
     try {
       const videoUrl = await getSignedOrPublicUrl(ata.gravacao_bucket, ata.gravacao_path);
-      const audioUrl = await getSignedOrPublicUrl(
-        ata.gravacao_audio_bucket || ata.gravacao_bucket,
-        ata.gravacao_audio_path || ata.gravacao_path
-      );
+      const audioUrl = await getSignedOrPublicUrl(ata.gravacao_audio_bucket || ata.gravacao_bucket, ata.gravacao_audio_path || ata.gravacao_path);
       setMediaUrls({ video: videoUrl, audio: audioUrl });
     } catch (e) {
       console.error("Erro URLs:", e);
@@ -606,11 +580,7 @@ export default function CentralAtas() {
   };
 
   const fetchAtas = async () => {
-    const { data, error } = await supabase
-      .from("reunioes")
-      .select("*")
-      .eq("status", "Realizada")
-      .order("data_hora", { ascending: false });
+    const { data, error } = await supabase.from("reunioes").select("*").eq("status", "Realizada").order("data_hora", { ascending: false });
 
     if (error) {
       console.error(error);
@@ -621,11 +591,7 @@ export default function CentralAtas() {
   };
 
   const carregarDetalhes = async (ata) => {
-    const { data: criadas } = await supabase
-      .from("acoes")
-      .select("*")
-      .eq("reuniao_id", ata.id)
-      .order("data_criacao", { ascending: false });
+    const { data: criadas } = await supabase.from("acoes").select("*").eq("reuniao_id", ata.id).order("data_criacao", { ascending: false });
     setAcoesCriadas(criadas || []);
 
     try {
@@ -650,11 +616,7 @@ export default function CentralAtas() {
         return;
       }
 
-      const { data: anteriores } = await supabase
-        .from("acoes")
-        .select("*")
-        .eq("status", "Aberta")
-        .in("reuniao_id", listaIds);
+      const { data: anteriores } = await supabase.from("acoes").select("*").eq("status", "Aberta").in("reuniao_id", listaIds);
 
       setAcoesAnteriores(anteriores || []);
     } catch (err) {
@@ -662,7 +624,7 @@ export default function CentralAtas() {
     }
   };
 
-  // ✅ IA: usa app_prompts SIM (slug="ata_reuniao"). Se não achar, usa fallback.
+  // ✅ IA
   const handleRegenerateIA = async () => {
     const audioUrl = mediaUrls.audio || mediaUrls.video;
     if (!audioUrl || !window.confirm("Gerar novo resumo a partir do áudio da reunião?")) return;
@@ -684,7 +646,6 @@ export default function CentralAtas() {
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
-          // ✅ Fallback PROFISSIONAL (caso app_prompts esteja vazio)
           let promptTemplate = `
 Você é uma secretária executiva sênior, especializada em reuniões operacionais e táticas.
 
@@ -707,30 +668,17 @@ Estrutura obrigatória:
 (Lista em bullets. Se não houver: "Nenhuma ação foi definida nesta reunião.")
 `.trim();
 
-          const { data: promptData } = await supabase
-            .from("app_prompts")
-            .select("prompt_text")
-            .eq("slug", "ata_reuniao")
-            .maybeSingle();
-
+          const { data: promptData } = await supabase.from("app_prompts").select("prompt_text").eq("slug", "ata_reuniao").maybeSingle();
           if (promptData?.prompt_text) promptTemplate = promptData.prompt_text;
 
           const finalPrompt = promptTemplate.replace(/{titulo}/g, titulo).replace(/{data}/g, dataBR);
           const mimeType = blob.type || "video/mp4";
 
-          const result = await model.generateContent([
-            finalPrompt,
-            { inlineData: { data: base64data, mimeType } },
-          ]);
-
+          const result = await model.generateContent([finalPrompt, { inlineData: { data: base64data, mimeType } }]);
           const textoBruto = result.response.text();
-
           const textoFormatado = formatAtaMarkdown(textoBruto, { titulo, dataBR });
 
-          await supabase
-            .from("reunioes")
-            .update({ pauta: textoFormatado, ata_ia_status: "PRONTA" })
-            .eq("id", selectedAta.id);
+          await supabase.from("reunioes").update({ pauta: textoFormatado, ata_ia_status: "PRONTA" }).eq("id", selectedAta.id);
 
           setEditedPauta(textoFormatado);
           setIsEditing(false);
@@ -751,7 +699,7 @@ Estrutura obrigatória:
     }
   };
 
-  // ✅ PDF: exporta SOMENTE a área da ATA (markdown) - VERSÃO CORRIGIDA
+  // ✅ PDF
   const handleGerarPDF = async () => {
     try {
       if (!ataExportRef.current) return alert("Área da ATA não encontrada para exportar.");
@@ -790,7 +738,6 @@ Estrutura obrigatória:
       let remainingHeight = imgHeight;
 
       pdf.addImage(imgData, "PNG", margin, y, imgWidth, imgHeight);
-
       remainingHeight -= pageHeight - margin * 2;
 
       while (remainingHeight > 0) {
@@ -814,7 +761,6 @@ Estrutura obrigatória:
     }
   };
 
-  // --- RESTO DO CÓDIGO (vídeo, anexos, etc.) permanece igual ao seu ---
   const handleSolicitarVideo = async () => {
     if (!selectedAta?.id) return;
 
@@ -836,11 +782,7 @@ Estrutura obrigatória:
     try {
       await supabase.from("reunioes").update({ gravacao_status: "PENDENTE" }).eq("id", selectedAta.id);
 
-      await supabase
-        .from("reuniao_processing_queue")
-        .delete()
-        .eq("reuniao_id", selectedAta.id)
-        .eq("job_type", "RENDER_FIX");
+      await supabase.from("reuniao_processing_queue").delete().eq("reuniao_id", selectedAta.id).eq("job_type", "RENDER_FIX");
 
       const { error } = await supabase.from("reuniao_processing_queue").insert([
         {
@@ -853,17 +795,14 @@ Estrutura obrigatória:
 
       if (error) throw error;
 
-      const response = await fetch(
-        `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`,
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/vnd.github.v3+json",
-            Authorization: `Bearer ${GITHUB_TOKEN}`,
-          },
-          body: JSON.stringify({ ref: "main" }),
-        }
-      );
+      const response = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/actions/workflows/processar_video.yml/dispatches`, {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+        },
+        body: JSON.stringify({ ref: "main" }),
+      });
 
       if (!response.ok) {
         console.error("Falha ao chamar GitHub:", await response.text());
@@ -963,13 +902,7 @@ Estrutura obrigatória:
     if (!delLogin || !delSenha) return alert("Informe Login e Senha.");
     setDeleting(true);
     try {
-      const { data: usuario, error: errAuth } = await supabaseInove
-        .from("usuarios_aprovadores")
-        .select("*")
-        .eq("login", delLogin)
-        .eq("senha", delSenha)
-        .eq("ativo", true)
-        .maybeSingle();
+      const { data: usuario, error: errAuth } = await supabaseInove.from("usuarios_aprovadores").select("*").eq("login", delLogin).eq("senha", delSenha).eq("ativo", true).maybeSingle();
       if (errAuth || !usuario || usuario.nivel !== "Administrador") {
         alert("Apenas Administradores.");
         setDeleting(false);
@@ -1195,7 +1128,10 @@ Estrutura obrigatória:
                     </div>
 
                     {mediaUrls.video && (
-                      <button onClick={() => setIsVideoModalOpen(true)} className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-transparent hover:border-blue-100 transition-all">
+                      <button
+                        onClick={() => setIsVideoModalOpen(true)}
+                        className="text-xs flex items-center gap-1 text-blue-600 font-bold hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-transparent hover:border-blue-100 transition-all"
+                      >
                         <Maximize2 size={14} /> Modo Cinema
                       </button>
                     )}
@@ -1217,7 +1153,11 @@ Estrutura obrigatória:
                         </a>
 
                         {isAdmin && (
-                          <button onClick={handleSolicitarVideo} className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-1 border border-transparent hover:border-red-200 px-2 py-1 rounded transition-colors" title="Admin: Refazer processamento">
+                          <button
+                            onClick={handleSolicitarVideo}
+                            className="text-[10px] text-slate-400 hover:text-red-500 flex items-center gap-1 border border-transparent hover:border-red-200 px-2 py-1 rounded transition-colors"
+                            title="Admin: Refazer processamento"
+                          >
                             <RefreshCw size={10} /> Refazer Compilação
                           </button>
                         )}
@@ -1268,7 +1208,11 @@ Estrutura obrigatória:
                             }`}
                           >
                             {requestingVideo ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
-                            {requestingVideo ? "Solicitando..." : selectedAta.gravacao_status === "PENDENTE" ? "Aguarde o início..." : "Gerar/Refazer Vídeo Completo"}
+                            {requestingVideo
+                              ? "Solicitando..."
+                              : selectedAta.gravacao_status === "PENDENTE"
+                              ? "Aguarde o início..."
+                              : "Gerar/Refazer Vídeo Completo"}
                           </button>
                         )}
                     </div>
@@ -1277,8 +1221,20 @@ Estrutura obrigatória:
 
                 {/* ÁUDIO + IA */}
                 <div className="mb-6">
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase mb-2">
-                    <Headphones size={14} /> Player de Áudio
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+                      <Headphones size={14} /> Player de Áudio
+                    </div>
+
+                    {/* ✅ NOVO: nome do arquivo do lado do player (igual a gravação) */}
+                    {mediaUrls.audio && audioFileName && (
+                      <div
+                        className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 rounded text-[10px] text-slate-500 font-mono border border-slate-200"
+                        title="Nome do arquivo no servidor"
+                      >
+                        <FileText size={10} /> {audioFileName}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -1325,9 +1281,16 @@ Estrutura obrigatória:
                         {selectedAta.materiais.map((item, idx) => {
                           const isImage = item.type?.startsWith("image");
                           return (
-                            <div key={idx} className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm hover:shadow-md transition-shadow"
+                            >
                               <div className="flex items-center gap-3 overflow-hidden">
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isImage ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"}`}>
+                                <div
+                                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isImage ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"
+                                  }`}
+                                >
                                   {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
                                 </div>
                                 <div className="min-w-0">
@@ -1338,10 +1301,18 @@ Estrutura obrigatória:
                                 </div>
                               </div>
                               <div className="flex items-center gap-1">
-                                <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                >
                                   <Download size={16} />
                                 </a>
-                                <button onClick={() => handleDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors">
+                                <button
+                                  onClick={() => handleDeleteMaterial(idx)}
+                                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                >
                                   <Trash2 size={16} />
                                 </button>
                               </div>
@@ -1365,18 +1336,18 @@ Estrutura obrigatória:
                     />
                   ) : (
                     <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
-                      {/* ✅ Este bloco é o que vai para o PDF */}                      
+                      {/* ✅ Este bloco é o que vai para o PDF */}
                       <div ref={ataExportRef} className="bg-white p-6">
                         {/* Cabeçalho (Título + Data + Hora + Duração + Presença) */}
                         <div className="mb-4">
                           <h1 className="text-2xl font-bold text-slate-900">{selectedAta.titulo}</h1>
-                      
+
                           <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
                             <span className="flex items-center gap-1.5">
                               <Calendar size={16} className="text-slate-400" />
                               {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleDateString("pt-BR") : "—"}
                             </span>
-                      
+
                             <span className="flex items-center gap-1.5">
                               <Clock size={16} className="text-slate-400" />
                               {selectedAta.gravacao_inicio
@@ -1388,25 +1359,25 @@ Estrutura obrigatória:
                                 : "--:--"}
                             </span>
                           </div>
-                      
+
                           {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (
                             <div className="mt-2 text-red-600 font-bold text-sm">
                               Essa reunião teve duração de: {calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}
                             </div>
                           )}
-                      
+
                           {/* ✅ LISTA DE PRESENÇA (entra no PDF) */}
                           <div className="mt-4 bg-white border border-slate-200 rounded-lg p-3">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
                                 <User size={14} /> Lista de Presença
                               </div>
-                      
+
                               <div className="text-[10px] font-black px-2 py-1 rounded-lg border bg-slate-50 text-slate-700 border-slate-200">
                                 {loadingPresenca ? "Carregando..." : `Presentes: ${presenca.presentes.length}/${presenca.total}`}
                               </div>
                             </div>
-                      
+
                             {loadingPresenca ? (
                               <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
                                 <Loader2 size={14} className="animate-spin" /> Carregando presença...
@@ -1428,7 +1399,7 @@ Estrutura obrigatória:
                             )}
                           </div>
                         </div>
-                      
+
                         {/* ✅ Pauta / ATA IA (também entra no PDF) */}
                         <div className="mt-6">
                           <ReactMarkdown
@@ -1451,11 +1422,13 @@ Estrutura obrigatória:
                               dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
                             }) || "Sem resumo."}
                           </ReactMarkdown>
-                        </div>                      
+                        </div>
+                      </div>
                     </div>
-                  </div>
                   )}
                 </div>
+
+                {/* AÇÕES / ATA MANUAL */}
               </div>
 
               {/* AÇÕES / ATA MANUAL (mantive igual ao seu código) */}
