@@ -1365,8 +1365,7 @@ Estrutura obrigatória:
                     />
                   ) : (
                     <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
-                      {/* ✅ Este bloco é o que vai para o PDF */}
-                      {/* ✅ ÁREA QUE VAI PARA O PDF */}
+                      {/* ✅ Este bloco é o que vai para o PDF */}                      
                       <div ref={ataExportRef} className="bg-white p-6">
                         {/* Cabeçalho (Título + Data + Hora + Duração + Presença) */}
                         <div className="mb-4">
@@ -1454,6 +1453,7 @@ Estrutura obrigatória:
                           </ReactMarkdown>
                         </div>                      
                     </div>
+                  </div>
                   )}
                 </div>
               </div>
