@@ -25,7 +25,7 @@ import {
   MessageSquare,
   Paperclip,
   Download,
-  // Novos icones para a chamada
+  // Ícones para a chamada
   Crown,
   UserCheck,
   CheckCircle2,
@@ -150,33 +150,32 @@ function safeArray(v) {
 }
 
 /* =========================
-   Page
+   Page Component
 ========================= */
 export default function Copiloto() {
   const { isRecording, isProcessing, timer, startRecording, stopRecording, current } =
     useRecording();
 
-  // filtros esquerda
+  // Filtros Esquerda
   const [dataFiltro, setDataFiltro] = useState(
     new Date().toISOString().split("T")[0]
   );
   const [busca, setBusca] = useState("");
 
-  // reuniões
+  // Lista de Reuniões
   const [reunioes, setReunioes] = useState([]);
   const [selecionada, setSelecionada] = useState(null);
   const [nomeTipoReuniao, setNomeTipoReuniao] = useState("");
 
-  // ======================
-  // ✅ NOVOS ESTADOS PARA CHAMADA
-  // ======================
+  // ==========================================
+  // ESTADOS DA CHAMADA (PRESENÇA)
+  // ==========================================
   const [participantesLista, setParticipantesLista] = useState([]);
   const [organizadorDetalhes, setOrganizadorDetalhes] = useState(null);
   const [loadingParticipantes, setLoadingParticipantes] = useState(false);
 
-  // tabs direita
-  // ✅ Mudança: 'presenca' agora é uma tab possível e será a padrão
-  const [tab, setTab] = useState("presenca"); 
+  // Tabs Direita
+  const [tab, setTab] = useState("presenca"); // presenca | acoes | ata_principal | ata_manual | materiais
 
   // Atas
   const [ataPrincipal, setAtaPrincipal] = useState("");
@@ -197,37 +196,36 @@ export default function Copiloto() {
     responsavelId: "",
     vencimento: "",
   });
-  const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
+  const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); 
   const [creatingAcao, setCreatingAcao] = useState(false);
 
-  // Responsáveis
+  // Responsáveis (para criar ação)
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
-  // Usuário Logado (visual)
+  // Usuário Logado
   const [currentUser, setCurrentUser] = useState(null);
 
-  // Responsável autocomplete
+  // Autocomplete Responsável da Ação
   const [responsavelQuery, setResponsavelQuery] = useState("");
   const [respOpen, setRespOpen] = useState(false);
 
-  // Modal Ação (Central)
-  const [acaoSelecionada, setAcaoSelecionada] = useState(null);
-
-  // Reabrir (ADM)
-  const [showUnlock, setShowUnlock] = useState(false);
+  // Modais
+  const [acaoSelecionada, setAcaoSelecionada] = useState(null); // Detalhes da Ação
+  const [showUnlock, setShowUnlock] = useState(false); // Reabrir Reunião
   const [senhaAdm, setSenhaAdm] = useState("");
 
-  // safe set
+  // Refs e SafeSet
   const isMountedRef = useRef(false);
   const safeSet = (fn) => {
     if (isMountedRef.current) fn();
   };
 
   /* =========================
-     Lifecycle & CTRL+V LISTENER
+     Lifecycle & Listeners
   ========================= */
 
+  // Colar print (Ctrl+V)
   useEffect(() => {
     const handlePaste = (e) => {
       if (!selecionada?.id || tab !== "acoes" || acaoSelecionada) return;
@@ -253,19 +251,16 @@ export default function Copiloto() {
     return () => window.removeEventListener("paste", handlePaste);
   }, [selecionada, tab, acaoSelecionada]);
 
+  // Carregar Dados Iniciais
   useEffect(() => {
     isMountedRef.current = true;
-
     fetchReunioes();
 
     (async () => {
       try {
         safeSet(() => setLoadingResponsaveis(true));
-
         const storedUser = localStorage.getItem("usuario_externo");
-        if (storedUser) {
-          safeSet(() => setCurrentUser(JSON.parse(storedUser)));
-        }
+        if (storedUser) safeSet(() => setCurrentUser(JSON.parse(storedUser)));
 
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
@@ -273,54 +268,43 @@ export default function Copiloto() {
           .eq("ativo", true)
           .order("nome_completo", { ascending: true });
 
-        if (error) {
-          console.error("carregarResponsaveis (usuarios_aprovadores):", error);
-        } else {
-          safeSet(() => setListaResponsaveis(data || []));
-        }
+        if (!error) safeSet(() => setListaResponsaveis(data || []));
       } finally {
         safeSet(() => setLoadingResponsaveis(false));
       }
     })();
 
-    return () => {
-      isMountedRef.current = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { isMountedRef.current = false; };
   }, []);
 
   useEffect(() => {
     fetchReunioes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataFiltro]);
 
+  // Ao selecionar uma reunião
   useEffect(() => {
     if (!selecionada?.id) return;
 
-    // ✅ Resetar para a primeira aba sempre que trocar reunião
-    setTab("presenca");
+    // Reset para a aba de Presença
+    setTab("presenca"); 
     
+    // Carregar dados
     carregarAtas(selecionada);
     fetchAcoes(selecionada);
-    fetchParticipantesEOrganizador(selecionada); // ✅ Busca dados da chamada
+    fetchParticipantesEOrganizador(selecionada); // Lógica de Chamada
 
+    // Reset formulários
     setAcaoTab("reuniao");
-
-    setNovaAcao({
-      descricao: "",
-      observacao: "",
-      responsavelId: "",
-      vencimento: "",
-    });
+    setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
     setResponsavelQuery("");
     setNovasEvidenciasAcao([]);
     setRespOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selecionada?.id]);
 
   /* =========================
-     Fetch Reuniões (do dia)
+     Funções de Dados (Fetch)
   ========================= */
+
   const fetchReunioes = async () => {
     const { data, error } = await supabase
       .from("reunioes")
@@ -330,29 +314,30 @@ export default function Copiloto() {
       .order("data_hora", { ascending: true });
 
     if (error) {
-      console.error("fetchReunioes:", error);
+      console.error("fetchReunioes error:", error);
       return;
     }
 
     const rows = data || [];
     safeSet(() => setReunioes(rows));
 
+    // Manter seleção atualizada se existir
     if (selecionada?.id) {
       const atualizada = rows.find((r) => r.id === selecionada.id) || null;
       if (atualizada) safeSet(() => setSelecionada(atualizada));
       else safeSet(() => setSelecionada(null));
     }
 
+    // Se estiver gravando, focar na reunião atual
     if (isRecording && current?.reuniaoId) {
       const found = rows.find((r) => r.id === current.reuniaoId);
       if (found) safeSet(() => setSelecionada(found));
     }
   };
 
-  /* =========================
-     Fetch Participantes e Organizador
-     (LÓGICA PRINCIPAL DE MESCLAGEM)
-  ========================= */
+  // ----------------------------------------------------
+  // LOGICA PRINCIPAL DA CHAMADA (CORRIGIDA)
+  // ----------------------------------------------------
   const fetchParticipantesEOrganizador = async (r) => {
     if (!r?.id) return;
     setLoadingParticipantes(true);
@@ -360,9 +345,9 @@ export default function Copiloto() {
     setOrganizadorDetalhes(null);
 
     try {
-      // 1. Fetch Organizador (usuario_aprovador)
-      // Tenta pegar da reunião, se n tiver, tenta do tipo
+      // 1. Organizador
       let orgId = r.responsavel_id;
+      // Se não tem na reunião, tenta pegar do tipo
       if (!orgId && r.tipo_reuniao_id) {
         const { data: tp } = await supabase
           .from("tipos_reuniao")
@@ -378,19 +363,16 @@ export default function Copiloto() {
           .select("id, nome, sobrenome, email")
           .eq("id", orgId)
           .maybeSingle();
-        
-        if (!errOrg && org) {
-          setOrganizadorDetalhes(org);
-        }
+        if (!errOrg && org) setOrganizadorDetalhes(org);
       }
 
-      // 2. Fetch Participantes JÁ salvos na reunião (presença confirmada/negada)
+      // 2. Participantes JÁ SALVOS na reunião
       const { data: salvosReuniao } = await supabase
         .from("participantes_reuniao")
         .select("*")
         .eq("reuniao_id", r.id);
 
-      // 3. Fetch Participantes PADRÃO do Tipo (se existir tipo)
+      // 3. Participantes PADRÃO do Tipo (se houver tipo)
       let padraoTipo = [];
       if (r.tipo_reuniao_id) {
         const { data: defs } = await supabase
@@ -400,34 +382,48 @@ export default function Copiloto() {
         padraoTipo = defs || [];
       }
 
-      // 4. MESCLAGEM
-      const mapaSalvos = new Map();
-      (salvosReuniao || []).forEach(p => mapaSalvos.set(String(p.usuario_id), p));
-
+      // 4. MESCLAGEM INTELIGENTE
       const listaFinal = [];
 
-      // Adiciona todos do padrão (se já salvo, usa o salvo. Se não, cria obj visual temp)
-      padraoTipo.forEach(padrao => {
-        const salvo = mapaSalvos.get(String(padrao.usuario_id));
-        if (salvo) {
-          listaFinal.push(salvo);
-          mapaSalvos.delete(String(padrao.usuario_id)); // remove para não duplicar
+      // Mapear os SALVOS que possuem usuario_id (Sistema) vs Manuais
+      const salvosComUser = new Map(); // key: usuario_id
+      const salvosManuais = [];        // array
+
+      (salvosReuniao || []).forEach(p => {
+        if (p.usuario_id) {
+          salvosComUser.set(String(p.usuario_id), p);
         } else {
-          // Cria objeto visual para exibir na lista (ainda não salvo na tabela da reunião)
+          salvosManuais.push(p);
+        }
+      });
+
+      // A. Adicionar do Padrão do Tipo
+      padraoTipo.forEach(padrao => {
+        const salvo = salvosComUser.get(String(padrao.usuario_id));
+        if (salvo) {
+          // Já existe salvo na reunião (marcou presença ou falta)
+          listaFinal.push(salvo);
+          salvosComUser.delete(String(padrao.usuario_id)); // remove do map
+        } else {
+          // Ainda não existe na reunião -> criar objeto visual temporário
           listaFinal.push({
-            id: `temp_${padrao.usuario_id}`, // ID temporário
+            id: `temp_${padrao.usuario_id}`, 
             reuniao_id: r.id,
             usuario_id: padrao.usuario_id,
             nome: padrao.nome,
             email: padrao.email,
-            presente: false, // Padrão ausente até clicar
+            presente: false, 
             is_temp: true
           });
         }
       });
 
-      // Adiciona sobras (alguém adicionado manualmente na reunião que não estava no tipo)
-      mapaSalvos.forEach(salvo => listaFinal.push(salvo));
+      // B. Adicionar quem sobrou do sistema (adicionado extra na reunião)
+      salvosComUser.forEach(salvo => listaFinal.push(salvo));
+
+      // C. Adicionar TODOS os manuais (Sem ID de sistema)
+      // ISSO GARANTE QUE PARTICIPANTES DA REUNIÃO GERAL APAREÇAM
+      salvosManuais.forEach(salvo => listaFinal.push(salvo));
 
       // Ordenar por nome
       listaFinal.sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
@@ -444,7 +440,7 @@ export default function Copiloto() {
     
     const novoStatus = !participante.presente;
 
-    // Atualização Otimista na UI
+    // UI Otimista
     setParticipantesLista(prev => prev.map(p => 
       (p.id === participante.id || (p.is_temp && p.usuario_id === participante.usuario_id))
         ? { ...p, presente: novoStatus } 
@@ -452,7 +448,7 @@ export default function Copiloto() {
     ));
 
     if (participante.is_temp) {
-      // INSERT na tabela participantes_reuniao
+      // INSERT
       const payload = {
         reuniao_id: selecionada.id,
         usuario_id: participante.usuario_id,
@@ -470,12 +466,12 @@ export default function Copiloto() {
 
       if (error) {
         console.error("Erro insert participante", error);
-        // Reverter UI
+        // Rollback
         setParticipantesLista(prev => prev.map(p => 
           p.usuario_id === participante.usuario_id ? { ...p, presente: !novoStatus } : p
         ));
       } else {
-        // Atualiza ID real
+        // Atualiza ID real na lista
         setParticipantesLista(prev => prev.map(p => 
           p.usuario_id === participante.usuario_id ? { ...data, is_temp: false } : p
         ));
@@ -490,7 +486,7 @@ export default function Copiloto() {
 
       if (error) {
         console.error("Erro update participante", error);
-        // Reverter UI
+        // Rollback
         setParticipantesLista(prev => prev.map(p => 
           p.id === participante.id ? { ...p, presente: !novoStatus } : p
         ));
@@ -498,9 +494,7 @@ export default function Copiloto() {
     }
   };
 
-  /* =========================
-     Atas
-  ========================= */
+  // Carregar Atas
   const carregarAtas = async (r) => {
     safeSet(() => {
       setAtaManual(String(r?.ata_manual || "").trim());
@@ -527,17 +521,12 @@ export default function Copiloto() {
 
   const salvarAtaManual = async () => {
     if (!selecionada?.id) return;
-
     const { error } = await supabase
       .from("reunioes")
       .update({ ata_manual: ataManual, updated_at: nowIso() })
       .eq("id", selecionada.id);
 
-    if (error) {
-      alert("Erro ao salvar Ata Manual: " + (error.message || error));
-      return;
-    }
-
+    if (error) return alert("Erro ao salvar Ata: " + error.message);
     setEditAtaManual(false);
     fetchReunioes();
   };
@@ -548,40 +537,29 @@ export default function Copiloto() {
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
     if (isRecording) return;
-
     if (String(selecionada?.status || "").trim() === "Realizada") {
-      return alert(
-        "Essa reunião já está como REALIZADA. Para gravar novamente, use 'Reabrir (ADM)'."
-      );
+      return alert("Reunião já REALIZADA. Use 'Reabrir (ADM)'.");
     }
 
     try {
-      await startRecording({
-        reuniaoId: selecionada.id,
-        reuniaoTitulo: selecionada.titulo,
-      });
-
+      await startRecording({ reuniaoId: selecionada.id, reuniaoTitulo: selecionada.titulo });
       await fetchReunioes();
     } catch (e) {
-      console.error("startRecording (Copiloto):", e);
-      alert("Erro ao iniciar. Verifique permissões de tela e áudio.");
+      console.error("startRecording:", e);
+      alert("Erro ao iniciar gravação.");
     }
   };
 
   const onStop = async () => {
     try {
       await stopRecording();
-
       if (selecionada?.id) {
         await supabase.from("reunioes").update({ status: "Realizada" }).eq("id", selecionada.id);
-      }
-
-      if (selecionada?.id) {
+        
+        // Enfileirar processamento
         const bucket = current?.storageBucket || "gravacoes";
         const prefix = current?.storagePrefix || `reunioes/${selecionada.id}`;
-
-        const { error: qErr } = await supabase.from("reuniao_processing_queue").insert([
-          {
+        await supabase.from("reuniao_processing_queue").insert([{
             reuniao_id: selecionada.id,
             job_type: "BACKFILL_COMPILE_ATA",
             status: "PENDENTE",
@@ -590,107 +568,52 @@ export default function Copiloto() {
             storage_bucket: bucket,
             storage_prefix: prefix,
             result: {},
-          },
-        ]);
-
-        if (qErr) {
-          console.error("enqueue reuniao_processing_queue:", qErr);
-          alert(
-            "Gravação encerrada, mas falhou ao enfileirar processamento: " +
-              (qErr.message || qErr)
-          );
-        }
+        }]);
       }
-
       await fetchReunioes();
       if (selecionada?.id) await fetchAcoes(selecionada);
     } catch (e) {
-      console.error("stopRecording (Copiloto):", e);
-      alert("Erro ao encerrar a gravação.");
+      console.error("stopRecording:", e);
+      alert("Erro ao encerrar gravação.");
     }
   };
 
-  /* =========================
-     Reabrir (senha ADM)
-  ========================= */
   const validarSenhaAdm = async () => {
-    if (!selecionada?.id) return;
-
-    const senha = String(senhaAdm || "").trim();
-    if (!senha) return alert("Informe a senha.");
-
-    const { data, error } = await supabaseInove
+    if (!selecionada?.id || !senhaAdm) return alert("Informe a senha.");
+    const { data } = await supabaseInove
       .from("usuarios_aprovadores")
-      .select("id, nivel, ativo")
-      .eq("senha", senha)
+      .select("id")
+      .eq("senha", senhaAdm.trim())
       .eq("nivel", "Administrador")
       .eq("ativo", true)
       .maybeSingle();
 
-    if (error) {
-      console.error("validarSenhaAdm:", error);
-      return alert("Erro ao validar senha.");
-    }
-
     if (!data?.id) return alert("Senha inválida.");
 
-    const { error: e2 } = await supabase.from("reunioes").update({ status: "Pendente" }).eq("id", selecionada.id);
-
-    if (e2) {
-      console.error("reabrir reuniao:", e2);
-      return alert("Erro ao reabrir reunião.");
-    }
-
+    await supabase.from("reunioes").update({ status: "Pendente" }).eq("id", selecionada.id);
     setShowUnlock(false);
     setSenhaAdm("");
     await fetchReunioes();
   };
 
   /* =========================
-     Upload Evidências
-  ========================= */
-  const uploadEvidencias = async (acaoId, files) => {
-    const urls = [];
-
-    for (const file of files) {
-      const fileName = `acao-${acaoId}-${Date.now()}-${sanitizeFileName(file.name)}`;
-
-      const { error } = await supabase.storage.from("evidencias").upload(fileName, file, { upsert: false });
-      if (error) {
-        console.error("Erro upload evidência:", error);
-        continue;
-      }
-
-      const { data: urlData } = supabase.storage.from("evidencias").getPublicUrl(fileName);
-      if (urlData?.publicUrl) urls.push(urlData.publicUrl);
-    }
-
-    return urls;
-  };
-
-  /* =========================
-     AÇÕES
+     Ações & Evidências
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
-
     safeSet(() => setLoadingAcoes(true));
-
     try {
-      const { data: daReuniao, error: e1 } = await supabase
+      const { data: daReuniao } = await supabase
         .from("acoes")
         .select("*")
         .eq("reuniao_id", r.id)
         .order("created_at", { ascending: false });
 
-      if (e1) throw e1;
-
       const tipoId = r.tipo_reuniao_id;
+      let pendTipo = [], concluidasDesde = [];
 
-      // Backlog
-      let pendTipo = [];
       if (tipoId) {
-        const { data: pend, error: e2 } = await supabase
+        const { data: pend } = await supabase
           .from("acoes")
           .select("*")
           .eq("tipo_reuniao_id", tipoId)
@@ -698,200 +621,114 @@ export default function Copiloto() {
           .or(`reuniao_id.is.null,reuniao_id.neq.${r.id}`)
           .order("created_at", { ascending: false })
           .limit(500);
-
-        if (e2) throw e2;
         pendTipo = pend || [];
-      }
 
-      // Concluídas desde última
-      let concluidasDesde = [];
-      if (tipoId && r.data_hora) {
-        const { data: ultima, error: e3 } = await supabase
-          .from("reunioes")
-          .select("id, data_hora")
-          .eq("tipo_reuniao_id", tipoId)
-          .lt("data_hora", r.data_hora)
-          .order("data_hora", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (e3) throw e3;
-
-        if (ultima?.data_hora) {
-          const { data: concl, error: e4 } = await supabase
-            .from("acoes")
-            .select("*")
+        if (r.data_hora) {
+          const { data: ultima } = await supabase
+            .from("reunioes")
+            .select("id, data_hora")
             .eq("tipo_reuniao_id", tipoId)
-            .in("status", ["Concluída", "Concluida"])
-            .not("data_conclusao", "is", null)
-            .gt("data_conclusao", ultima.data_hora)
-            .order("data_conclusao", { ascending: false })
-            .limit(500);
-
-          if (e4) throw e4;
-
-          concluidasDesde = concl || [];
-        } else {
-          concluidasDesde = [];
+            .lt("data_hora", r.data_hora)
+            .order("data_hora", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          
+          if (ultima?.data_hora) {
+            const { data: concl } = await supabase
+              .from("acoes")
+              .select("*")
+              .eq("tipo_reuniao_id", tipoId)
+              .in("status", ["Concluída", "Concluida"])
+              .gt("data_conclusao", ultima.data_hora)
+              .order("data_conclusao", { ascending: false });
+            concluidasDesde = concl || [];
+          }
         }
       }
 
       safeSet(() => {
         setAcoesDaReuniao(daReuniao || []);
-        setAcoesPendentesTipo(pendTipo || []);
-        setAcoesConcluidasDesdeUltima(concluidasDesde || []);
-      });
-    } catch (e) {
-      console.error("fetchAcoes:", e);
-      safeSet(() => {
-        setAcoesDaReuniao([]);
-        setAcoesPendentesTipo([]);
-        setAcoesConcluidasDesdeUltima([]);
+        setAcoesPendentesTipo(pendTipo);
+        setAcoesConcluidasDesdeUltima(concluidasDesde);
       });
     } finally {
       safeSet(() => setLoadingAcoes(false));
     }
   };
 
-  const salvarAcao = async () => {
-    if (!selecionada?.id) return;
-    if (creatingAcao) return;
-
-    const descricao = String(novaAcao.descricao || "").trim();
-    const observacao = String(novaAcao.observacao || "").trim();
-    const responsavelId = String(novaAcao.responsavelId || "").trim();
-    const vencimento = String(novaAcao.vencimento || "").trim();
-
-    if (!descricao) return alert("Informe o Nome da Ação (Descrição).");
-    if (!responsavelId) return alert("Selecione o responsável.");
-    if (!vencimento) return alert("Informe o vencimento.");
-    if ((novasEvidenciasAcao || []).length === 0) {
-      return alert("Anexe pelo menos uma evidência (foto/vídeo/documento).");
+  const uploadEvidencias = async (acaoId, files) => {
+    const urls = [];
+    for (const file of files) {
+      const fileName = `acao-${acaoId}-${Date.now()}-${sanitizeFileName(file.name)}`;
+      const { error } = await supabase.storage.from("evidencias").upload(fileName, file);
+      if (!error) {
+        const { data } = supabase.storage.from("evidencias").getPublicUrl(fileName);
+        if (data?.publicUrl) urls.push(data.publicUrl);
+      }
     }
+    return urls;
+  };
+
+  const salvarAcao = async () => {
+    if (!selecionada?.id || creatingAcao) return;
+    if (!novaAcao.descricao || !novaAcao.responsavelId || !novaAcao.vencimento) return alert("Preencha campos.");
+    if (novasEvidenciasAcao.length === 0) return alert("Anexe evidências.");
 
     setCreatingAcao(true);
-
     try {
-      const respRow =
-        (listaResponsaveis || []).find((u) => String(u.login || "") === responsavelId) ||
-        (listaResponsaveis || []).find((u) => String(u.id) === responsavelId) ||
-        null;
-
-      const responsavelNome = buildNomeSobrenome(respRow);
-
-      let criadorFinalId = null;
-      let criadorFinalNome = "Sistema";
-
-      const storedUser = localStorage.getItem("usuario_externo");
-      if (storedUser) {
-        try {
-          const u = JSON.parse(storedUser);
-          criadorFinalId = u.id;
-          criadorFinalNome = buildNomeSobrenome(u) || u.login || u.email || "Usuário";
-        } catch (e) {
-          console.error("Erro ao ler criador do localStorage", e);
-        }
+      const respRow = listaResponsaveis.find(u => String(u.login) === novaAcao.responsavelId || String(u.id) === novaAcao.responsavelId);
+      
+      let criadorNome = "Sistema", criadorId = null;
+      const stored = localStorage.getItem("usuario_externo");
+      if (stored) {
+        const u = JSON.parse(stored);
+        criadorId = u.id;
+        criadorNome = buildNomeSobrenome(u);
       }
 
-      const payloadCriacao = {
-        descricao,
-        observacao,
+      const payload = {
+        descricao: novaAcao.descricao,
+        observacao: novaAcao.observacao,
         status: "Aberta",
         reuniao_id: selecionada.id,
-        tipo_reuniao_id: selecionada.tipo_reuniao_id || null,
-        tipo_reuniao: nomeTipoReuniao || selecionada.tipo_reuniao || "Geral",
-
-        responsavel_id: null,
-        responsavel_aprovador_id: respRow?.id ?? null,
-        responsavel_nome: responsavelNome,
-
-        criado_por_aprovador_id: criadorFinalId,
-        criado_por_nome: criadorFinalNome,
-
-        data_vencimento: vencimento,
+        tipo_reuniao_id: selecionada.tipo_reuniao_id,
+        tipo_reuniao: nomeTipoReuniao || selecionada.tipo_reuniao,
+        responsavel_aprovador_id: respRow?.id,
+        responsavel_nome: buildNomeSobrenome(respRow),
+        criado_por_aprovador_id: criadorId,
+        criado_por_nome: criadorNome,
+        data_vencimento: novaAcao.vencimento,
         data_abertura: todayISODate(),
-
-        created_at: nowIso(),
         data_criacao: nowIso(),
-
-        fotos_acao: [],
-        fotos: [],
-        evidencia_url: null,
+        created_at: nowIso(),
+        fotos: [], fotos_acao: []
       };
 
-      const { data, error } = await supabase.from("acoes").insert([payloadCriacao]).select("*");
+      const { data, error } = await supabase.from("acoes").insert([payload]).select().single();
+      if (error) throw error;
 
-      if (error) {
-        console.error("salvarAcao insert:", error);
-        throw new Error("Erro ao criar ação: " + (error.message || error));
-      }
-
-      const inserted = data?.[0];
-      const acaoId = inserted?.id;
-      if (!acaoId) throw new Error("Erro: ação criada sem ID.");
-
-      const urls = await uploadEvidencias(acaoId, novasEvidenciasAcao);
-
-      if (!urls.length) {
-        alert("Atenção: A ação foi criada, mas falhou o upload da evidência. Edite a ação para tentar novamente.");
-      } else {
-        const payloadUpdate = {
-          fotos_acao: urls,
-          fotos: urls,
-          evidencia_url: urls[0] || null,
-        };
-
-        const { error: e2 } = await supabase.from("acoes").update(payloadUpdate).eq("id", acaoId);
-
-        if (e2) {
-          console.error("salvarAcao update evidencias:", e2);
-          alert("Ação criada, mas houve erro ao vincular os arquivos: " + e2.message);
-        }
-      }
+      const urls = await uploadEvidencias(data.id, novasEvidenciasAcao);
+      await supabase.from("acoes").update({ fotos_acao: urls, fotos: urls, evidencia_url: urls[0] }).eq("id", data.id);
 
       setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
-      setResponsavelQuery("");
       setNovasEvidenciasAcao([]);
-      setRespOpen(false);
-
+      setResponsavelQuery("");
       setTab("acoes");
       setAcaoTab("reuniao");
-
-      await fetchAcoes(selecionada);
-      alert("Ação criada com sucesso!");
-    } catch (err) {
-      alert(err.message);
+      fetchAcoes(selecionada);
+      alert("Ação criada!");
+    } catch (e) {
+      alert("Erro: " + e.message);
     } finally {
       setCreatingAcao(false);
     }
   };
 
-  /* =========================
-     Responsável autocomplete
-  ========================= */
   const responsaveisFiltrados = useMemo(() => {
-    const q = String(responsavelQuery || "").trim().toLowerCase();
-    if (q.length < 2) return []; // ✅ só sugere com 2+ chars
-    return (listaResponsaveis || [])
-      .filter((u) => {
-        const nome = buildNomeSobrenome(u).toLowerCase();
-        const login = String(u?.login || "").toLowerCase();
-        const email = String(u?.email || "").toLowerCase();
-        return nome.includes(q) || login.includes(q) || (email && email.includes(q));
-      })
-      .slice(0, 10);
+    const q = responsavelQuery.toLowerCase().trim();
+    if (q.length < 2) return [];
+    return listaResponsaveis.filter(u => buildNomeSobrenome(u).toLowerCase().includes(q) || u.login?.toLowerCase().includes(q)).slice(0, 10);
   }, [responsavelQuery, listaResponsaveis]);
-
-  const selecionarResponsavel = (u) => {
-    const nome = buildNomeSobrenome(u);
-    const login = String(u?.login || "").trim();
-    const fallback = String(u?.id != null ? u.id : "").trim();
-    const idText = login || fallback;
-
-    setNovaAcao((p) => ({ ...p, responsavelId: idText }));
-    setResponsavelQuery(nome);
-    setRespOpen(false);
-  };
 
   const onAddEvidencias = (fileList) => {
     const files = Array.from(fileList || []);
@@ -900,317 +737,99 @@ export default function Copiloto() {
   };
 
   const removerEvidencia = (id) => {
-    setNovasEvidenciasAcao((prev) => {
-      const arr = prev || [];
-      const idx = arr.findIndex((f, i) => `${i}-${f.name}-${f.size}` === id);
-      if (idx < 0) return arr;
-      return [...arr.slice(0, idx), ...arr.slice(idx + 1)];
-    });
+    setNovasEvidenciasAcao((prev) => prev.filter((_,i) => i !== id));
   };
 
-  const previews = useMemo(() => {
-    return (novasEvidenciasAcao || []).map((f, idx) => {
-      const kind = fileKind(f);
-      const needsUrl = kind === "image" || kind === "video";
-      const url = needsUrl ? URL.createObjectURL(f) : null;
-      return {
-        id: `${idx}-${f.name}-${f.size}`,
-        file: f,
-        name: f.name,
-        kind,
-        url,
-      };
-    });
-  }, [novasEvidenciasAcao]);
+  const previews = useMemo(() => novasEvidenciasAcao.map((f, i) => ({
+    id: i, file: f, kind: fileKind(f), url: (fileKind(f)==='image'||fileKind(f)==='video')?URL.createObjectURL(f):null, name: f.name
+  })), [novasEvidenciasAcao]);
 
-  useEffect(() => {
-    return () => {
-      (previews || []).forEach((p) => {
-        if (p?.url) URL.revokeObjectURL(p.url);
-      });
-    };
-  }, [previews]);
-
-  /* =========================
-     UI computed
-  ========================= */
-  const reunioesFiltradas = useMemo(() => {
-    const q = (busca || "").toLowerCase();
-    return (reunioes || []).filter((r) => (r.titulo || "").toLowerCase().includes(q));
-  }, [reunioes, busca]);
-
-  const statusLabel = (r) => {
-    const st = String(r?.status || "").trim();
-    return st || "Pendente";
+  // UI Computed
+  const reunioesFiltradas = useMemo(() => reunioes.filter(r => (r.titulo||"").toLowerCase().includes(busca.toLowerCase())), [reunioes, busca]);
+  const statusBadgeClass = (s) => {
+    const v = norm(s);
+    if (v==="REALIZADA") return "bg-emerald-600/15 text-emerald-700 border-emerald-200";
+    if (v==="EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border-blue-200";
+    return "bg-slate-600/10 text-slate-700 border-slate-200";
   };
-
-  const statusBadgeClass = (lbl) => {
-    const v = norm(lbl);
-    if (v === "REALIZADA") return "bg-emerald-600/15 text-emerald-700 border border-emerald-200";
-    if (v === "EM ANDAMENTO") return "bg-blue-600/15 text-blue-700 border border-blue-200";
-    if (v === "AGENDADA") return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    if (v === "PENDENTE") return "bg-slate-600/10 text-slate-700 border border-slate-200";
-    return "bg-slate-600/10 text-slate-700 border border-slate-200";
-  };
-
-  const listaAtiva =
-    acaoTab === "reuniao" ? acoesDaReuniao : acaoTab === "backlog" ? acoesPendentesTipo : acoesConcluidasDesdeUltima;
-
+  const listaAtiva = acaoTab==="reuniao" ? acoesDaReuniao : acaoTab==="backlog" ? acoesPendentesTipo : acoesConcluidasDesdeUltima;
   const materiaisReuniao = safeArray(selecionada?.materiais);
 
   return (
     <Layout>
       <div className="h-screen bg-[#f6f8fc] text-slate-900 flex overflow-hidden">
-        {/* COLUNA ESQUERDA */}
+        {/* ESQUERDA: LISTA */}
         <div className="w-[420px] min-w-[380px] max-w-[460px] flex flex-col p-5 border-r border-slate-200 bg-white">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm">
-              <Bot size={20} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-xs uppercase tracking-wider text-slate-500 font-extrabold">
-                Assistente
-              </div>
-              <h1 className="text-lg font-black tracking-tight truncate">
-                Copiloto de Reuniões
-              </h1>
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm"><Bot size={20} /></div>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-extrabold">Assistente</div>
+              <h1 className="text-lg font-black tracking-tight truncate">Copiloto de Reuniões</h1>
             </div>
           </div>
-
           <div className="flex gap-2 mb-3">
             <div className="relative flex-1">
               <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />
-              <input
-                type="date"
-                autoComplete="off"
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
-                value={dataFiltro}
-                onChange={(e) => setDataFiltro(e.target.value)}
-              />
+              <input type="date" className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30" value={dataFiltro} onChange={e => setDataFiltro(e.target.value)} />
             </div>
-
             <div className="relative flex-1">
               <Search size={16} className="absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder="Buscar..."
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-              />
+              <input type="text" placeholder="Buscar..." className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:ring-2 ring-blue-500/30" value={busca} onChange={e => setBusca(e.target.value)} />
             </div>
           </div>
-
           <div className="flex-1 bg-white border border-slate-200 rounded-2xl overflow-y-auto">
-            {reunioesFiltradas.map((r) => {
-              const lbl = statusLabel(r);
-
-              return (
-                <button
-                  key={r.id}
-                  onClick={() => !isRecording && setSelecionada(r)}
-                  className={`w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors ${
-                    selecionada?.id === r.id
-                      ? "bg-blue-50 border-l-4 border-l-blue-600"
-                      : "border-l-4 border-l-transparent"
-                  } ${isRecording ? "opacity-80 cursor-not-allowed" : ""}`}
-                  type="button"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-black text-xs truncate">
-                        {r.titulo || "Sem título"}
-                      </div>
-
-                      {/* ✅ Ajuste: mostrar Data + Início + Término */}
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        {meetingInicioFimLabel(r)}
-                      </div>
-                    </div>
-
-                    <span
-                      className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${statusBadgeClass(
-                        lbl
-                      )}`}
-                    >
-                      {lbl}
-                    </span>
+            {reunioesFiltradas.length === 0 && <div className="p-6 text-xs text-slate-500">Nenhuma reunião.</div>}
+            {reunioesFiltradas.map(r => (
+              <button key={r.id} onClick={() => !isRecording && setSelecionada(r)} className={`w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors ${selecionada?.id === r.id ? "bg-blue-50 border-l-4 border-l-blue-600" : "border-l-4 border-l-transparent"} ${isRecording?"opacity-50":""}`}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-black text-xs truncate">{r.titulo || "Sem título"}</div>
+                    <div className="text-[11px] text-slate-500 mt-1">{meetingInicioFimLabel(r)}</div>
                   </div>
-                </button>
-              );
-            })}
-
-            {reunioesFiltradas.length === 0 && (
-              <div className="p-6 text-xs text-slate-500">
-                Nenhuma reunião nesta data.
-              </div>
-            )}
+                  <span className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase border ${statusBadgeClass(r.status)}`}>{r.status||"Pendente"}</span>
+                </div>
+              </button>
+            ))}
           </div>
-
-          <div className="mt-4 bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
+          <div className="mt-4 bg-white border border-slate-200 rounded-2xl p-4 flex justify-between items-center">
             <div>
-              <div className="text-[10px] text-slate-500 font-extrabold uppercase">
-                Tempo de sessão
-              </div>
-              <div className="text-lg font-black font-mono leading-none">
-                {secondsToMMSS(timer)}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                {isRecording && current?.reuniaoTitulo
-                  ? `Gravando: ${current.reuniaoTitulo}`
-                  : "Pronto para gravar"}
-              </div>
+              <div className="text-[10px] text-slate-500 font-extrabold uppercase">Tempo de sessão</div>
+              <div className="text-lg font-black font-mono">{secondsToMMSS(timer)}</div>
             </div>
-
-            {isProcessing ? (
-              <div className="text-blue-700 font-extrabold text-xs animate-pulse">
-                FINALIZANDO...
-              </div>
-            ) : isRecording ? (
-              <button
-                onClick={onStop}
-                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-slate-800 transition-all"
-                type="button"
-              >
-                ENCERRAR
-              </button>
-            ) : (
-              <button
-                onClick={onStart}
-                disabled={!selecionada || String(selecionada?.status || "").trim() === "Realizada"}
-                className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-blue-500 disabled:opacity-30 transition-all shadow-sm"
-                title={
-                  String(selecionada?.status || "").trim() === "Realizada"
-                    ? "Reunião está REALIZADA. Use Reabrir (ADM) para gravar novamente."
-                    : ""
-                }
-                type="button"
-              >
-                INICIAR GRAVAÇÃO
-              </button>
-            )}
+            {isProcessing ? <span className="text-xs font-bold text-blue-700 animate-pulse">PROCESSANDO...</span> : isRecording ? 
+              <button onClick={onStop} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs">ENCERRAR</button> :
+              <button onClick={onStart} disabled={!selecionada || norm(selecionada?.status)==="REALIZADA"} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs disabled:opacity-50">INICIAR GRAVAÇÃO</button>
+            }
           </div>
         </div>
 
-        {/* COLUNA DIREITA */}
+        {/* DIREITA: DETALHES */}
         <div className="flex-1 p-6 overflow-y-auto">
-          {/* Header direita */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xl font-black tracking-tight truncate">
-                  {selecionada?.titulo || "Selecione uma reunião à esquerda"}
-                </div>
-
-                {/* ✅ Ajuste: mostrar Data + Início + Término */}
-                <div className="mt-1 text-xs text-slate-500">
-                  {selecionada?.id ? meetingInicioFimLabel(selecionada) : "-"}
-                </div>
-
-                {selecionada?.id && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <span
-                      className={`text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase whitespace-nowrap ${statusBadgeClass(
-                        statusLabel(selecionada)
-                      )}`}
-                    >
-                      {statusLabel(selecionada)}
-                    </span>
-
-                    {isRecording && (
-                      <span className="text-[10px] px-2 py-1 rounded-lg font-extrabold bg-blue-600/10 border border-blue-200 text-blue-800">
-                        EM GRAVAÇÃO
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {selecionada?.id && String(selecionada?.status || "").trim() === "Realizada" && (
-                  <button
-                    onClick={() => setShowUnlock(true)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-600/10 text-red-700 font-black text-xs hover:bg-red-600/15"
-                    type="button"
-                    title="Reabrir reunião (exige senha do Administrador)"
-                  >
-                    <Lock size={16} />
-                    Reabrir (ADM)
-                  </button>
-                )}
-
-                {selecionada?.id && (
-                  <button
-                    onClick={() => {
-                      fetchReunioes();
-                      fetchAcoes(selecionada);
-                      carregarAtas(selecionada);
-                      fetchParticipantesEOrganizador(selecionada);
-                    }}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-black text-xs hover:bg-slate-50"
-                    type="button"
-                    title="Atualizar"
-                  >
-                    <RefreshCw size={16} />
-                    Atualizar
-                  </button>
-                )}
-              </div>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 flex justify-between items-start">
+            <div>
+              <div className="text-xl font-black truncate">{selecionada?.titulo || "Selecione uma reunião"}</div>
+              <div className="mt-1 text-xs text-slate-500">{selecionada?.id ? meetingInicioFimLabel(selecionada) : "-"}</div>
+              {selecionada?.id && <div className={`mt-2 inline-block text-[10px] px-2 py-1 rounded-lg font-extrabold uppercase border ${statusBadgeClass(selecionada.status)}`}>{selecionada.status||"Pendente"}</div>}
+            </div>
+            <div className="flex gap-2">
+              {norm(selecionada?.status)==="REALIZADA" && <button onClick={()=>setShowUnlock(true)} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-red-200 bg-red-50 text-red-700 font-bold text-xs"><Lock size={16}/> Reabrir (ADM)</button>}
+              {selecionada?.id && <button onClick={()=>fetchReunioes()} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-bold text-xs"><RefreshCw size={16}/> Atualizar</button>}
             </div>
           </div>
 
-          {/* Tabs principais */}
+          {/* TABS NAVEGAÇÃO */}
           <div className="flex flex-wrap gap-2 mb-4">
-            
-            {/* ✅ 1. NOVA TAB: LISTA DE PRESENÇA (PRIMEIRA) */}
-            <TabButton 
-              active={tab === "presenca"} 
-              onClick={() => setTab("presenca")} 
-              icon={<UserCheck size={16} />}
-            >
-              Lista de Presença
-            </TabButton>
-
-            <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
-              Ações
-            </TabButton>
-
-            <TabButton
-              active={tab === "ata_principal"}
-              onClick={() => setTab("ata_principal")}
-              icon={<FileText size={16} />}
-            >
-              Pauta
-            </TabButton>
-
-            <TabButton
-              active={tab === "ata_manual"}
-              onClick={() => setTab("ata_manual")}
-              icon={<StickyNote size={16} />}
-            >
-              Pauta Manual
-            </TabButton>
-
-            {/* ✅ NOVO: Material da Reunião (após Ata Manual) */}
-            <TabButton
-              active={tab === "materiais"}
-              onClick={() => setTab("materiais")}
-              icon={<Paperclip size={16} />}
-            >
-              Material da Reunião
-            </TabButton>
+            <TabButton active={tab === "presenca"} onClick={() => setTab("presenca")} icon={<UserCheck size={16} />}>Lista de Presença</TabButton>
+            <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>Ações</TabButton>
+            <TabButton active={tab === "ata_principal"} onClick={() => setTab("ata_principal")} icon={<FileText size={16} />}>Pauta</TabButton>
+            <TabButton active={tab === "ata_manual"} onClick={() => setTab("ata_manual")} icon={<StickyNote size={16} />}>Pauta Manual</TabButton>
+            <TabButton active={tab === "materiais"} onClick={() => setTab("materiais")} icon={<Paperclip size={16} />}>Materiais</TabButton>
           </div>
 
-          {/* Conteúdo */}
           {!selecionada?.id ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-sm text-slate-600">
-              Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
-            </div>
+             <div className="p-8 text-center text-slate-500">Selecione uma reunião.</div>
           ) : tab === "presenca" ? (
-            /* =======================================================
-               ✅ CONTEÚDO DA NOVA TAB: LISTA DE PRESENÇA
-               ======================================================= */
+            /* ==================== CONTEÚDO TAB PRESENÇA ==================== */
             <div className="flex flex-col gap-4">
                {/* Organizador */}
                <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -1242,9 +861,7 @@ export default function Copiloto() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Users size={16} className="text-blue-600" />
-                    <span className="text-xs font-black uppercase text-slate-500">
-                      Lista de Chamada (Baseada no Tipo de Reunião)
-                    </span>
+                    <span className="text-xs font-black uppercase text-slate-500">Lista de Chamada</span>
                   </div>
                   <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
                     {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
@@ -1255,13 +872,13 @@ export default function Copiloto() {
                   <div className="text-xs text-slate-400">Carregando chamada...</div>
                 ) : participantesLista.length === 0 ? (
                   <div className="text-xs text-slate-400 italic p-4 border border-dashed rounded-xl text-center">
-                    Nenhum participante vinculado a este tipo de reunião.
+                    Nenhum participante vinculado.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {participantesLista.map((p) => (
                       <button
-                        key={p.id}
+                        key={p.id || `manual-${p.nome}-${Math.random()}`}
                         onClick={() => togglePresenca(p)}
                         className={`flex items-center justify-between p-3 rounded-xl border transition-all group text-left ${
                           p.presente 
@@ -1299,552 +916,74 @@ export default function Copiloto() {
               </div>
             </div>
           ) : tab === "acoes" ? (
-            <div className="space-y-4">
-              {/* Subtabs ações */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                <div className="flex flex-wrap gap-2">
-                  <Pill active={acaoTab === "reuniao"} onClick={() => setAcaoTab("reuniao")}>
-                    Da reunião ({(acoesDaReuniao || []).length})
-                  </Pill>
-
-                  <Pill active={acaoTab === "backlog"} onClick={() => setAcaoTab("backlog")}>
-                    Pendências do tipo ({(acoesPendentesTipo || []).length})
-                  </Pill>
-
-                  <Pill active={acaoTab === "desde_ultima"} onClick={() => setAcaoTab("desde_ultima")}>
-                    Concluídas desde a última ({(acoesConcluidasDesdeUltima || []).length})
-                  </Pill>
-                </div>
-              </div>
-
-              {/* Lista ações */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="font-black text-sm">
-                    {acaoTab === "reuniao"
-                      ? "Ações da reunião"
-                      : acaoTab === "backlog"
-                      ? "Pendências do tipo"
-                      : "Concluídas desde a última"}
+             /* CONTEÚDO TAB AÇÕES */
+             <div className="space-y-4">
+               <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                 <div className="flex flex-wrap gap-2">
+                   <Pill active={acaoTab==="reuniao"} onClick={()=>setAcaoTab("reuniao")}>Da reunião ({acoesDaReuniao.length})</Pill>
+                   <Pill active={acaoTab==="backlog"} onClick={()=>setAcaoTab("backlog")}>Pendências do tipo ({acoesPendentesTipo.length})</Pill>
+                   <Pill active={acaoTab==="desde_ultima"} onClick={()=>setAcaoTab("desde_ultima")}>Concluídas recente ({acoesConcluidasDesdeUltima.length})</Pill>
+                 </div>
+               </div>
+               <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                  <div className="space-y-3">
+                    {listaAtiva.length===0 && <div className="text-sm text-slate-500">Nenhuma ação.</div>}
+                    {listaAtiva.map(a => <AcaoCard key={a.id} acao={a} onClick={()=>setAcaoSelecionada(a)} />)}
                   </div>
-                  {loadingAcoes && (
-                    <div className="text-xs font-extrabold text-blue-700 animate-pulse">
-                      CARREGANDO...
+               </div>
+               <div className="bg-white border border-slate-200 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-4 font-black text-sm text-blue-800"><Plus size={16}/> Nova Ação</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input className="border p-2 rounded-xl text-sm outline-none focus:ring-2 md:col-span-2" placeholder="Nome da Ação" value={novaAcao.descricao} onChange={e=>setNovaAcao({...novaAcao, descricao:e.target.value})} />
+                    <textarea className="border p-2 rounded-xl text-sm outline-none focus:ring-2 md:col-span-2" rows={2} placeholder="Observação..." value={novaAcao.observacao} onChange={e=>setNovaAcao({...novaAcao, observacao:e.target.value})} />
+                    <div className="relative">
+                      <input className="w-full border p-2 rounded-xl text-sm outline-none" placeholder="Responsável..." value={responsavelQuery} onChange={e=>{setResponsavelQuery(e.target.value);setRespOpen(true)}} onFocus={()=>setRespOpen(true)} />
+                      {respOpen && responsaveisFiltrados.length>0 && <div className="absolute z-10 w-full bg-white border shadow-lg rounded-xl mt-1 overflow-hidden">{responsaveisFiltrados.map(u=><div key={u.id} className="p-2 hover:bg-slate-50 text-sm cursor-pointer" onMouseDown={()=>selecionarResponsavel(u)}>{u.nome}</div>)}</div>}
                     </div>
-                  )}
-                </div>
-
-                <div className="space-y-3">
-                  {(listaAtiva || []).length > 0 ? (
-                    (listaAtiva || []).map((a) => (
-                      <AcaoCard key={a.id} acao={a} onClick={() => setAcaoSelecionada(a)} />
-                    ))
-                  ) : (
-                    <div className="text-sm text-slate-500">Nenhuma ação encontrada nesta aba.</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Criar ação */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-9 h-9 rounded-2xl bg-blue-600/10 border border-blue-200 text-blue-800 flex items-center justify-center">
-                    <Plus size={18} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-black">Criar nova ação</div>
-                    <div className="text-xs text-slate-500">
-                      Criado por:{" "}
-                      <strong>{currentUser ? buildNomeSobrenome(currentUser) : "..."}</strong>
+                    <input type="date" className="border p-2 rounded-xl text-sm outline-none" value={novaAcao.vencimento} onChange={e=>setNovaAcao({...novaAcao, vencimento:e.target.value})} />
+                    <div className="md:col-span-2 flex items-center gap-2">
+                       <label className="cursor-pointer bg-slate-50 px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-2 hover:bg-slate-100"><UploadCloud size={14}/> Anexar <input type="file" multiple className="hidden" onChange={e=>onAddEvidencias(e.target.files)} /></label>
+                       <span className="text-xs text-slate-400">{novasEvidenciasAcao.length} arquivos</span>
                     </div>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                  <div className="lg:col-span-2">
-                    <label className="text-xs font-extrabold text-slate-600">
-                      Nome da Ação (Descrição Curta)
-                    </label>
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      value={novaAcao.descricao}
-                      onChange={(e) => setNovaAcao((p) => ({ ...p, descricao: e.target.value }))}
-                      className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                      placeholder="Ex: Ajustar o relatório financeiro"
-                    />
-                  </div>
-
-                  <div className="lg:col-span-2">
-                    <label className="text-xs font-extrabold text-slate-600">
-                      Observação (Detalhes da Ação)
-                    </label>
-                    <textarea
-                      autoComplete="off"
-                      value={novaAcao.observacao}
-                      onChange={(e) => setNovaAcao((p) => ({ ...p, observacao: e.target.value }))}
-                      className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                      rows={3}
-                      placeholder="Descreva detalhadamente o que precisa ser feito..."
-                    />
-                  </div>
-
-                  <div className="relative">
-                    <label className="text-xs font-extrabold text-slate-600">Responsável</label>
-                    <input
-                      value={responsavelQuery}
-                      autoComplete="off"
-                      onChange={(e) => {
-                        setResponsavelQuery(e.target.value);
-                        setRespOpen(true);
-                      }}
-                      onFocus={() => setRespOpen(true)}
-                      onBlur={() => setTimeout(() => setRespOpen(false), 120)}
-                      className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                      placeholder={loadingResponsaveis ? "Carregando..." : "Digite o nome..."}
-                      disabled={loadingResponsaveis}
-                    />
-
-                    {/* ✅ Ajuste: só mostra se tiver query >=2 */}
-                    {respOpen && responsaveisFiltrados.length > 0 && (
-                      <div className="absolute z-50 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-                        {responsaveisFiltrados.map((u) => (
-                          <button
-                            key={u.id}
-                            type="button"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selecionarResponsavel(u);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
-                          >
-                            <div className="font-semibold">{buildNomeSobrenome(u)}</div>
-                            <div className="text-xs text-slate-500">
-                              {u?.login ? `Login: ${u.login}` : null}
-                              {u?.email ? ` • ${u.email}` : null}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-extrabold text-slate-600">Vencimento</label>
-                    <input
-                      type="date"
-                      autoComplete="off"
-                      value={novaAcao.vencimento}
-                      onChange={(e) => setNovaAcao((p) => ({ ...p, vencimento: e.target.value }))}
-                      className="mt-1 w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                    />
-                  </div>
-
-                  <div className="lg:col-span-2">
-                    <label className="text-xs font-extrabold text-slate-600">Evidências</label>
-
-                    <div className="mt-2 flex items-center gap-3">
-                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer text-sm font-black transition-colors hover:border-blue-300">
-                        <UploadCloud size={16} className="text-blue-600" />
-                        <span>Clique, arraste ou Cole (Ctrl+V)</span>
-                        <input
-                          type="file"
-                          multiple
-                          className="hidden"
-                          onChange={(e) => onAddEvidencias(e.target.files)}
-                        />
-                      </label>
-
-                      <div className="text-xs text-slate-500">
-                        {(novasEvidenciasAcao || []).length} arquivo(s)
-                      </div>
-                    </div>
-
-                    {previews.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-3">
-                        {previews.map((p) => (
-                          <MiniaturaArquivo key={p.id} preview={p} onRemove={() => removerEvidencia(p.id)} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={salvarAcao}
-                    disabled={creatingAcao}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {creatingAcao ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                    {creatingAcao ? "Salvando..." : "Salvar ação"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNovaAcao({ descricao: "", observacao: "", responsavelId: "", vencimento: "" });
-                      setResponsavelQuery("");
-                      setNovasEvidenciasAcao([]);
-                      setRespOpen(false);
-                    }}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-sm"
-                  >
-                    <X size={16} />
-                    Limpar
-                  </button>
-                </div>
-              </div>
-            </div>
+                  <button onClick={salvarAcao} disabled={creatingAcao} className="mt-3 bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold w-full md:w-auto">{creatingAcao?"Salvando...":"Salvar Ação"}</button>
+               </div>
+             </div>
           ) : tab === "ata_principal" ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <FileText size={18} className="text-slate-600" />
-                <div className="font-black">Pauta (somente leitura)</div>
-              </div>
-
-              <div className="text-sm text-slate-700 whitespace-pre-wrap">
-                {ataPrincipal || "Sem ata principal configurada para este tipo de reunião."}
-              </div>
-            </div>
+             <div className="bg-white border border-slate-200 rounded-2xl p-5 whitespace-pre-wrap text-sm">{ataPrincipal||"Sem pauta configurada."}</div>
           ) : tab === "ata_manual" ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <StickyNote size={18} className="text-slate-600" />
-                  <div className="font-black">Pauta Manual</div>
-                </div>
-
-                <div className="flex gap-2">
-                  {!editAtaManual ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditAtaManual(true)}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
-                    >
-                      Editar
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={salvarAtaManual}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs"
-                      >
-                        <Check size={16} />
-                        Salvar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAtaManual(String(selecionada?.ata_manual || "").trim());
-                          setEditAtaManual(false);
-                        }}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
-                      >
-                        <X size={16} />
-                        Cancelar
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {editAtaManual ? (
-                <textarea
-                  value={ataManual}
-                  onChange={(e) => setAtaManual(e.target.value)}
-                  autoComplete="off"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 ring-blue-500/30"
-                  rows={14}
-                  placeholder="Escreva a ata manual..."
-                />
-              ) : (
-                <div className="text-sm text-slate-700 whitespace-pre-wrap">
-                  {ataManual || "Nenhuma ata manual ainda."}
-                </div>
-              )}
-            </div>
+             <div className="bg-white border border-slate-200 rounded-2xl p-5">
+               <div className="flex justify-between mb-3">
+                 <div className="font-black text-sm flex gap-2"><StickyNote size={16}/> Pauta Manual</div>
+                 {!editAtaManual ? <button onClick={()=>setEditAtaManual(true)} className="text-xs font-bold text-blue-600">Editar</button> : <div className="flex gap-2"><button onClick={salvarAtaManual} className="text-xs font-bold text-green-600">Salvar</button><button onClick={()=>setEditAtaManual(false)} className="text-xs font-bold text-red-600">Cancelar</button></div>}
+               </div>
+               {editAtaManual ? <textarea className="w-full border rounded-xl p-3 text-sm" rows={10} value={ataManual} onChange={e=>setAtaManual(e.target.value)} /> : <div className="whitespace-pre-wrap text-sm">{ataManual||"Vazio."}</div>}
+             </div>
           ) : (
-            // ✅ NOVO: Material da Reunião
             <div className="bg-white border border-slate-200 rounded-2xl p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <Paperclip size={18} className="text-slate-600" />
-                <div className="font-black">Material da Reunião</div>
-                <div className="text-xs text-slate-500 ml-2">
-                  ({materiaisReuniao.length} item(ns))
-                </div>
-              </div>
-
-              {materiaisReuniao.length === 0 ? (
-                <div className="text-sm text-slate-500">Nenhum material anexado nesta reunião.</div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {materiaisReuniao.map((m, idx) => (
-                    <div
-                      key={`${idx}-${m?.url || m?.name || "mat"}`}
-                      className="flex items-center justify-between border border-slate-200 rounded-xl p-3 bg-slate-50"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-black text-slate-800 truncate" title={m?.name || "Arquivo"}>
-                          {m?.name || "Arquivo"}
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate" title={m?.type || ""}>
-                          {m?.type || "—"}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {m?.url ? (
-                          <a
-                            href={m.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-black text-xs"
-                            title="Abrir/baixar"
-                          >
-                            <Download size={16} />
-                            Abrir
-                          </a>
-                        ) : (
-                          <span className="text-[11px] text-slate-400">Sem URL</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="font-black text-sm mb-3 flex gap-2"><Paperclip size={16}/> Materiais ({materiaisReuniao.length})</div>
+              {materiaisReuniao.map((m,i)=>(
+                 <div key={i} className="flex justify-between items-center p-3 border rounded-xl mb-2">
+                    <span className="text-sm truncate font-bold">{m.name||"Arquivo"}</span>
+                    {m.url && <a href={m.url} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 flex gap-1"><Download size={14}/> Baixar</a>}
+                 </div>
+              ))}
+              {materiaisReuniao.length===0 && <div className="text-xs text-slate-400">Nenhum material.</div>}
             </div>
           )}
         </div>
       </div>
-
-      {/* Modal detalhes ação (Central) */}
-      {acaoSelecionada && (
-        <ModalDetalhesAcao
-          aberto={!!acaoSelecionada}
-          acao={acaoSelecionada}
-          status={acaoSelecionada?.status}
-          onClose={() => setAcaoSelecionada(null)}
-          onAfterSave={() => fetchAcoes(selecionada)}
-          onAfterDelete={() => fetchAcoes(selecionada)}
-          onConcluir={async () => {
-            await supabase
-              .from("acoes")
-              .update({ status: "Concluída", data_conclusao: new Date().toISOString() })
-              .eq("id", acaoSelecionada.id);
-
-            await fetchAcoes(selecionada);
-          }}
-        />
-      )}
-
-      {/* Reabrir ADM */}
-      {showUnlock && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-2xl w-[360px]">
-            <div className="font-black mb-2">Senha do Administrador</div>
-            <input
-              type="password"
-              autoComplete="off"
-              value={senhaAdm}
-              onChange={(e) => setSenhaAdm(e.target.value)}
-              className="w-full border rounded-xl p-3"
-            />
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={validarSenhaAdm}
-                className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black"
-                type="button"
-              >
-                Liberar
-              </button>
-              <button
-                onClick={() => setShowUnlock(false)}
-                className="border px-4 py-2 rounded-xl text-xs"
-                type="button"
-              >
-                Cancelar
-              </button>
-            </div>
-            <div className="mt-2 text-[11px] text-slate-500">
-              Validação feita no <b>SUPABASE INOVE</b> (usuarios_aprovadores).
-            </div>
-          </div>
-        </div>
-      )}
+      {acaoSelecionada && <ModalDetalhesAcao aberto={!!acaoSelecionada} acao={acaoSelecionada} status={acaoSelecionada?.status} onClose={()=>setAcaoSelecionada(null)} onAfterSave={()=>fetchAcoes(selecionada)} onAfterDelete={()=>fetchAcoes(selecionada)} onConcluir={async()=>{await supabase.from("acoes").update({status:"Concluída",data_conclusao:new Date().toISOString()}).eq("id",acaoSelecionada.id);fetchAcoes(selecionada)}} />}
+      {showUnlock && <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"><div className="bg-white p-6 rounded-2xl w-[300px]"><div className="font-black mb-2">Senha ADM</div><input type="password" value={senhaAdm} onChange={e=>setSenhaAdm(e.target.value)} className="border w-full p-2 rounded-lg mb-3"/><button onClick={validarSenhaAdm} className="bg-red-600 text-white w-full py-2 rounded-lg font-bold text-xs">Confirmar</button><button onClick={()=>setShowUnlock(false)} className="mt-2 w-full text-xs text-slate-500">Cancelar</button></div></div>}
     </Layout>
   );
 }
 
-/* =========================
-   UI small components
-========================= */
-function TabButton({ active, onClick, icon, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-2 transition-colors ${
-        active
-          ? "bg-blue-600/10 border-blue-200 text-blue-800"
-          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-      }`}
-      type="button"
-    >
-      {icon}
-      {children}
-    </button>
-  );
+// Pequenos componentes visuais (mantidos inline para reduzir complexidade de arquivo)
+function TabButton({active,onClick,icon,children}){return(<button onClick={onClick} className={`px-3 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-2 transition-colors ${active?"bg-blue-600/10 border-blue-200 text-blue-800":"bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}>{icon}{children}</button>)}
+function Pill({active,onClick,children}){return(<button onClick={onClick} className={`text-[12px] px-3 py-2 rounded-xl font-extrabold border transition-colors ${active?"bg-blue-600/10 border-blue-200 text-blue-800":"bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}>{children}</button>)}
+function AcaoCard({acao,onClick}){
+  const st=norm(acao?.status);const done=st==="CONCLUÍDA"||st==="CONCLUIDA";const excl=st==="EXCLUÍDA"||st==="EXCLUIDA";
+  return(<button onClick={onClick} className={`w-full text-left p-4 rounded-2xl border shadow-sm ${excl?"opacity-50 grayscale bg-gray-50":"bg-white hover:bg-slate-50"}`}><div className="flex gap-3"><div className={`mt-1 w-2.5 h-2.5 rounded-full ${done?"bg-emerald-500":"bg-blue-500"}`}/><div><div className={`text-sm font-semibold ${done?"line-through text-slate-400":"text-slate-900"}`}>{acao.descricao}</div><div className="text-xs text-slate-500 mt-1 flex gap-2 items-center"><User size={10}/> {acao.responsavel_nome||acao.responsavel||"Geral"} {acao.data_vencimento && <span className="flex items-center gap-1 ml-2"><Clock size={10}/> {toBRDate(acao.data_vencimento)}</span>}</div></div></div></button>)
 }
-
-function Pill({ active, onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[12px] px-3 py-2 rounded-xl font-extrabold border transition-colors ${
-        active
-          ? "bg-blue-600/10 border-blue-200 text-blue-800"
-          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-      }`}
-      type="button"
-    >
-      {children}
-    </button>
-  );
-}
-
-function MiniaturaArquivo({ preview, onRemove }) {
-  const { kind, url, name } = preview;
-
-  const box =
-    "w-16 h-16 rounded-xl border border-slate-200 bg-white overflow-hidden flex items-center justify-center relative";
-  const caption = "max-w-[64px] text-[9px] text-slate-600 truncate mt-1";
-
-  const RemoveBtn = () => (
-    <button
-      type="button"
-      onClick={onRemove}
-      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-white/90 border border-slate-200 text-slate-700 hover:bg-slate-50 flex items-center justify-center text-[12px] font-black"
-      title="Remover"
-    >
-      ×
-    </button>
-  );
-
-  if (kind === "image") {
-    return (
-      <div className="flex flex-col items-center">
-        <div className={box} title={name}>
-          <img src={url} alt={name} className="w-full h-full object-cover" />
-          <RemoveBtn />
-        </div>
-        <div className={caption}>{name}</div>
-      </div>
-    );
-  }
-
-  if (kind === "video") {
-    return (
-      <div className="flex flex-col items-center">
-        <div className={box} title={name}>
-          <video src={url} className="w-full h-full object-cover" muted playsInline />
-          <RemoveBtn />
-        </div>
-        <div className={caption}>{name}</div>
-      </div>
-    );
-  }
-
-  const Icon = kind === "pdf" ? FileText : FileIcon;
-
-  const label =
-    kind === "pdf"
-      ? { t: "PDF", cls: "text-red-600" }
-      : kind === "doc"
-      ? { t: "DOC", cls: "text-blue-700" }
-      : kind === "xls"
-      ? { t: "XLS", cls: "text-emerald-700" }
-      : kind === "ppt"
-      ? { t: "PPT", cls: "text-orange-700" }
-      : { t: "ARQ", cls: "text-slate-700" };
-
-  return (
-    <div className="flex flex-col items-center">
-      <div className={box} title={name}>
-        <div className="flex flex-col items-center justify-center">
-          <div className={`text-[10px] font-black ${label.cls}`}>{label.t}</div>
-          <Icon size={18} className="text-slate-500 mt-1" />
-        </div>
-        <RemoveBtn />
-      </div>
-      <div className={caption}>{name}</div>
-    </div>
-  );
-}
-
-function AcaoCard({ acao, onClick }) {
-  const st = String(acao?.status || "").toLowerCase();
-  const done = st === "concluída" || st === "concluida";
-  const excluded = st === "excluída" || st === "excluida";
-
-  const resp = acao?.responsavel_nome || acao?.responsavel || "Geral";
-
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left p-4 rounded-2xl border shadow-sm transition-colors ${
-        excluded
-          ? "bg-gray-50 border-gray-200 opacity-60 grayscale"
-          : "bg-white border-slate-200 hover:bg-slate-50"
-      }`}
-      type="button"
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-1">
-          {excluded ? (
-            <Trash2 size={14} className="text-gray-400" />
-          ) : (
-            <div className={`w-2.5 h-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-blue-500"}`} />
-          )}
-        </div>
-
-        <div className="flex-1">
-          <div className={`text-sm font-semibold ${done || excluded ? "line-through text-slate-400" : "text-slate-900"}`}>
-            {acao?.descricao || "-"}
-            {excluded && (
-              <span className="ml-2 text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded uppercase font-black no-underline inline-block border border-red-200">
-                EXCLUÍDA
-              </span>
-            )}
-          </div>
-
-          <div className="text-[12px] text-slate-600 mt-1 flex flex-wrap gap-2 items-center">
-            <span className="font-semibold bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-              <User size={10} /> {resp}
-            </span>
-
-            {acao?.data_vencimento ? (
-              <span className="text-slate-500 flex items-center gap-1">
-                <Clock size={10} /> Venc.:{" "}
-                {new Date(acao.data_vencimento).toLocaleDateString("pt-BR")}
-              </span>
-            ) : null}
-
-            {acao?.data_conclusao ? (
-              <span className="text-green-600 flex items-center gap-1">
-                <Check size={10} /> {toBRDateTime(acao.data_conclusao)}
-              </span>
-            ) : null}
-
-            {(acao?.fotos?.length > 0 || acao?.fotos_acao?.length > 0) && (
-              <Image size={12} className="text-blue-400" />
-            )}
-
-            {acao?.observacao && <MessageSquare size={12} className="text-amber-400" />}
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
+function MiniaturaArquivo({preview,onRemove}){ return <div className="relative w-12 h-12 bg-slate-100 border rounded flex items-center justify-center text-xs overflow-hidden group">{preview.kind==='image'?<img src={preview.url} className="w-full h-full object-cover"/>:preview.kind}<button onClick={onRemove} className="absolute top-0 right-0 bg-red-500 text-white w-4 h-4 text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100">x</button></div>}
