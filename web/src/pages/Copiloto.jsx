@@ -25,6 +25,11 @@ import {
   MessageSquare,
   Paperclip,
   Download,
+  Crown,
+  UserCheck,
+  CheckCircle2,
+  XCircle,
+  Mail
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -166,6 +171,11 @@ export default function Copiloto() {
   const [selecionada, setSelecionada] = useState(null);
   const [nomeTipoReuniao, setNomeTipoReuniao] = useState("");
 
+  // Chamada / Participantes
+  const [participantesLista, setParticipantesLista] = useState([]);
+  const [organizadorDetalhes, setOrganizadorDetalhes] = useState(null);
+  const [loadingParticipantes, setLoadingParticipantes] = useState(false);
+
   // tabs direita
   const [tab, setTab] = useState("acoes"); // acoes | ata_principal | ata_manual | materiais
 
@@ -216,7 +226,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Lifecycle & CTRL+V LISTENER
+     Lifecycle & CTRL+V LISTENER
   ========================= */
 
   // ✅ Colar print (Ctrl+V) — sem debug/console
@@ -291,6 +301,7 @@ export default function Copiloto() {
 
     carregarAtas(selecionada);
     fetchAcoes(selecionada);
+    fetchParticipantesEOrganizador(selecionada);
 
     setTab("acoes");
     setAcaoTab("reuniao");
@@ -308,7 +319,7 @@ export default function Copiloto() {
   }, [selecionada?.id]);
 
   /* =========================
-      Fetch Reuniões (do dia)
+     Fetch Reuniões (do dia)
   ========================= */
   const fetchReunioes = async () => {
     const { data, error } = await supabase
@@ -339,7 +350,68 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Atas
+     Fetch Participantes e Org
+  ========================= */
+  const fetchParticipantesEOrganizador = async (r) => {
+    if (!r?.id) return;
+    setLoadingParticipantes(true);
+    setParticipantesLista([]);
+    setOrganizadorDetalhes(null);
+
+    try {
+      // 1. Fetch Organizador (usuario_aprovador)
+      if (r.responsavel_id) {
+        const { data: org, error: errOrg } = await supabaseInove
+          .from("usuarios_aprovadores")
+          .select("id, nome, sobrenome, email")
+          .eq("id", r.responsavel_id)
+          .maybeSingle();
+        
+        if (!errOrg && org) {
+          setOrganizadorDetalhes(org);
+        }
+      }
+
+      // 2. Fetch Participantes da Reunião
+      const { data: parts, error: errParts } = await supabase
+        .from("participantes_reuniao")
+        .select("*")
+        .eq("reuniao_id", r.id)
+        .order("nome", { ascending: true });
+
+      if (errParts) console.warn("Erro participantes_reuniao", errParts);
+      setParticipantesLista(parts || []);
+
+    } finally {
+      setLoadingParticipantes(false);
+    }
+  };
+
+  const togglePresenca = async (participante) => {
+    if (!participante?.id) return;
+    const novoStatus = !participante.presente;
+
+    // Otimista
+    setParticipantesLista(prev => prev.map(p => 
+      p.id === participante.id ? { ...p, presente: novoStatus } : p
+    ));
+
+    const { error } = await supabase
+      .from("participantes_reuniao")
+      .update({ presente: novoStatus })
+      .eq("id", participante.id);
+
+    if (error) {
+      console.error("Erro ao atualizar presença", error);
+      // Reverter
+      setParticipantesLista(prev => prev.map(p => 
+        p.id === participante.id ? { ...p, presente: !novoStatus } : p
+      ));
+    }
+  };
+
+  /* =========================
+     Atas
   ========================= */
   const carregarAtas = async (r) => {
     safeSet(() => {
@@ -383,7 +455,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Gravação
+     Gravação
   ========================= */
   const onStart = async () => {
     if (!selecionada?.id) return alert("Selecione uma reunião.");
@@ -451,7 +523,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Reabrir (senha ADM)
+     Reabrir (senha ADM)
   ========================= */
   const validarSenhaAdm = async () => {
     if (!selecionada?.id) return;
@@ -487,7 +559,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Upload Evidências
+     Upload Evidências
   ========================= */
   const uploadEvidencias = async (acaoId, files) => {
     const urls = [];
@@ -509,7 +581,7 @@ export default function Copiloto() {
   };
 
   /* =========================
-      AÇÕES
+     AÇÕES
   ========================= */
   const fetchAcoes = async (r) => {
     if (!r?.id) return;
@@ -707,9 +779,9 @@ export default function Copiloto() {
   };
 
   /* =========================
-      Responsável autocomplete
-      ✅ Ajuste: não mostrar dropdown “debug/auto-complete” sem query
-========================= */
+     Responsável autocomplete
+     ✅ Ajuste: não mostrar dropdown “debug/auto-complete” sem query
+  ========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
     if (q.length < 2) return []; // ✅ só sugere com 2+ chars
@@ -773,7 +845,7 @@ export default function Copiloto() {
   }, [previews]);
 
   /* =========================
-      UI computed
+     UI computed
   ========================= */
   const reunioesFiltradas = useMemo(() => {
     const q = (busca || "").toLowerCase();
@@ -987,6 +1059,7 @@ export default function Copiloto() {
                       fetchReunioes();
                       fetchAcoes(selecionada);
                       carregarAtas(selecionada);
+                      fetchParticipantesEOrganizador(selecionada);
                     }}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-black text-xs hover:bg-slate-50"
                     type="button"
@@ -999,6 +1072,95 @@ export default function Copiloto() {
               </div>
             </div>
           </div>
+
+          {/* ✅ CHAMADA / ORGANIZADOR e PARTICIPANTES (Nova Seção) */}
+          {selecionada?.id && (
+            <div className="mb-4 flex flex-col xl:flex-row gap-4">
+              {/* Organizador */}
+              <div className="w-full xl:w-1/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+                <div className="flex items-center gap-2 mb-3">
+                  <Crown size={16} className="text-amber-500" />
+                  <span className="text-xs font-black uppercase text-slate-500">Organizador</span>
+                </div>
+                {organizadorDetalhes ? (
+                  <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border border-blue-200 shrink-0 uppercase">
+                      {organizadorDetalhes.nome.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-800 truncate">
+                        {organizadorDetalhes.nome} {organizadorDetalhes.sobrenome}
+                      </div>
+                      <div className="text-xs text-slate-500 truncate flex items-center gap-1">
+                        <Mail size={10} /> {organizadorDetalhes.email}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                   <div className="text-xs text-slate-400 italic">Organizador não definido.</div>
+                )}
+              </div>
+
+              {/* Participantes / Chamada */}
+              <div className="w-full xl:w-2/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <UserCheck size={16} className="text-blue-600" />
+                    <span className="text-xs font-black uppercase text-slate-500">
+                      Participantes (Chamada)
+                    </span>
+                  </div>
+                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
+                    {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
+                  </span>
+                </div>
+
+                {loadingParticipantes ? (
+                  <div className="text-xs text-slate-400">Carregando chamada...</div>
+                ) : participantesLista.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic">Nenhum participante vinculado.</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                    {participantesLista.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => togglePresenca(p)}
+                        className={`flex items-center justify-between p-2 rounded-xl border transition-all group ${
+                          p.presente 
+                            ? "bg-green-50 border-green-200" 
+                            : "bg-white border-slate-100 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
+                            p.presente 
+                              ? "bg-green-100 text-green-700 border-green-200" 
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            {p.nome.charAt(0)}
+                          </div>
+                          <div className="min-w-0 text-left">
+                            <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
+                              {p.nome}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">{p.email}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="shrink-0 ml-2">
+                          {p.presente ? (
+                            <CheckCircle2 size={18} className="text-green-500" />
+                          ) : (
+                            <XCircle size={18} className="text-slate-200 group-hover:text-slate-300" />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Tabs principais */}
           <div className="flex flex-wrap gap-2 mb-4">
