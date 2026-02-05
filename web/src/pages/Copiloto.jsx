@@ -25,11 +25,13 @@ import {
   MessageSquare,
   Paperclip,
   Download,
+  // Novos icones para a chamada
   Crown,
   UserCheck,
   CheckCircle2,
   XCircle,
-  Mail
+  Mail,
+  Users
 } from "lucide-react";
 import { useRecording } from "../context/RecordingContext";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
@@ -38,7 +40,6 @@ import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
    Helpers
 ========================= */
 
-// ISO local (sem Z) — usado para updated_at/created_at
 function nowIso() {
   const now = new Date();
   const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
@@ -49,7 +50,6 @@ function todayISODate() {
   return nowIso().slice(0, 10);
 }
 
-// ✅ Data BR (dd/MM/aaaa) usando UTC para evitar shift
 function toBRDate(dt) {
   try {
     if (!dt) return "-";
@@ -61,7 +61,6 @@ function toBRDate(dt) {
   }
 }
 
-// ✅ DateTime BR (dd/MM/aaaa HH:mm) usando UTC para evitar shift
 function toBRDateTime(dt) {
   try {
     if (!dt) return "-";
@@ -114,7 +113,6 @@ function fileKind(file) {
   return "file";
 }
 
-// ✅ Helper robusto para extrair HH:mm (igual ao padrão do código anterior)
 function extractTime(dateString) {
   if (!dateString) return "";
   const s = String(dateString);
@@ -123,7 +121,6 @@ function extractTime(dateString) {
   try {
     const d = new Date(dateString);
     if (!Number.isNaN(d.getTime())) {
-      // HH:mm em UTC para não deslocar
       return d.toLocaleTimeString("pt-BR", {
         timeZone: "UTC",
         hour: "2-digit",
@@ -140,7 +137,6 @@ function meetingInicioFimLabel(r) {
   const data = toBRDate(r?.data_hora);
   const ini = extractTime(r?.horario_inicio) || extractTime(r?.data_hora);
   const fim = extractTime(r?.horario_fim);
-  // Ex.: 02/02/2026 • Início 09:00 • Término 10:00
   if (!r?.data_hora && !ini && !fim) return "-";
   const parts = [];
   if (data && data !== "-") parts.push(data);
@@ -171,13 +167,16 @@ export default function Copiloto() {
   const [selecionada, setSelecionada] = useState(null);
   const [nomeTipoReuniao, setNomeTipoReuniao] = useState("");
 
-  // Chamada / Participantes
+  // ======================
+  // ✅ NOVOS ESTADOS PARA CHAMADA
+  // ======================
   const [participantesLista, setParticipantesLista] = useState([]);
   const [organizadorDetalhes, setOrganizadorDetalhes] = useState(null);
   const [loadingParticipantes, setLoadingParticipantes] = useState(false);
 
   // tabs direita
-  const [tab, setTab] = useState("acoes"); // acoes | ata_principal | ata_manual | materiais
+  // ✅ Mudança: 'presenca' agora é uma tab possível e será a padrão
+  const [tab, setTab] = useState("presenca"); 
 
   // Atas
   const [ataPrincipal, setAtaPrincipal] = useState("");
@@ -191,7 +190,7 @@ export default function Copiloto() {
   const [acoesConcluidasDesdeUltima, setAcoesConcluidasDesdeUltima] = useState([]);
   const [acaoTab, setAcaoTab] = useState("reuniao"); // reuniao | backlog | desde_ultima
 
-  // ✅ Criação de Ação
+  // Criação de Ação
   const [novaAcao, setNovaAcao] = useState({
     descricao: "",
     observacao: "",
@@ -201,14 +200,14 @@ export default function Copiloto() {
   const [novasEvidenciasAcao, setNovasEvidenciasAcao] = useState([]); // File[]
   const [creatingAcao, setCreatingAcao] = useState(false);
 
-  // ✅ Responsáveis
+  // Responsáveis
   const [listaResponsaveis, setListaResponsaveis] = useState([]);
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
 
-  // ✅ Usuário Logado (visual)
+  // Usuário Logado (visual)
   const [currentUser, setCurrentUser] = useState(null);
 
-  // ✅ Responsável autocomplete
+  // Responsável autocomplete
   const [responsavelQuery, setResponsavelQuery] = useState("");
   const [respOpen, setRespOpen] = useState(false);
 
@@ -229,7 +228,6 @@ export default function Copiloto() {
      Lifecycle & CTRL+V LISTENER
   ========================= */
 
-  // ✅ Colar print (Ctrl+V) — sem debug/console
   useEffect(() => {
     const handlePaste = (e) => {
       if (!selecionada?.id || tab !== "acoes" || acaoSelecionada) return;
@@ -299,11 +297,13 @@ export default function Copiloto() {
   useEffect(() => {
     if (!selecionada?.id) return;
 
+    // ✅ Resetar para a primeira aba sempre que trocar reunião
+    setTab("presenca");
+    
     carregarAtas(selecionada);
     fetchAcoes(selecionada);
-    fetchParticipantesEOrganizador(selecionada);
+    fetchParticipantesEOrganizador(selecionada); // ✅ Busca dados da chamada
 
-    setTab("acoes");
     setAcaoTab("reuniao");
 
     setNovaAcao({
@@ -350,7 +350,8 @@ export default function Copiloto() {
   };
 
   /* =========================
-     Fetch Participantes e Org
+     Fetch Participantes e Organizador
+     (LÓGICA PRINCIPAL DE MESCLAGEM)
   ========================= */
   const fetchParticipantesEOrganizador = async (r) => {
     if (!r?.id) return;
@@ -360,11 +361,22 @@ export default function Copiloto() {
 
     try {
       // 1. Fetch Organizador (usuario_aprovador)
-      if (r.responsavel_id) {
+      // Tenta pegar da reunião, se n tiver, tenta do tipo
+      let orgId = r.responsavel_id;
+      if (!orgId && r.tipo_reuniao_id) {
+        const { data: tp } = await supabase
+          .from("tipos_reuniao")
+          .select("responsavel_id")
+          .eq("id", r.tipo_reuniao_id)
+          .maybeSingle();
+        if (tp?.responsavel_id) orgId = tp.responsavel_id;
+      }
+
+      if (orgId) {
         const { data: org, error: errOrg } = await supabaseInove
           .from("usuarios_aprovadores")
           .select("id, nome, sobrenome, email")
-          .eq("id", r.responsavel_id)
+          .eq("id", orgId)
           .maybeSingle();
         
         if (!errOrg && org) {
@@ -372,15 +384,55 @@ export default function Copiloto() {
         }
       }
 
-      // 2. Fetch Participantes da Reunião
-      const { data: parts, error: errParts } = await supabase
+      // 2. Fetch Participantes JÁ salvos na reunião (presença confirmada/negada)
+      const { data: salvosReuniao } = await supabase
         .from("participantes_reuniao")
         .select("*")
-        .eq("reuniao_id", r.id)
-        .order("nome", { ascending: true });
+        .eq("reuniao_id", r.id);
 
-      if (errParts) console.warn("Erro participantes_reuniao", errParts);
-      setParticipantesLista(parts || []);
+      // 3. Fetch Participantes PADRÃO do Tipo (se existir tipo)
+      let padraoTipo = [];
+      if (r.tipo_reuniao_id) {
+        const { data: defs } = await supabase
+          .from("participantes_tipo_reuniao")
+          .select("*")
+          .eq("tipo_reuniao_id", r.tipo_reuniao_id);
+        padraoTipo = defs || [];
+      }
+
+      // 4. MESCLAGEM
+      const mapaSalvos = new Map();
+      (salvosReuniao || []).forEach(p => mapaSalvos.set(String(p.usuario_id), p));
+
+      const listaFinal = [];
+
+      // Adiciona todos do padrão (se já salvo, usa o salvo. Se não, cria obj visual temp)
+      padraoTipo.forEach(padrao => {
+        const salvo = mapaSalvos.get(String(padrao.usuario_id));
+        if (salvo) {
+          listaFinal.push(salvo);
+          mapaSalvos.delete(String(padrao.usuario_id)); // remove para não duplicar
+        } else {
+          // Cria objeto visual para exibir na lista (ainda não salvo na tabela da reunião)
+          listaFinal.push({
+            id: `temp_${padrao.usuario_id}`, // ID temporário
+            reuniao_id: r.id,
+            usuario_id: padrao.usuario_id,
+            nome: padrao.nome,
+            email: padrao.email,
+            presente: false, // Padrão ausente até clicar
+            is_temp: true
+          });
+        }
+      });
+
+      // Adiciona sobras (alguém adicionado manualmente na reunião que não estava no tipo)
+      mapaSalvos.forEach(salvo => listaFinal.push(salvo));
+
+      // Ordenar por nome
+      listaFinal.sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
+
+      setParticipantesLista(listaFinal);
 
     } finally {
       setLoadingParticipantes(false);
@@ -388,25 +440,61 @@ export default function Copiloto() {
   };
 
   const togglePresenca = async (participante) => {
-    if (!participante?.id) return;
+    if (!selecionada?.id) return;
+    
     const novoStatus = !participante.presente;
 
-    // Otimista
+    // Atualização Otimista na UI
     setParticipantesLista(prev => prev.map(p => 
-      p.id === participante.id ? { ...p, presente: novoStatus } : p
+      (p.id === participante.id || (p.is_temp && p.usuario_id === participante.usuario_id))
+        ? { ...p, presente: novoStatus } 
+        : p
     ));
 
-    const { error } = await supabase
-      .from("participantes_reuniao")
-      .update({ presente: novoStatus })
-      .eq("id", participante.id);
+    if (participante.is_temp) {
+      // INSERT na tabela participantes_reuniao
+      const payload = {
+        reuniao_id: selecionada.id,
+        usuario_id: participante.usuario_id,
+        nome: participante.nome,
+        email: participante.email,
+        presente: novoStatus,
+        created_at: nowIso()
+      };
 
-    if (error) {
-      console.error("Erro ao atualizar presença", error);
-      // Reverter
-      setParticipantesLista(prev => prev.map(p => 
-        p.id === participante.id ? { ...p, presente: !novoStatus } : p
-      ));
+      const { data, error } = await supabase
+        .from("participantes_reuniao")
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Erro insert participante", error);
+        // Reverter UI
+        setParticipantesLista(prev => prev.map(p => 
+          p.usuario_id === participante.usuario_id ? { ...p, presente: !novoStatus } : p
+        ));
+      } else {
+        // Atualiza ID real
+        setParticipantesLista(prev => prev.map(p => 
+          p.usuario_id === participante.usuario_id ? { ...data, is_temp: false } : p
+        ));
+      }
+
+    } else {
+      // UPDATE
+      const { error } = await supabase
+        .from("participantes_reuniao")
+        .update({ presente: novoStatus })
+        .eq("id", participante.id);
+
+      if (error) {
+        console.error("Erro update participante", error);
+        // Reverter UI
+        setParticipantesLista(prev => prev.map(p => 
+          p.id === participante.id ? { ...p, presente: !novoStatus } : p
+        ));
+      }
     }
   };
 
@@ -780,7 +868,6 @@ export default function Copiloto() {
 
   /* =========================
      Responsável autocomplete
-     ✅ Ajuste: não mostrar dropdown “debug/auto-complete” sem query
   ========================= */
   const responsaveisFiltrados = useMemo(() => {
     const q = String(responsavelQuery || "").trim().toLowerCase();
@@ -1073,97 +1160,18 @@ export default function Copiloto() {
             </div>
           </div>
 
-          {/* ✅ CHAMADA / ORGANIZADOR e PARTICIPANTES (Nova Seção) */}
-          {selecionada?.id && (
-            <div className="mb-4 flex flex-col xl:flex-row gap-4">
-              {/* Organizador */}
-              <div className="w-full xl:w-1/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center gap-2 mb-3">
-                  <Crown size={16} className="text-amber-500" />
-                  <span className="text-xs font-black uppercase text-slate-500">Organizador</span>
-                </div>
-                {organizadorDetalhes ? (
-                  <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border border-blue-200 shrink-0 uppercase">
-                      {organizadorDetalhes.nome.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-800 truncate">
-                        {organizadorDetalhes.nome} {organizadorDetalhes.sobrenome}
-                      </div>
-                      <div className="text-xs text-slate-500 truncate flex items-center gap-1">
-                        <Mail size={10} /> {organizadorDetalhes.email}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                   <div className="text-xs text-slate-400 italic">Organizador não definido.</div>
-                )}
-              </div>
-
-              {/* Participantes / Chamada */}
-              <div className="w-full xl:w-2/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <UserCheck size={16} className="text-blue-600" />
-                    <span className="text-xs font-black uppercase text-slate-500">
-                      Participantes (Chamada)
-                    </span>
-                  </div>
-                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
-                    {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
-                  </span>
-                </div>
-
-                {loadingParticipantes ? (
-                  <div className="text-xs text-slate-400">Carregando chamada...</div>
-                ) : participantesLista.length === 0 ? (
-                  <div className="text-xs text-slate-400 italic">Nenhum participante vinculado.</div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                    {participantesLista.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => togglePresenca(p)}
-                        className={`flex items-center justify-between p-2 rounded-xl border transition-all group ${
-                          p.presente 
-                            ? "bg-green-50 border-green-200" 
-                            : "bg-white border-slate-100 hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
-                            p.presente 
-                              ? "bg-green-100 text-green-700 border-green-200" 
-                              : "bg-slate-100 text-slate-500 border-slate-200"
-                          }`}>
-                            {p.nome.charAt(0)}
-                          </div>
-                          <div className="min-w-0 text-left">
-                            <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
-                              {p.nome}
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">{p.email}</div>
-                          </div>
-                        </div>
-                        
-                        <div className="shrink-0 ml-2">
-                          {p.presente ? (
-                            <CheckCircle2 size={18} className="text-green-500" />
-                          ) : (
-                            <XCircle size={18} className="text-slate-200 group-hover:text-slate-300" />
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Tabs principais */}
           <div className="flex flex-wrap gap-2 mb-4">
+            
+            {/* ✅ 1. NOVA TAB: LISTA DE PRESENÇA (PRIMEIRA) */}
+            <TabButton 
+              active={tab === "presenca"} 
+              onClick={() => setTab("presenca")} 
+              icon={<UserCheck size={16} />}
+            >
+              Lista de Presença
+            </TabButton>
+
             <TabButton active={tab === "acoes"} onClick={() => setTab("acoes")} icon={<ClipboardList size={16} />}>
               Ações
             </TabButton>
@@ -1198,6 +1206,97 @@ export default function Copiloto() {
           {!selecionada?.id ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-8 text-sm text-slate-600">
               Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
+            </div>
+          ) : tab === "presenca" ? (
+            /* =======================================================
+               ✅ CONTEÚDO DA NOVA TAB: LISTA DE PRESENÇA
+               ======================================================= */
+            <div className="flex flex-col gap-4">
+               {/* Organizador */}
+               <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Crown size={16} className="text-amber-500" />
+                  <span className="text-xs font-black uppercase text-slate-500">Organizador (Responsável)</span>
+                </div>
+                {organizadorDetalhes ? (
+                  <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-center gap-3 w-full md:w-1/2">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border border-blue-200 shrink-0 uppercase">
+                      {organizadorDetalhes.nome.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-800 truncate">
+                        {organizadorDetalhes.nome} {organizadorDetalhes.sobrenome}
+                      </div>
+                      <div className="text-xs text-slate-500 truncate flex items-center gap-1">
+                        <Mail size={10} /> {organizadorDetalhes.email}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                   <div className="text-xs text-slate-400 italic">Organizador não definido.</div>
+                )}
+              </div>
+
+              {/* Lista Participantes */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 flex-1">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Users size={16} className="text-blue-600" />
+                    <span className="text-xs font-black uppercase text-slate-500">
+                      Lista de Chamada (Baseada no Tipo de Reunião)
+                    </span>
+                  </div>
+                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
+                    {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
+                  </span>
+                </div>
+
+                {loadingParticipantes ? (
+                  <div className="text-xs text-slate-400">Carregando chamada...</div>
+                ) : participantesLista.length === 0 ? (
+                  <div className="text-xs text-slate-400 italic p-4 border border-dashed rounded-xl text-center">
+                    Nenhum participante vinculado a este tipo de reunião.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {participantesLista.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => togglePresenca(p)}
+                        className={`flex items-center justify-between p-3 rounded-xl border transition-all group text-left ${
+                          p.presente 
+                            ? "bg-green-50 border-green-200 shadow-sm" 
+                            : "bg-white border-slate-100 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border transition-colors ${
+                            p.presente 
+                              ? "bg-green-100 text-green-700 border-green-200" 
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            {p.nome ? p.nome.charAt(0) : "?"}
+                          </div>
+                          <div className="min-w-0">
+                            <div className={`text-sm font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
+                              {p.nome || "Sem nome"}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">{p.email || "-"}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="shrink-0 ml-2">
+                          {p.presente ? (
+                            <CheckCircle2 size={20} className="text-green-500" />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full border-2 border-slate-200 group-hover:border-slate-300" />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ) : tab === "acoes" ? (
             <div className="space-y-4">
