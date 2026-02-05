@@ -1366,45 +1366,93 @@ Estrutura obrigatória:
                   ) : (
                     <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
                       {/* ✅ Este bloco é o que vai para o PDF */}
+                      {/* ✅ ÁREA QUE VAI PARA O PDF */}
                       <div ref={ataExportRef} className="bg-white p-6">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            h1: ({ node, ...props }) => (
-                              <h1 className="text-2xl font-bold text-slate-900 mb-4 pb-2 border-b border-blue-400" {...props} />
-                            ),
-                            h2: ({ node, ...props }) => (
-                              <h2 className="text-lg font-bold text-blue-700 mt-6 mb-3" {...props} />
-                            ),
-                            p: ({ node, ...props }) => (
-                              <p className="text-slate-700 text-sm leading-relaxed mb-3" {...props} />
-                            ),
-                            ul: ({ node, ...props }) => (
-                              <ul className="space-y-2 ml-4 mb-4" {...props} />
-                            ),
-                            ol: ({ node, ...props }) => (
-                              <ol className="space-y-2 ml-4 mb-4" {...props} />
-                            ),
-                            li: ({ node, ...props }) => (
-                              <li className="flex items-start gap-2 text-slate-700 text-sm">
-                                <span className="text-blue-600 font-bold mt-0.5">•</span>
-                                <span {...props} />
-                              </li>
-                            ),
-                            strong: ({ node, ...props }) => (
-                              <strong className="font-bold text-slate-900" {...props} />
-                            ),
-                            em: ({ node, ...props }) => (
-                              <em className="italic text-slate-600" {...props} />
-                            ),
-                          }}
-                        >
-                          {formatAtaMarkdown(selectedAta.pauta || "", {
-                            titulo: selectedAta.titulo || "Ata da Reunião",
-                            dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
-                          }) || "Sem resumo."}
-                        </ReactMarkdown>
-                      </div>
+                        {/* Cabeçalho (Título + Data + Hora + Duração + Presença) */}
+                        <div className="mb-4">
+                          <h1 className="text-2xl font-bold text-slate-900">{selectedAta.titulo}</h1>
+                      
+                          <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
+                            <span className="flex items-center gap-1.5">
+                              <Calendar size={16} className="text-slate-400" />
+                              {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleDateString("pt-BR") : "—"}
+                            </span>
+                      
+                            <span className="flex items-center gap-1.5">
+                              <Clock size={16} className="text-slate-400" />
+                              {selectedAta.gravacao_inicio
+                                ? new Date(selectedAta.gravacao_inicio).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                : "--:--"}{" "}
+                              -{" "}
+                              {selectedAta.gravacao_fim
+                                ? new Date(selectedAta.gravacao_fim).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                : "--:--"}
+                            </span>
+                          </div>
+                      
+                          {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (
+                            <div className="mt-2 text-red-600 font-bold text-sm">
+                              Essa reunião teve duração de: {calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}
+                            </div>
+                          )}
+                      
+                          {/* ✅ LISTA DE PRESENÇA (entra no PDF) */}
+                          <div className="mt-4 bg-white border border-slate-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                                <User size={14} /> Lista de Presença
+                              </div>
+                      
+                              <div className="text-[10px] font-black px-2 py-1 rounded-lg border bg-slate-50 text-slate-700 border-slate-200">
+                                {loadingPresenca ? "Carregando..." : `Presentes: ${presenca.presentes.length}/${presenca.total}`}
+                              </div>
+                            </div>
+                      
+                            {loadingPresenca ? (
+                              <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                                <Loader2 size={14} className="animate-spin" /> Carregando presença...
+                              </div>
+                            ) : presenca.presentes.length === 0 ? (
+                              <div className="mt-3 text-xs text-slate-400 italic">Nenhum presente registrado nesta reunião.</div>
+                            ) : (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {presenca.presentes.map((p, idx) => (
+                                  <span
+                                    key={`${p.nome}-${idx}`}
+                                    className="text-[11px] font-bold px-2 py-1 rounded-full border bg-green-50 text-green-800 border-green-200"
+                                    title={p.email || ""}
+                                  >
+                                    {p.nome}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      
+                        {/* ✅ Pauta / ATA IA (também entra no PDF) */}
+                        <div className="mt-6">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              h1: ({ node, ...props }) => <h1 className="text-xl font-bold text-slate-900 mb-4" {...props} />,
+                              h2: ({ node, ...props }) => <h2 className="text-lg font-bold text-blue-700 mt-6 mb-3" {...props} />,
+                              p: ({ node, ...props }) => <p className="text-slate-700 text-sm leading-relaxed mb-3" {...props} />,
+                              ul: ({ node, ...props }) => <ul className="space-y-2 ml-4 mb-4" {...props} />,
+                              li: ({ node, ...props }) => (
+                                <li className="flex items-start gap-2 text-slate-700 text-sm">
+                                  <span className="text-blue-600 font-bold mt-0.5">•</span>
+                                  <span {...props} />
+                                </li>
+                              ),
+                            }}
+                          >
+                            {formatAtaMarkdown(selectedAta.pauta || "", {
+                              titulo: selectedAta.titulo || "Ata da Reunião",
+                              dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
+                            }) || "Sem resumo."}
+                          </ReactMarkdown>
+                        </div>                      
                     </div>
                   )}
                 </div>
