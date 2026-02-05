@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
-import { getGeminiPro } from "../services/gemini";
+import { getGeminiFlash } from "../services/gemini";
 import ModalDetalhesAcao from "../components/tatico/ModalDetalhesAcao";
 
 import ReactMarkdown from "react-markdown";
@@ -679,9 +679,7 @@ export default function CentralAtas() {
       reader.onloadend = async () => {
         try {
           const base64data = reader.result.split(",")[1];
-
-          // ✅ Pro (mais completo para ATAs)
-          const model = getGeminiPro();
+          const model = getGeminiFlash();
 
           const titulo = selectedAta.titulo || "Ata da Reunião";
           const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
@@ -720,23 +718,10 @@ Estrutura obrigatória:
           const finalPrompt = promptTemplate.replace(/{titulo}/g, titulo).replace(/{data}/g, dataBR);
           const mimeType = blob.type || "video/mp4";
 
-          // ✅ ATUALIZADO: chamada com generationConfig
-          const result = await model.generateContent({
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  { text: finalPrompt },
-                  { inlineData: { data: base64data, mimeType } },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.7,
-              topP: 0.95,
-              maxOutputTokens: 8192,
-            },
-          });
+          const result = await model.generateContent([
+            finalPrompt,
+            { inlineData: { data: base64data, mimeType } },
+          ]);
 
           const textoBruto = result.response.text();
 
@@ -750,9 +735,7 @@ Estrutura obrigatória:
           setEditedPauta(textoFormatado);
           setIsEditing(false);
           setSelectedAta((prev) => ({ ...prev, pauta: textoFormatado, ata_ia_status: "PRONTA" }));
-          setAtas((prev) =>
-            prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: textoFormatado, ata_ia_status: "PRONTA" } : a))
-          );
+          setAtas((prev) => prev.map((a) => (a.id === selectedAta.id ? { ...a, pauta: textoFormatado, ata_ia_status: "PRONTA" } : a)));
 
           alert("Ata gerada e salva automaticamente!");
         } catch (err) {
@@ -1382,18 +1365,18 @@ Estrutura obrigatória:
                     />
                   ) : (
                     <div className="rounded-xl border border-slate-200 bg-white/60 p-5">
-                      {/* ✅ Este bloco é o que vai para o PDF */}
+                      {/* ✅ Este bloco é o que vai para o PDF */}                      
                       <div ref={ataExportRef} className="bg-white p-6">
                         {/* Cabeçalho (Título + Data + Hora + Duração + Presença) */}
                         <div className="mb-4">
                           <h1 className="text-2xl font-bold text-slate-900">{selectedAta.titulo}</h1>
-
+                      
                           <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
                             <span className="flex items-center gap-1.5">
                               <Calendar size={16} className="text-slate-400" />
                               {selectedAta.gravacao_inicio ? new Date(selectedAta.gravacao_inicio).toLocaleDateString("pt-BR") : "—"}
                             </span>
-
+                      
                             <span className="flex items-center gap-1.5">
                               <Clock size={16} className="text-slate-400" />
                               {selectedAta.gravacao_inicio
@@ -1405,25 +1388,25 @@ Estrutura obrigatória:
                                 : "--:--"}
                             </span>
                           </div>
-
+                      
                           {selectedAta.gravacao_inicio && selectedAta.gravacao_fim && (
                             <div className="mt-2 text-red-600 font-bold text-sm">
                               Essa reunião teve duração de: {calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}
                             </div>
                           )}
-
+                      
                           {/* ✅ LISTA DE PRESENÇA (entra no PDF) */}
                           <div className="mt-4 bg-white border border-slate-200 rounded-lg p-3">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
                                 <User size={14} /> Lista de Presença
                               </div>
-
+                      
                               <div className="text-[10px] font-black px-2 py-1 rounded-lg border bg-slate-50 text-slate-700 border-slate-200">
                                 {loadingPresenca ? "Carregando..." : `Presentes: ${presenca.presentes.length}/${presenca.total}`}
                               </div>
                             </div>
-
+                      
                             {loadingPresenca ? (
                               <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
                                 <Loader2 size={14} className="animate-spin" /> Carregando presença...
@@ -1445,7 +1428,7 @@ Estrutura obrigatória:
                             )}
                           </div>
                         </div>
-
+                      
                         {/* ✅ Pauta / ATA IA (também entra no PDF) */}
                         <div className="mt-6">
                           <ReactMarkdown
@@ -1468,9 +1451,9 @@ Estrutura obrigatória:
                               dataBR: selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "",
                             }) || "Sem resumo."}
                           </ReactMarkdown>
-                        </div>
-                      </div>
+                        </div>                      
                     </div>
+                  </div>
                   )}
                 </div>
               </div>
