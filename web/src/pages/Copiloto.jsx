@@ -963,6 +963,9 @@ export default function Copiloto() {
     acaoTab === "reuniao" ? acoesDaReuniao : acaoTab === "backlog" ? acoesPendentesTipo : acoesConcluidasDesdeUltima;
 
   const materiaisReuniao = safeArray(selecionada?.materiais);
+  
+  const reuniaoFinalizada =
+  String(selecionada?.status || "").trim().toUpperCase() === "REALIZADA";
 
   return (
     <Layout>
