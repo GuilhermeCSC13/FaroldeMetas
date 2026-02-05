@@ -13,16 +13,20 @@ if (!API_KEY) {
 const genAI = new GoogleGenerativeAI(API_KEY || "");
 
 /**
- * ✅ Flash: para tarefas rápidas (se você quiser usar em outros lugares)
+ * ✅ Flash: para tarefas rápidas
  */
 export const getGeminiFlash = () => {
   return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 };
 
 /**
- * ✅ Pro: para ATA (mais detalhado/estável)
+ * ✅ Pro: Ajustado para evitar o erro 404.
+ * Usamos "gemini-1.5-pro-latest" ou "gemini-1.5-pro-001" (versão fixa estável).
  */
 export const getGeminiPro = () => {
-  return genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+  // Tente esta versão primeiro (geralmente resolve o 404):
+  return genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
+  
+  // OBS: Se o "latest" ainda der erro 404, troque a linha acima por:
+  // return genAI.getGenerativeModel({ model: "gemini-1.5-pro-001" });
 };
-
