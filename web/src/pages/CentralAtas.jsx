@@ -209,19 +209,15 @@ function negritarPercentuais(md) {
   let t = String(md || "");
   // 98% -> **98%**
   t = t.replace(/(\b\d{1,3})\s*%/g, "**$1%**");
-  // 91,11% já fica coberto pelo acima (pega 91 e sobra ,11%),
-  // então tratamos percentuais com decimal:
+  // percentuais com decimal:
   t = t.replace(/(\b\d{1,3}(?:[.,]\d{1,2})?)\s*%/g, "**$1%**");
   return t;
 }
 
 function normalizeSectionsContent(md) {
   // Remove duplicações tipo "Ações" repetido várias vezes no final
-  // e evita acrescentar placeholders se já houver conteúdo.
   let t = String(md || "").trim();
 
-  // remove repetição de headings iguais seguidas (ex: ## **Ações** ... ## **Ações**)
-  // Versão melhorada: remove TODAS as duplicatas, não apenas pares
   t = t.replace(/(##\s+\*\*A(ç|c)oes\*\*\s*\n)(\s*\n)+(##\s+\*\*A(ç|c)oes\*\*\s*\n)+/gim, "$1");
   t = t.replace(/(##\s+\*\*Decis(õ|o)es\*\*\s*\n)(\s*\n)+(##\s+\*\*Decis(õ|o)es\*\*\s*\n)+/gim, "$1");
   t = t.replace(/(##\s+\*\*Resumo\*\*\s*\n)(\s*\n)+(##\s+\*\*Resumo\*\*\s*\n)+/gim, "$1");
@@ -231,7 +227,6 @@ function normalizeSectionsContent(md) {
 
 function ensureMinimumSections(md) {
   let t = String(md || "").trim();
-  // Nao adiciona seções vazias - apenas retorna o conteúdo como está
   return ensureSpacing(t);
 }
 
@@ -259,7 +254,6 @@ function bulletizeAcoesSection(md) {
       continue;
     }
     if (inAcoes && /^##\s+\*\*/.test(trim)) {
-      // saiu da seção
       inAcoes = false;
       out.push(line);
       continue;
@@ -274,7 +268,6 @@ function bulletizeAcoesSection(md) {
         out.push(line);
         continue;
       }
-      // linha normal -> vira bullet
       out.push(`- ${trim}`);
       continue;
     }
@@ -292,16 +285,9 @@ function formatAtaMarkdown(raw, { titulo, dataBR } = {}) {
   t = boldSectionTitles(t);
   t = normalizeSectionsContent(t);
 
-  // ✅ garante espaçamento real (resolve "grudado")
   t = enforceParagraphBreaks(t);
-
-  // ✅ negrita percentuais/números-chave
   t = negritarPercentuais(t);
-
-  // ✅ garante seções mínimas sem duplicar
   t = ensureMinimumSections(t);
-
-  // ✅ organiza Ações em lista quando vier “linhas soltas”
   t = bulletizeAcoesSection(t);
 
   return ensureSpacing(t);
@@ -442,6 +428,10 @@ export default function CentralAtas() {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const ataExportRef = useRef(null);
 
+  // ✅ PRESENÇA (NOVO)
+  const [presenca, setPresenca] = useState({ presentes: [], ausentes: [], total: 0 });
+  const [loadingPresenca, setLoadingPresenca] = useState(false);
+
   const checkUserRole = async () => {
     setIsAdmin(true);
   };
@@ -452,9 +442,57 @@ export default function CentralAtas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ CARREGAR PRESENÇA (NOVO)
+  const carregarPresenca = async (ataId) => {
+    if (!ataId) {
+      setPresenca({ presentes: [], ausentes: [], total: 0 });
+      return;
+    }
+    setLoadingPresenca(true);
+    try {
+      const { data, error } = await supabase
+        .from("participantes_reuniao")
+        .select("reuniao_id, nome, email, presente")
+        .eq("reuniao_id", ataId);
+
+      if (error) {
+        console.error("Erro carregarPresenca:", error);
+        setPresenca({ presentes: [], ausentes: [], total: 0 });
+        return;
+      }
+
+      const presentes = [];
+      const ausentes = [];
+
+      for (const row of data || []) {
+        const item = {
+          nome: row?.nome || "-",
+          email: row?.email || "",
+        };
+        if (row?.presente) presentes.push(item);
+        else ausentes.push(item);
+      }
+
+      presentes.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+      ausentes.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+
+      setPresenca({
+        presentes,
+        ausentes,
+        total: (data || []).length,
+      });
+    } catch (e) {
+      console.error("Erro carregarPresenca catch:", e);
+      setPresenca({ presentes: [], ausentes: [], total: 0 });
+    } finally {
+      setLoadingPresenca(false);
+    }
+  };
+
   useEffect(() => {
     if (selectedAta) {
       carregarDetalhes(selectedAta);
+      carregarPresenca(selectedAta.id); // ✅ NOVO
 
       const dataBR = selectedAta.data_hora ? new Date(selectedAta.data_hora).toLocaleDateString("pt-BR") : "";
 
@@ -480,6 +518,7 @@ export default function CentralAtas() {
     } else {
       setMediaUrls({ video: null, audio: null });
       stopPolling();
+      setPresenca({ presentes: [], ausentes: [], total: 0 }); // ✅ NOVO
     }
 
     return () => stopPolling();
@@ -528,6 +567,7 @@ export default function CentralAtas() {
           stopPolling();
           hydrateMediaUrls(data);
           carregarDetalhes(data);
+          carregarPresenca(data.id); // ✅ NOVO
 
           if (data.pauta) {
             const dataBR = data.data_hora ? new Date(data.data_hora).toLocaleDateString("pt-BR") : "";
@@ -685,7 +725,6 @@ Estrutura obrigatória:
 
           const textoBruto = result.response.text();
 
-          // ✅ pós-processamento: agora separa parágrafos e remove “grudado”
           const textoFormatado = formatAtaMarkdown(textoBruto, { titulo, dataBR });
 
           await supabase
@@ -1090,6 +1129,40 @@ Estrutura obrigatória:
                           <span className="text-sm">{calculateRealDuration(selectedAta.gravacao_inicio, selectedAta.gravacao_fim)}</span>
                         </div>
                       )}
+
+                      {/* ✅ LISTA DE PRESENÇA (NOVO) */}
+                      <div className="mt-3 bg-white border border-slate-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                            <User size={14} /> Lista de Presença
+                          </div>
+
+                          <div className="text-[10px] font-black px-2 py-1 rounded-lg border bg-slate-50 text-slate-700 border-slate-200">
+                            {loadingPresenca ? "Carregando..." : `Presentes: ${presenca.presentes.length}/${presenca.total}`}
+                          </div>
+                        </div>
+
+                        {loadingPresenca ? (
+                          <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                            <Loader2 size={14} className="animate-spin" /> Carregando presença...
+                          </div>
+                        ) : presenca.presentes.length === 0 ? (
+                          <div className="mt-3 text-xs text-slate-400 italic">Nenhum presente registrado nesta reunião.</div>
+                        ) : (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {presenca.presentes.map((p, idx) => (
+                              <span
+                                key={`${p.nome}-${idx}`}
+                                className="text-[11px] font-bold px-2 py-1 rounded-full border bg-green-50 text-green-800 border-green-200"
+                                title={p.email || ""}
+                              >
+                                {p.nome}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {/* ✅ FIM PRESENÇA */}
                     </div>
                   </div>
 
@@ -1297,31 +1370,31 @@ Estrutura obrigatória:
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
-                            h1: ({node, ...props}) => (
+                            h1: ({ node, ...props }) => (
                               <h1 className="text-2xl font-bold text-slate-900 mb-4 pb-2 border-b border-blue-400" {...props} />
                             ),
-                            h2: ({node, ...props}) => (
+                            h2: ({ node, ...props }) => (
                               <h2 className="text-lg font-bold text-blue-700 mt-6 mb-3" {...props} />
                             ),
-                            p: ({node, ...props}) => (
+                            p: ({ node, ...props }) => (
                               <p className="text-slate-700 text-sm leading-relaxed mb-3" {...props} />
                             ),
-                            ul: ({node, ...props}) => (
+                            ul: ({ node, ...props }) => (
                               <ul className="space-y-2 ml-4 mb-4" {...props} />
                             ),
-                            ol: ({node, ...props}) => (
+                            ol: ({ node, ...props }) => (
                               <ol className="space-y-2 ml-4 mb-4" {...props} />
                             ),
-                            li: ({node, ...props}) => (
+                            li: ({ node, ...props }) => (
                               <li className="flex items-start gap-2 text-slate-700 text-sm">
                                 <span className="text-blue-600 font-bold mt-0.5">•</span>
                                 <span {...props} />
                               </li>
                             ),
-                            strong: ({node, ...props}) => (
+                            strong: ({ node, ...props }) => (
                               <strong className="font-bold text-slate-900" {...props} />
                             ),
-                            em: ({node, ...props}) => (
+                            em: ({ node, ...props }) => (
                               <em className="italic text-slate-600" {...props} />
                             ),
                           }}
