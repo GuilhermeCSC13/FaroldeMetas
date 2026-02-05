@@ -1161,98 +1161,6 @@ export default function Copiloto() {
               </div>
             </div>
           </div>
-
-          {/* ✅ CHAMADA / ORGANIZADOR e PARTICIPANTES (Nova Seção) */}
-          {selecionada?.id && (
-            <div className="mb-4 flex flex-col xl:flex-row gap-4">
-              {/* Organizador */}
-              <div className="w-full xl:w-1/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center gap-2 mb-3">
-                  <Crown size={16} className="text-amber-500" />
-                  <span className="text-xs font-black uppercase text-slate-500">Organizador (Responsável)</span>
-                </div>
-                {organizadorDetalhes ? (
-                  <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border border-blue-200 shrink-0 uppercase">
-                      {organizadorDetalhes.nome.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-800 truncate">
-                        {organizadorDetalhes.nome} {organizadorDetalhes.sobrenome}
-                      </div>
-                      <div className="text-xs text-slate-500 truncate flex items-center gap-1">
-                        <Mail size={10} /> {organizadorDetalhes.email}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                   <div className="text-xs text-slate-400 italic">Organizador não definido.</div>
-                )}
-              </div>
-
-              {/* Participantes / Chamada */}
-              <div className="w-full xl:w-2/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <UserCheck size={16} className="text-blue-600" />
-                    <span className="text-xs font-black uppercase text-slate-500">
-                      Participantes (Chamada)
-                    </span>
-                  </div>
-                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
-                    {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
-                  </span>
-                </div>
-
-                {loadingParticipantes ? (
-                  <div className="text-xs text-slate-400">Carregando chamada...</div>
-                ) : participantesLista.length === 0 ? (
-                  <div className="text-xs text-slate-400 italic p-4 border border-dashed rounded-xl text-center">
-                    Nenhum participante vinculado.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                    {participantesLista.map((p) => (
-                      <button
-                        key={p.id || `manual-${p.nome}-${Math.random()}`}
-                        onClick={() => togglePresenca(p)}
-                        className={`flex items-center justify-between p-2 rounded-xl border transition-all group ${
-                          p.presente 
-                            ? "bg-green-50 border-green-200" 
-                            : "bg-white border-slate-100 hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
-                            p.presente 
-                              ? "bg-green-100 text-green-700 border-green-200" 
-                              : "bg-slate-100 text-slate-500 border-slate-200"
-                          }`}>
-                            {p.nome ? p.nome.charAt(0) : "?"}
-                          </div>
-                          <div className="min-w-0 text-left">
-                            <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
-                              {p.nome || "Sem nome"}
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">{p.email || "-"}</div>
-                          </div>
-                        </div>
-                        
-                        <div className="shrink-0 ml-2">
-                          {p.presente ? (
-                            <CheckCircle2 size={18} className="text-green-500" />
-                          ) : (
-                            <XCircle size={18} className="text-slate-200 group-hover:text-slate-300" />
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Tabs principais */}
           <div className="flex flex-wrap gap-2 mb-4">
             
@@ -1301,8 +1209,97 @@ export default function Copiloto() {
               Selecione uma reunião na coluna da esquerda para visualizar ações e atas.
             </div>
           ) : tab === "presenca" ? (
-             <div className="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500 text-center italic">
-                A lista de presença já está fixada no topo desta tela.
+             <div className="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500 text-center italic">               
+                {/* ✅ CHAMADA / ORGANIZADOR e PARTICIPANTES (Nova Seção) */}
+                {selecionada?.id && (
+                  <div className="mb-4 flex flex-col xl:flex-row gap-4">
+                    {/* Organizador */}
+                    <div className="w-full xl:w-1/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Crown size={16} className="text-amber-500" />
+                        <span className="text-xs font-black uppercase text-slate-500">Organizador (Responsável)</span>
+                      </div>
+                      {organizadorDetalhes ? (
+                        <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border border-blue-200 shrink-0 uppercase">
+                            {organizadorDetalhes.nome.charAt(0)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-800 truncate">
+                              {organizadorDetalhes.nome} {organizadorDetalhes.sobrenome}
+                            </div>
+                            <div className="text-xs text-slate-500 truncate flex items-center gap-1">
+                              <Mail size={10} /> {organizadorDetalhes.email}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                         <div className="text-xs text-slate-400 italic">Organizador não definido.</div>
+                      )}
+                    </div>
+      
+                    {/* Participantes / Chamada */}
+                    <div className="w-full xl:w-2/3 bg-white border border-slate-200 rounded-2xl p-4 flex flex-col">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <UserCheck size={16} className="text-blue-600" />
+                          <span className="text-xs font-black uppercase text-slate-500">
+                            Participantes (Chamada)
+                          </span>
+                        </div>
+                        <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-lg">
+                          {participantesLista.filter(p => p.presente).length} / {participantesLista.length} presentes
+                        </span>
+                      </div>
+      
+                      {loadingParticipantes ? (
+                        <div className="text-xs text-slate-400">Carregando chamada...</div>
+                      ) : participantesLista.length === 0 ? (
+                        <div className="text-xs text-slate-400 italic p-4 border border-dashed rounded-xl text-center">
+                          Nenhum participante vinculado.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                          {participantesLista.map((p) => (
+                            <button
+                              key={p.id || `manual-${p.nome}-${Math.random()}`}
+                              onClick={() => togglePresenca(p)}
+                              className={`flex items-center justify-between p-2 rounded-xl border transition-all group ${
+                                p.presente 
+                                  ? "bg-green-50 border-green-200" 
+                                  : "bg-white border-slate-100 hover:bg-slate-50"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold uppercase shrink-0 border ${
+                                  p.presente 
+                                    ? "bg-green-100 text-green-700 border-green-200" 
+                                    : "bg-slate-100 text-slate-500 border-slate-200"
+                                }`}>
+                                  {p.nome ? p.nome.charAt(0) : "?"}
+                                </div>
+                                <div className="min-w-0 text-left">
+                                  <div className={`text-xs font-bold truncate ${p.presente ? "text-green-800" : "text-slate-700"}`}>
+                                    {p.nome || "Sem nome"}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">{p.email || "-"}</div>
+                                </div>
+                              </div>
+                              
+                              <div className="shrink-0 ml-2">
+                                {p.presente ? (
+                                  <CheckCircle2 size={18} className="text-green-500" />
+                                ) : (
+                                  <XCircle size={18} className="text-slate-200 group-hover:text-slate-300" />
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
              </div>
           ) : tab === "acoes" ? (
             <div className="space-y-4">
