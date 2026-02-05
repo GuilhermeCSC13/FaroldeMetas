@@ -24,6 +24,7 @@ import {
   Loader2,
   User,
 } from "lucide-react";
+import EditMeetingTypeForm from "./EditMeetingTypeForm";
 
 /**
  * PARTICIPANTES (mesma fonte do organizador)
@@ -716,7 +717,6 @@ export default function TiposReuniao() {
                   className={`px-3 py-2 rounded-md flex items-center gap-2 text-sm font-bold transition-all ${
                     view === "cards" ? "bg-white text-blue-600 shadow" : "text-gray-500"
                   }`}
-                  title="Cards"
                 >
                   <LayoutGrid size={16} /> Cards
                 </button>
@@ -904,7 +904,7 @@ export default function TiposReuniao() {
           </div>
         </div>
 
-        {/* DRAWER */}
+        {/* DRAWER - Mantém a estrutura original */}
         {drawerOpen && selectedTipo && (
           <div className="absolute inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
             <div className="w-full max-w-2xl h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col">
@@ -912,8 +912,7 @@ export default function TiposReuniao() {
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedTipo?.cor || "#111827" }} />
                   <div className="min-w-0">
-                    <h3 className="font-bold text-gray-900 truncate">{selectedTipo?.nome}</h3>
-                    <p className="text-xs text-gray-500 truncate">{selectedTipo?.slug ? `slug: ${selectedTipo.slug}` : ""}</p>
+                    <h2 className="font-bold text-gray-900 truncate">{selectedTipo?.nome}</h2>
                   </div>
                 </div>
 
@@ -1067,216 +1066,16 @@ export default function TiposReuniao() {
           </div>
         )}
 
-        {/* MODAL CREATE/EDIT */}
+        {/* MODAL FORM - Novo componente EditMeetingTypeForm */}
         {formOpen && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden border border-gray-200">
-              <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <Tags size={18} className="text-gray-700" />
-                  <h3 className="font-bold text-gray-900">{formMode === "create" ? "Novo tipo de reunião" : "Editar tipo de reunião"}</h3>
-                </div>
-                <button onClick={() => setFormOpen(false)} className="text-gray-400 hover:text-red-500" title="Fechar">
-                  <X size={20} />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Nome */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
-                    <input
-                      value={form.nome}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setForm((p) => ({
-                          ...p,
-                          nome: v,
-                          slug: formMode === "create" && (!p.slug || p.slug === slugify(p.nome)) ? slugify(v) : p.slug,
-                        }));
-                      }}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                      placeholder="Ex.: DBO"
-                    />
-                  </div>
-
-                  {/* Slug */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Slug</label>
-                    <input
-                      value={form.slug}
-                      onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                      placeholder="Ex.: dbo"
-                    />
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      Usado para identificação. Se deixar vazio, será gerado automaticamente.
-                    </p>
-                  </div>
-
-                  {/* Periodicidade */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Periodicidade</label>
-                    <select
-                      value={form.periodicidade}
-                      onChange={(e) => setForm((p) => ({ ...p, periodicidade: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                    >
-                      {PERIODICIDADES.map((p) => (
-                        <option key={p.value} value={p.value}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Ordem */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ordem (opcional)</label>
-                    <input
-                      type="number"
-                      value={form.ordem ?? ""}
-                      onChange={(e) => setForm((p) => ({ ...p, ordem: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                      placeholder="Ex.: 1"
-                    />
-                  </div>
-
-                  {/* Horário início */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (início)</label>
-                    <input
-                      type="time"
-                      value={form.horario_inicio || ""}
-                      onChange={(e) => setForm((p) => ({ ...p, horario_inicio: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                    />
-                  </div>
-
-                  {/* Horário fim */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário (término)</label>
-                    <input
-                      type="time"
-                      value={form.horario_fim || ""}
-                      onChange={(e) => setForm((p) => ({ ...p, horario_fim: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                    />
-                  </div>
-
-                  {/* Dias */}
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Dias da semana</label>
-                    <div className="flex flex-wrap gap-2">
-                      {DIAS_UI.map((d) => {
-                        const active = (form.dias_semana || []).includes(d.value);
-                        return (
-                          <button
-                            type="button"
-                            key={d.value}
-                            onClick={() => toggleDia(d.value)}
-                            className={`px-3 py-2 rounded-lg border text-sm font-bold transition-colors ${
-                              active ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                            }`}
-                          >
-                            {active ? (
-                              <span className="inline-flex items-center gap-2">
-                                <CheckCircle2 size={16} /> {d.label}
-                              </span>
-                            ) : (
-                              d.label
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="text-[11px] text-gray-400 mt-2">Você pode marcar mais de um dia (ex.: Seg/Qua/Sex).</p>
-                  </div>
-
-                  {/* Responsável */}
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-2">
-                      <User size={14} /> Responsável Padrão (Organizador)
-                    </label>
-                    <select
-                      value={form.responsavel_id}
-                      onChange={(e) => setForm((prev) => ({ ...prev, responsavel_id: e.target.value }))}
-                      className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none bg-white"
-                    >
-                      <option value="">Selecione um responsável...</option>
-                      {usuariosAprovadores.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.nome} ({u.email})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Cor */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cor</label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={form.cor || "#111827"}
-                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
-                        className="h-10 w-14 border border-gray-300 rounded"
-                      />
-                      <input
-                        value={form.cor || ""}
-                        onChange={(e) => setForm((p) => ({ ...p, cor: e.target.value }))}
-                        className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none"
-                        placeholder="#111827"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* ✅ Participantes: mesma fonte do organizador */}
-                {formMode === "edit" && form.id ? (
-                  <ParticipantesInterno
-                    tipoId={form.id}
-                    editavel={true}
-                    usuariosAprovadores={usuariosAprovadores}
-                  />
-                ) : (
-                  <div className="p-4 bg-blue-50 text-blue-700 text-xs rounded-lg border border-blue-100 text-center">
-                    Você poderá adicionar participantes padrão após salvar este tipo de reunião pela primeira vez.
-                  </div>
-                )}
-
-                {/* ATA Principal */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">ATA Principal</label>
-                  <textarea
-                    value={form.ata_principal}
-                    onChange={(e) => setForm((p) => ({ ...p, ata_principal: e.target.value }))}
-                    rows={10}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none font-sans text-sm whitespace-pre-wrap"
-                    placeholder="Cole aqui a ata principal..."
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    onClick={() => setFormOpen(false)}
-                    className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 border border-gray-200 font-bold text-gray-800"
-                    disabled={saving}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={saveTipo}
-                    className="px-4 py-2 rounded-lg bg-gray-900 hover:bg-gray-950 text-white font-bold"
-                    disabled={saving}
-                  >
-                    {saving ? "Salvando..." : "Salvar"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <EditMeetingTypeForm
+            mode={formMode}
+            initialData={form}
+            usuariosAprovadores={usuariosAprovadores}
+            onSave={saveTipo}
+            onCancel={() => setFormOpen(false)}
+            isLoading={saving}
+          />
         )}
       </div>
     </Layout>
