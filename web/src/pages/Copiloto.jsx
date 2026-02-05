@@ -1259,7 +1259,7 @@ export default function Copiloto() {
                           Nenhum participante vinculado.
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pr-1">
                           {participantesLista.map((p) => (
                             <button
                               key={p.id || `manual-${p.nome}-${Math.random()}`}
