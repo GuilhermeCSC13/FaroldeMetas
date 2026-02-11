@@ -1,3 +1,4 @@
+// src/pages/CentralReunioes.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/tatico/Layout";
 import { supabase, supabaseInove } from "../supabaseClient";
@@ -15,7 +16,6 @@ import {
   addWeeks,
   subWeeks,
   parseISO,
-  addMinutes,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -90,10 +90,16 @@ function parseDataLocal(dataString) {
 
 function statusBadge(status) {
   const s = String(status || "").toLowerCase();
-  if (s.includes("realiz")) return { text: "✅", title: "Realizada" };
-  if (s.includes("nao") || s.includes("não") || s.includes("cancel"))
-    return { text: "✖", title: "Não realizada" };
-  return { text: "●", title: "Agendada" };
+
+  if (s.includes("realiz")) return { text: "✅", title: "Realizada", kind: "done" };
+
+  // ✅ NOVO: Cancelada explícito (X vermelho)
+  if (s.includes("cancel")) return { text: "✖", title: "Cancelada", kind: "cancel" };
+
+  if (s.includes("nao") || s.includes("não"))
+    return { text: "✖", title: "Não realizada", kind: "no" };
+
+  return { text: "●", title: "Agendada", kind: "scheduled" };
 }
 
 function calcDuracaoSegundos(inicioHHMM, fimHHMM) {
@@ -240,6 +246,32 @@ export default function CentralReunioes() {
     setIsModalOpen(true);
   };
 
+  // ✅ NOVO: Cancelar reunião (não some; mantém histórico)
+  const cancelarReuniao = async () => {
+    if (!editingReuniao?.id) return;
+
+    const ok = window.confirm(
+      "Cancelar esta reunião? Ela continuará no histórico como Cancelada."
+    );
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase
+        .from("reunioes")
+        .update({ status: "Cancelada" })
+        .eq("id", editingReuniao.id);
+
+      if (error) throw error;
+
+      setFormData((prev) => ({ ...prev, status: "Cancelada" }));
+      await fetchReunioes();
+      alert("Reunião cancelada (mantida no histórico).");
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao cancelar: " + (err?.message || ""));
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const tipo = getTipoById(formData.tipo_reuniao_id);
@@ -287,7 +319,10 @@ export default function CentralReunioes() {
 
         const reuniaoId = data?.id || data?.[0]?.id;
         if (reuniaoId) {
-          await salvarParticipantesManuais(reuniaoId, formData.participantes_manuais);
+          await salvarParticipantesManuais(
+            reuniaoId,
+            formData.participantes_manuais
+          );
         }
       }
 
@@ -411,7 +446,8 @@ export default function CentralReunioes() {
     }, {});
   }, [reunioes]);
 
-  const tipoLabel = (r) => r.tipos_reuniao?.nome || r.tipo_reuniao_legacy || "Geral";
+  const tipoLabel = (r) =>
+    r.tipos_reuniao?.nome || r.tipo_reuniao_legacy || "Geral";
 
   return (
     <Layout>
@@ -431,11 +467,14 @@ export default function CentralReunioes() {
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-1">Área Restrita</h3>
               <p className="text-sm text-slate-500 mb-6">
-                Exclusão permitida apenas para <b>Gestores</b> ou <b>Administradores</b>.
+                Exclusão permitida apenas para <b>Gestores</b> ou{" "}
+                <b>Administradores</b>.
               </p>
               <div className="space-y-3 text-left">
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Login</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase">
+                    Login
+                  </label>
                   <input
                     type="text"
                     autoFocus
@@ -445,7 +484,9 @@ export default function CentralReunioes() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase">Senha</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase">
+                    Senha
+                  </label>
                   <input
                     type="password"
                     className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
@@ -582,10 +623,12 @@ export default function CentralReunioes() {
                           </div>
                           <span
                             className={`text-sm font-black ${
-                              badge.text === "✅"
+                              badge.kind === "done"
                                 ? "text-green-600"
-                                : badge.text === "✖"
+                                : badge.kind === "cancel"
                                 ? "text-red-600"
+                                : badge.kind === "no"
+                                ? "text-slate-500"
                                 : "text-yellow-500"
                             }`}
                             title={badge.title}
@@ -626,8 +669,12 @@ export default function CentralReunioes() {
                               style={{ backgroundColor: m.cor }}
                             />
                             <div>
-                              <p className="text-xs font-bold text-blue-600">{timeRange}</p>
-                              <h4 className="font-bold text-slate-800">{m.titulo}</h4>
+                              <p className="text-xs font-bold text-blue-600">
+                                {timeRange}
+                              </p>
+                              <h4 className="font-bold text-slate-800">
+                                {m.titulo}
+                              </h4>
                               <p className="text-[10px] text-slate-500 uppercase font-bold">
                                 {tipoLabel(m)}
                               </p>
@@ -635,10 +682,12 @@ export default function CentralReunioes() {
                           </div>
                           <span
                             className={`text-sm font-black ${
-                              badge.text === "✅"
+                              badge.kind === "done"
                                 ? "text-green-600"
-                                : badge.text === "✖"
+                                : badge.kind === "cancel"
                                 ? "text-red-600"
+                                : badge.kind === "no"
+                                ? "text-slate-500"
                                 : "text-yellow-500"
                             }`}
                             title={badge.title}
@@ -721,10 +770,12 @@ export default function CentralReunioes() {
                           </span>
                           <span
                             className={`text-[10px] font-black ${
-                              badge.text === "✅"
+                              badge.kind === "done"
                                 ? "text-green-600"
-                                : badge.text === "✖"
+                                : badge.kind === "cancel"
                                 ? "text-red-600"
+                                : badge.kind === "no"
+                                ? "text-slate-500"
                                 : "text-yellow-500"
                             }`}
                             title={badge.title}
@@ -769,6 +820,7 @@ export default function CentralReunioes() {
                 tipos={tipos}
                 isRealizada={formData.status === "Realizada"}
                 onDeleteRequest={handleDeleteClick}
+                onCancelRequest={cancelarReuniao} // ✅ NOVO
               />
             </form>
 
