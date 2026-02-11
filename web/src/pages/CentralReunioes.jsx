@@ -94,7 +94,7 @@ function statusBadge(status) {
   if (s.includes("realiz")) return { text: "✅", title: "Realizada", kind: "done" };
 
   // ✅ NOVO: Cancelada explícito (X vermelho)
-  if (s.includes("cancel")) return { text: "✖", title: "Cancelada", kind: "cancel" };
+  if (s.includes("cancel")) return { text: "✖ Cancelada", title: "Cancelada", kind: "cancel" };
 
   if (s.includes("nao") || s.includes("não"))
     return { text: "✖", title: "Não realizada", kind: "no" };
