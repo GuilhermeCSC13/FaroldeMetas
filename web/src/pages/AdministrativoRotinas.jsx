@@ -334,21 +334,38 @@ const AdministrativoRotinas = () => {
         novoMeses[mesId] = {
           ...novoMeses[mesId],
           realizado: valorNum === null ? "" : valorNum,
-          ...calculateScore(alvoAtual, valorNum, r.tipo_comparacao, parseNumberPtBr(r.peso) ?? 0, r._isBinary),
+          ...calculateScore(
+            alvoAtual,
+            valorNum,
+            r.tipo_comparacao,
+            parseNumberPtBr(r.peso) ?? 0,
+            r._isBinary
+          ),
         };
 
         return { ...r, meses: novoMeses };
       })
     );
 
-    // Salva no banco (null apaga valor)
-    const { error } = await supabase.rpc("atualizar_realizado_rotina", {
-      p_rotina_id: rotinaId,
-      p_mes: mesId,
-      p_valor: valorNum,
-    });
+    // ✅✅✅ Salva no banco (UPSERT) — cria a linha se não existir
+    try {
+      const payload = {
+        rotina_id: rotinaId,
+        ano: 2026,
+        mes: mesId,
+        valor_realizado: valorNum, // null apaga
+      };
 
-    if (error) console.error("Erro ao salvar:", error);
+      const { error } = await supabase
+        .from("rotinas_mensais")
+        .upsert(payload, { onConflict: "rotina_id,ano,mes" });
+
+      if (error) {
+        console.error("Erro ao salvar realizado:", error);
+      }
+    } catch (e) {
+      console.error("Erro inesperado ao salvar:", e);
+    }
   };
 
   // responsáveis únicos para o filtro
@@ -590,13 +607,15 @@ const AdministrativoRotinas = () => {
 
                         // ✅ Binário
                         if (row._isBinary) {
-                          const alvoLabel = numToBoolLabel(dados.alvo ?? 1);
-                          const realLabel = numToBoolLabel(dados.realizado);
+                          const alvoLabel = numToBoolLabel(dados?.alvo ?? 1);
+                          const realLabel = numToBoolLabel(dados?.realizado);
 
                           return (
                             <td
                               key={mes.id}
-                              className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
+                              className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${
+                                dados?.color || "bg-white"
+                              }`}
                             >
                               <div className="flex flex-col h-full justify-between">
                                 <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
@@ -628,11 +647,13 @@ const AdministrativoRotinas = () => {
                         return (
                           <td
                             key={mes.id}
-                            className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
+                            className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${
+                              dados?.color || "bg-white"
+                            }`}
                           >
                             <div className="flex flex-col h-full justify-between">
                               <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
-                                {dados.alvo !== null && dados.alvo !== undefined
+                                {dados?.alvo !== null && dados?.alvo !== undefined
                                   ? Number(dados.alvo).toFixed(2)
                                   : ""}
                               </div>
