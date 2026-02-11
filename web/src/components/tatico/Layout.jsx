@@ -5,7 +5,7 @@ import Sidebar from "./Sidebar";
 import TacticalAssistant from "./TacticalAssistant";
 import RecorderDock from "./RecorderDock"; // ✅ NOVO (dock do gravador)
 
-const DEFAULT_APP_ZOOM = 0.7; // 70%
+const DEFAULT_APP_ZOOM = 0.9; // 70%
 
 export default function Layout({ children }) {
   const [appZoom, setAppZoom] = useState(DEFAULT_APP_ZOOM);
