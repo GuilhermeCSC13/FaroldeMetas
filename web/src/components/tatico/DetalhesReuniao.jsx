@@ -16,7 +16,7 @@ import {
   X,
   Users,
   UserPlus,
-  Mail
+  Mail,
 } from "lucide-react";
 import { format, isValid } from "date-fns";
 import { supabase, supabaseInove } from "../../supabaseClient";
@@ -56,6 +56,7 @@ export default function DetalhesReuniao({
   tipos = [],
   isRealizada = false,
   onDeleteRequest,
+  onCancelRequest, // ✅ NOVO
 }) {
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
@@ -72,9 +73,9 @@ export default function DetalhesReuniao({
   const [loadingManuais, setLoadingManuais] = useState(false);
   const [novoParticipante, setNovoParticipante] = useState({ nome: "", email: "" });
   const [addingPart, setAddingPart] = useState(false);
-  
+
   // ✅ Estado que faltava: Sugestões para Participante Manual
-  const [showSugestoesPart, setShowSugestoesPart] = useState(false); 
+  const [showSugestoesPart, setShowSugestoesPart] = useState(false);
 
   // Estados para Exclusão de Material
   const [showAuthMaterial, setShowAuthMaterial] = useState(false);
@@ -222,8 +223,9 @@ export default function DetalhesReuniao({
 
   // ✅ ADICIONAR PARTICIPANTE MANUAL
   const handleAddParticipante = async () => {
-    if (!novoParticipante.nome.trim()) return alert("Informe o nome do participante.");
-    
+    if (!novoParticipante.nome.trim())
+      return alert("Informe o nome do participante.");
+
     setAddingPart(true);
     try {
       if (editingReuniao?.id) {
@@ -233,7 +235,7 @@ export default function DetalhesReuniao({
             reuniao_id: editingReuniao.id,
             nome: novoParticipante.nome,
             email: novoParticipante.email,
-            presente: false 
+            presente: false,
           })
           .select()
           .single();
@@ -265,10 +267,10 @@ export default function DetalhesReuniao({
           .eq("id", id);
         if (error) throw error;
       }
-      
-      const novaLista = participantesManuais.filter(p => p.id !== id);
+
+      const novaLista = participantesManuais.filter((p) => p.id !== id);
       setParticipantesManuais(novaLista);
-      
+
       if (!editingReuniao?.id) {
         handleChange("participantes_manuais", novaLista);
       }
@@ -293,10 +295,14 @@ export default function DetalhesReuniao({
           .substr(2, 5)}.${fileExt}`;
         const filePath = `anexos/${fileName}`;
 
-        const { error: uploadErr } = await supabase.storage.from("materiais").upload(filePath, file);
+        const { error: uploadErr } = await supabase.storage
+          .from("materiais")
+          .upload(filePath, file);
         if (uploadErr) throw uploadErr;
 
-        const { data: urlData } = supabase.storage.from("materiais").getPublicUrl(filePath);
+        const { data: urlData } = supabase.storage
+          .from("materiais")
+          .getPublicUrl(filePath);
         if (urlData?.publicUrl) {
           novosMateriais.push({
             name: file.name,
@@ -392,12 +398,10 @@ export default function DetalhesReuniao({
     setShowSugestoesResp(false);
   };
 
-  // ✅ [PARTICIPANTE MANUAL] Autocomplete logic (ESTAVA FALTANDO ISSO)
+  // ✅ [PARTICIPANTE MANUAL] Autocomplete logic
   const filteredParticipantesAdd = useMemo(() => {
     const termo = (novoParticipante.nome || "").toLowerCase();
     if (termo.length < 1) return [];
-    
-    // Filtra usuários que já não foram adicionados (opcional, mas bom pra UX)
     return listaResponsaveis
       .filter((u) => buildNomeSobrenome(u).toLowerCase().includes(termo))
       .slice(0, 6);
@@ -406,11 +410,14 @@ export default function DetalhesReuniao({
   const selectParticipanteAdd = (u) => {
     const nome = buildNomeSobrenome(u);
     setNovoParticipante({
-        nome: nome,
-        email: u.email || ""
+      nome: nome,
+      email: u.email || "",
     });
     setShowSugestoesPart(false);
-  }
+  };
+
+  // ✅ NOVO: detectar cancelada (pra travar tudo, igual Realizada)
+  const isCancelada = String(formData.status || "").toLowerCase().includes("cancel");
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 relative">
@@ -418,16 +425,59 @@ export default function DetalhesReuniao({
       {showAuthMaterial && (
         <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-200">
           <div className="w-full max-w-xs bg-white border border-slate-200 shadow-2xl rounded-xl p-6 text-center relative">
-            <button onClick={() => setShowAuthMaterial(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X size={18} /></button>
-            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600"><ShieldAlert size={20} /></div>
-            <h4 className="text-base font-bold text-slate-800 mb-1">Autorização Necessária</h4>
+            <button
+              onClick={() => setShowAuthMaterial(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X size={18} />
+            </button>
+            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-600">
+              <ShieldAlert size={20} />
+            </div>
+            <h4 className="text-base font-bold text-slate-800 mb-1">
+              Autorização Necessária
+            </h4>
             <div className="space-y-2 text-left my-4">
-              <div><label className="text-[10px] font-bold text-slate-500 uppercase">Login</label><input type="text" autoFocus className="w-full border p-2 rounded text-sm" value={authLoginMat} onChange={(e) => setAuthLoginMat(e.target.value)} /></div>
-              <div><label className="text-[10px] font-bold text-slate-500 uppercase">Senha</label><input type="password" className="w-full border p-2 rounded text-sm" value={authSenhaMat} onChange={(e) => setAuthSenhaMat(e.target.value)} /></div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  Login
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  className="w-full border p-2 rounded text-sm"
+                  value={authLoginMat}
+                  onChange={(e) => setAuthLoginMat(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase">
+                  Senha
+                </label>
+                <input
+                  type="password"
+                  className="w-full border p-2 rounded text-sm"
+                  value={authSenhaMat}
+                  onChange={(e) => setAuthSenhaMat(e.target.value)}
+                />
+              </div>
             </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setShowAuthMaterial(false)} className="flex-1 py-2 border rounded text-xs font-bold hover:bg-slate-50">Cancelar</button>
-              <button type="button" onClick={confirmDeleteMaterial} disabled={validatingAuthMat} className="flex-1 py-2 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700">{validatingAuthMat ? "..." : "Confirmar"}</button>
+              <button
+                type="button"
+                onClick={() => setShowAuthMaterial(false)}
+                className="flex-1 py-2 border rounded text-xs font-bold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteMaterial}
+                disabled={validatingAuthMat}
+                className="flex-1 py-2 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700"
+              >
+                {validatingAuthMat ? "..." : "Confirmar"}
+              </button>
             </div>
           </div>
         </div>
@@ -437,65 +487,181 @@ export default function DetalhesReuniao({
       <div className="lg:col-span-5 space-y-8 flex flex-col">
         <section className="space-y-4 flex-1">
           <div className="flex items-center justify-between">
-            <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">Configurações</h3>
-            {isRealizada && <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200">🔒 Realizada</span>}
+            <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">
+              Configurações
+            </h3>
+
+            {isRealizada && (
+              <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200">
+                🔒 Realizada
+              </span>
+            )}
+
+            {!isRealizada && isCancelada && (
+              <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-1 rounded border border-red-200">
+                ✖ Cancelada
+              </span>
+            )}
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Título</label>
-            <input required disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60" value={formData.titulo} onChange={(e) => handleChange("titulo", e.target.value)} />
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Título
+            </label>
+            <input
+              required
+              disabled={isRealizada || isCancelada}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
+              value={formData.titulo}
+              onChange={(e) => handleChange("titulo", e.target.value)}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Data</label>
-              <div className="relative"><Calendar className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="date" disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60" value={formData.data} onChange={(e) => handleChange("data", e.target.value)} /></div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Data
+              </label>
+              <div className="relative">
+                <Calendar
+                  className="absolute left-3 top-2.5 text-slate-400"
+                  size={16}
+                />
+                <input
+                  type="date"
+                  disabled={isRealizada || isCancelada}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60"
+                  value={formData.data}
+                  onChange={(e) => handleChange("data", e.target.value)}
+                />
+              </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Hora (início)</label>
-              <div className="relative"><Clock className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="time" disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60" value={formData.hora_inicio} onChange={(e) => handleChange("hora_inicio", e.target.value)} /></div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Hora (início)
+              </label>
+              <div className="relative">
+                <Clock
+                  className="absolute left-3 top-2.5 text-slate-400"
+                  size={16}
+                />
+                <input
+                  type="time"
+                  disabled={isRealizada || isCancelada}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60"
+                  value={formData.hora_inicio}
+                  onChange={(e) => handleChange("hora_inicio", e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Hora (término)</label>
-              <div className="relative"><Clock className="absolute left-3 top-2.5 text-slate-400" size={16} /><input type="time" disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60" value={formData.hora_fim} onChange={(e) => handleChange("hora_fim", e.target.value)} /></div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Hora (término)
+              </label>
+              <div className="relative">
+                <Clock
+                  className="absolute left-3 top-2.5 text-slate-400"
+                  size={16}
+                />
+                <input
+                  type="time"
+                  disabled={isRealizada || isCancelada}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none disabled:opacity-60"
+                  value={formData.hora_fim}
+                  onChange={(e) => handleChange("hora_fim", e.target.value)}
+                />
+              </div>
             </div>
             <div className="relative">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Organizador</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Organizador
+              </label>
               <div className="relative">
-                <User className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                <input disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60" value={formData.responsavel} onChange={(e) => { handleChange("responsavel", e.target.value); setShowSugestoesResp(true); }} onFocus={() => setShowSugestoesResp(true)} onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)} placeholder="Buscar responsável..." />
+                <User
+                  className="absolute left-3 top-2.5 text-slate-400"
+                  size={16}
+                />
+                <input
+                  disabled={isRealizada || isCancelada}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+                  value={formData.responsavel}
+                  onChange={(e) => {
+                    handleChange("responsavel", e.target.value);
+                    setShowSugestoesResp(true);
+                  }}
+                  onFocus={() => setShowSugestoesResp(true)}
+                  onBlur={() => setTimeout(() => setShowSugestoesResp(false), 200)}
+                  placeholder="Buscar responsável..."
+                />
               </div>
-              {!!selectedTipo?.responsavel_id && <p className="mt-1 text-[11px] text-slate-500">Responsável padrão do tipo: <b>{responsavelPadraoNome || "—"}</b></p>}
-              {showSugestoesResp && !isRealizada && filteredResponsaveis.length > 0 && (
-                <div className="absolute z-10 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-lg max-h-40 overflow-y-auto">
-                  {filteredResponsaveis.map((u) => (
-                    <button key={u.id} type="button" onMouseDown={(e) => { e.preventDefault(); selectResponsavel(u); }} className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0">{buildNomeSobrenome(u)}</button>
-                  ))}
-                </div>
+              {!!selectedTipo?.responsavel_id && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Responsável padrão do tipo:{" "}
+                  <b>{responsavelPadraoNome || "—"}</b>
+                </p>
               )}
+              {showSugestoesResp &&
+                !(isRealizada || isCancelada) &&
+                filteredResponsaveis.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                    {filteredResponsaveis.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          selectResponsavel(u);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
+                      >
+                        {buildNomeSobrenome(u)}
+                      </button>
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
 
           {/* PARTICIPANTES DO TIPO */}
           <div className="bg-white border border-slate-200 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2"><Users size={14} /> Padrão do Tipo</p>
-              <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200">{participantesTipo.length}</span>
+              <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2">
+                <Users size={14} /> Padrão do Tipo
+              </p>
+              <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200">
+                {participantesTipo.length}
+              </span>
             </div>
             {loadingParticipantesTipo ? (
-              <div className="text-slate-400 text-xs flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Carregando...</div>
+              <div className="text-slate-400 text-xs flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Carregando...
+              </div>
             ) : participantesTipo.length === 0 ? (
-              <div className="text-slate-400 text-xs italic">Nenhum participante padrão.</div>
+              <div className="text-slate-400 text-xs italic">
+                Nenhum participante padrão.
+              </div>
             ) : (
               <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                 {participantesTipo.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 opacity-80">
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 opacity-80"
+                  >
                     <div className="min-w-0 flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold shrink-0">{String(p.nome || "?").charAt(0)}</div>
-                      <div className="min-w-0"><div className="text-xs font-bold text-slate-800 truncate">{p.nome || "-"}</div><div className="text-[10px] text-slate-500 truncate">{p.email || ""}</div></div>
+                      <div className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+                        {String(p.nome || "?").charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">
+                          {p.nome || "-"}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {p.email || ""}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -506,74 +672,114 @@ export default function DetalhesReuniao({
           {/* PARTICIPANTES MANUAIS */}
           <div className="bg-white border border-slate-200 rounded-xl p-3">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2"><UserPlus size={14} /> Adicionais / Manuais</p>
-              <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">{participantesManuais.length}</span>
+              <p className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2">
+                <UserPlus size={14} /> Adicionais / Manuais
+              </p>
+              <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                {participantesManuais.length}
+              </span>
             </div>
 
-            {!isRealizada && (
+            {!(isRealizada || isCancelada) && (
               <div className="flex gap-2 mb-3 items-center">
-                {/* ✅ INPUT DE NOME COM AUTOCOMPLETE (AQUI ESTAVA FALTANDO) */}
                 <div className="relative flex-1">
-                    <input 
-                      placeholder="Nome do participante" 
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
-                      value={novoParticipante.nome}
-                      onChange={e => {
-                          setNovoParticipante(prev => ({...prev, nome: e.target.value}));
-                          setShowSugestoesPart(true);
-                      }}
-                      onFocus={() => setShowSugestoesPart(true)}
-                      onBlur={() => setTimeout(() => setShowSugestoesPart(false), 200)}
-                    />
-                    {showSugestoesPart && filteredParticipantesAdd.length > 0 && (
-                        <div className="absolute z-20 w-full mt-1 bg-white border border-slate-100 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                            {filteredParticipantesAdd.map((u) => (
-                                <button 
-                                    key={u.id} 
-                                    type="button" 
-                                    onMouseDown={(e) => { e.preventDefault(); selectParticipanteAdd(u); }} 
-                                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
-                                >
-                                    <div className="font-bold">{buildNomeSobrenome(u)}</div>
-                                    <div className="text-[10px] text-slate-400">{u.email}</div>
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                  <input
+                    placeholder="Nome do participante"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
+                    value={novoParticipante.nome}
+                    onChange={(e) => {
+                      setNovoParticipante((prev) => ({
+                        ...prev,
+                        nome: e.target.value,
+                      }));
+                      setShowSugestoesPart(true);
+                    }}
+                    onFocus={() => setShowSugestoesPart(true)}
+                    onBlur={() => setTimeout(() => setShowSugestoesPart(false), 200)}
+                  />
+                  {showSugestoesPart && filteredParticipantesAdd.length > 0 && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border border-slate-100 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {filteredParticipantesAdd.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectParticipanteAdd(u);
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0"
+                        >
+                          <div className="font-bold">{buildNomeSobrenome(u)}</div>
+                          <div className="text-[10px] text-slate-400">{u.email}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <input 
-                  placeholder="Email (opcional)" 
+                <input
+                  placeholder="Email (opcional)"
                   className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
                   value={novoParticipante.email}
-                  onChange={e => setNovoParticipante(prev => ({...prev, email: e.target.value}))}
+                  onChange={(e) =>
+                    setNovoParticipante((prev) => ({
+                      ...prev,
+                      email: e.target.value,
+                    }))
+                  }
                 />
-                <button 
+                <button
                   type="button"
                   onClick={handleAddParticipante}
                   disabled={addingPart}
                   className="bg-blue-600 text-white p-1.5 rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
                   title="Adicionar"
                 >
-                  {addingPart ? <Loader2 size={14} className="animate-spin"/> : <Plus size={14} />}
+                  {addingPart ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Plus size={14} />
+                  )}
                 </button>
               </div>
             )}
 
             {loadingManuais ? (
-               <div className="text-slate-400 text-xs flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Carregando...</div>
+              <div className="text-slate-400 text-xs flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Carregando...
+              </div>
             ) : participantesManuais.length === 0 ? (
-               <div className="text-slate-400 text-xs italic">Nenhum participante adicional.</div>
+              <div className="text-slate-400 text-xs italic">
+                Nenhum participante adicional.
+              </div>
             ) : (
               <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                 {participantesManuais.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-sm">
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-sm"
+                  >
                     <div className="min-w-0 flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-[10px] font-bold shrink-0">{String(p.nome || "?").charAt(0)}</div>
-                      <div className="min-w-0"><div className="text-xs font-bold text-slate-800 truncate">{p.nome || "-"}</div><div className="text-[10px] text-slate-500 truncate">{p.email || ""}</div></div>
+                      <div className="w-6 h-6 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-[10px] font-bold shrink-0">
+                        {String(p.nome || "?").charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">
+                          {p.nome || "-"}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {p.email || ""}
+                        </div>
+                      </div>
                     </div>
-                    {!isRealizada && (
-                      <button type="button" onClick={() => handleRemoveParticipante(p.id)} className="text-slate-300 hover:text-red-500 p-1 rounded-md transition-colors"><Trash2 size={14} /></button>
+                    {!(isRealizada || isCancelada) && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveParticipante(p.id)}
+                        className="text-slate-300 hover:text-red-500 p-1 rounded-md transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     )}
                   </div>
                 ))}
@@ -582,52 +788,132 @@ export default function DetalhesReuniao({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Tipo</label>
-            <select disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60" value={formData.tipo_reuniao_id || ""} onChange={(e) => handleChange("tipo_reuniao_id", e.target.value)}>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Tipo
+            </label>
+            <select
+              disabled={isRealizada || isCancelada}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60"
+              value={formData.tipo_reuniao_id || ""}
+              onChange={(e) => handleChange("tipo_reuniao_id", e.target.value)}
+            >
               <option value="">Selecione...</option>
-              {tipos.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+              {tipos.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome}
+                </option>
+              ))}
             </select>
           </div>
 
           <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
             <span className="text-xs font-semibold text-slate-700">Cor</span>
-            <input type="color" disabled={isRealizada} className="w-10 h-8 rounded cursor-pointer border-none bg-transparent disabled:opacity-60" value={formData.cor} onChange={(e) => handleChange("cor", e.target.value)} />
+            <input
+              type="color"
+              disabled={isRealizada || isCancelada}
+              className="w-10 h-8 rounded cursor-pointer border-none bg-transparent disabled:opacity-60"
+              value={formData.cor}
+              onChange={(e) => handleChange("cor", e.target.value)}
+            />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
-            <select disabled={isRealizada} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60" value={formData.status} onChange={(e) => handleChange("status", e.target.value)}>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Status
+            </label>
+            <select
+              disabled={isRealizada || isCancelada}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none font-semibold disabled:opacity-60"
+              value={formData.status}
+              onChange={(e) => handleChange("status", e.target.value)}
+            >
               <option value="Agendada">Agendada</option>
               <option value="Realizada">Realizada</option>
               <option value="Nao Realizada">Não realizada</option>
+              <option value="Cancelada">Cancelada</option> {/* ✅ NOVO */}
             </select>
           </div>
         </section>
 
         {editingReuniao && (
-          <div className="pt-4 border-t border-slate-100 mt-auto">
-            <button type="button" onClick={onDeleteRequest} className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors"><Trash2 size={16} /> Excluir Reunião (Área Restrita)</button>
+          <div className="pt-4 border-t border-slate-100 mt-auto space-y-2">
+            {/* ✅ NOVO: Cancelar Reunião (mantém histórico) */}
+            <button
+              type="button"
+              onClick={onCancelRequest}
+              disabled={isRealizada || isCancelada}
+              className="text-red-700 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors border border-red-100 disabled:opacity-60"
+            >
+              ✖ Cancelar Reunião (Manter no histórico)
+            </button>
+
+            <button
+              type="button"
+              onClick={onDeleteRequest}
+              className="text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 px-3 py-2 rounded-lg w-full justify-center transition-colors"
+            >
+              <Trash2 size={16} /> Excluir Reunião (Área Restrita)
+            </button>
           </div>
         )}
       </div>
 
       {/* DIREITA */}
       <div className="lg:col-span-7 flex flex-col space-y-4">
-        <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2"><AlignLeft size={16} /> ATA da Reunião</h3>
+        <h3 className="text-[11px] font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2">
+          <AlignLeft size={16} /> ATA da Reunião
+        </h3>
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2"><FileText size={14} className="text-slate-400" /><p className="text-xs font-bold text-slate-700">ATA guia</p></div>
-            <button type="button" onClick={usarAtaDoTipo} className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 hover:bg-white disabled:opacity-50" disabled={!selectedTipo?.ata_principal || isRealizada}>Usar ATA principal</button>
+            <div className="flex items-center gap-2">
+              <FileText size={14} className="text-slate-400" />
+              <p className="text-xs font-bold text-slate-700">ATA guia</p>
+            </div>
+            <button
+              type="button"
+              onClick={usarAtaDoTipo}
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 hover:bg-white disabled:opacity-50"
+              disabled={!selectedTipo?.ata_principal || isRealizada || isCancelada}
+            >
+              Usar ATA principal
+            </button>
           </div>
-          <div className="mt-3 text-xs text-slate-600 whitespace-pre-line max-h-28 overflow-y-auto">{selectedTipo?.ata_principal || "Selecione um tipo."}</div>
+          <div className="mt-3 text-xs text-slate-600 whitespace-pre-line max-h-28 overflow-y-auto">
+            {selectedTipo?.ata_principal || "Selecione um tipo."}
+          </div>
         </div>
-        <textarea disabled={isRealizada} className="flex-1 w-full min-h-[250px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono disabled:opacity-60" placeholder="Descreva a ATA..." value={formData.ata} onChange={(e) => handleChange("ata", e.target.value)} />
+        <textarea
+          disabled={isRealizada || isCancelada}
+          className="flex-1 w-full min-h-[250px] bg-slate-50 border border-slate-200 rounded-2xl p-6 text-sm text-slate-800 leading-relaxed outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-inner resize-none font-mono disabled:opacity-60"
+          placeholder="Descreva a ATA..."
+          value={formData.ata}
+          onChange={(e) => handleChange("ata", e.target.value)}
+        />
         <div className="mt-4 pt-4 border-t border-slate-100">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase"><Paperclip size={14} /> Anexos</div>
-            <label className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${uploadingMaterial ? "opacity-50 pointer-events-none" : ""}`}>
-              {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} {uploadingMaterial ? "Enviando..." : "Anexar"}
-              <input type="file" multiple className="hidden" onChange={handleUploadMaterial} disabled={uploadingMaterial} />
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase">
+              <Paperclip size={14} /> Anexos
+            </div>
+            <label
+              className={`cursor-pointer text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 flex items-center gap-2 transition-all ${
+                uploadingMaterial || isRealizada || isCancelada
+                  ? "opacity-50 pointer-events-none"
+                  : ""
+              }`}
+            >
+              {uploadingMaterial ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Plus size={14} />
+              )}{" "}
+              {uploadingMaterial ? "Enviando..." : "Anexar"}
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleUploadMaterial}
+                disabled={uploadingMaterial || isRealizada || isCancelada}
+              />
             </label>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 min-h-[80px]">
@@ -636,21 +922,57 @@ export default function DetalhesReuniao({
                 {formData.materiais.map((item, idx) => {
                   const isImage = item.type?.startsWith("image");
                   return (
-                    <div key={idx} className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm">
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between bg-white border border-slate-100 p-2 rounded-lg shadow-sm"
+                    >
                       <div className="flex items-center gap-3 overflow-hidden">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isImage ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"}`}>{isImage ? <ImageIcon size={16} /> : <FileText size={16} />}</div>
-                        <div className="min-w-0"><p className="text-xs font-bold text-slate-700 truncate" title={item.name}>{item.name}</p></div>
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                            isImage
+                              ? "bg-purple-100 text-purple-600"
+                              : "bg-blue-100 text-blue-600"
+                          }`}
+                        >
+                          {isImage ? <ImageIcon size={16} /> : <FileText size={16} />}
+                        </div>
+                        <div className="min-w-0">
+                          <p
+                            className="text-xs font-bold text-slate-700 truncate"
+                            title={item.name}
+                          >
+                            {item.name}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <a href={item.url} target="_blank" rel="noreferrer" className="p-1.5 text-slate-400 hover:text-blue-600 rounded-md"><Download size={16} /></a>
-                        <button type="button" onClick={() => handleRequestDeleteMaterial(idx)} className="p-1.5 text-slate-400 hover:text-red-600 rounded-md"><Trash2 size={16} /></button>
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 text-slate-400 hover:text-blue-600 rounded-md"
+                        >
+                          <Download size={16} />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleRequestDeleteMaterial(idx)}
+                          className={`p-1.5 text-slate-400 hover:text-red-600 rounded-md ${
+                            isRealizada || isCancelada ? "opacity-50 pointer-events-none" : ""
+                          }`}
+                          disabled={isRealizada || isCancelada}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="text-center py-4 text-slate-400 text-xs italic">Nenhum anexo.</div>
+              <div className="text-center py-4 text-slate-400 text-xs italic">
+                Nenhum anexo.
+              </div>
             )}
           </div>
         </div>
