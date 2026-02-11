@@ -98,7 +98,10 @@ const OperacaoRotinas = () => {
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
 
-  // ✅ Export igual Metas
+  // ✅ filtro por responsável (padrão, igual Manutenção/Moov)
+  const [responsavelFiltro, setResponsavelFiltro] = useState("");
+
+  // ✅ Export igual padrão
   const [openExport, setOpenExport] = useState(false);
   const tableWrapRef = useRef(null);
 
@@ -135,15 +138,17 @@ const OperacaoRotinas = () => {
     }
   };
 
-  // ✅ Fonte da verdade do binário: rotinas_indicadores.unidade (igual Metas)
+  // ✅ Fonte da verdade do binário: rotinas_indicadores.unidade
   const isBinaryRotina = (row) => {
     const unidade = String(row?.unidade ?? "").trim().toLowerCase();
     if (unidade === "binario" || unidade === "binário" || unidade === "boolean") return true;
     return false;
   };
 
-  // ✅ Cálculo (numérico + binário) — idêntico ao Metas
+  // ✅ Cálculo (numérico + binário) — padrão (peso = Number(pesoTotal) || 0)
   const calculateScore = (meta, realizado, tipo, pesoTotal, isBinary) => {
+    const peso = Number(pesoTotal) || 0;
+
     if (isBinary) {
       const m = meta === null || meta === undefined ? 1 : Number(meta);
       const r =
@@ -155,19 +160,20 @@ const OperacaoRotinas = () => {
 
       const ok = r === m;
       return {
-        score: ok ? pesoTotal : 0,
+        score: ok ? peso : 0,
         multiplicador: ok ? 1 : 0,
         color: ok ? "bg-green-300" : "bg-red-200",
       };
     }
 
     if (meta === null || realizado === "" || realizado === null || isNaN(parseFloat(realizado))) {
-      return { score: 0, faixa: 0, color: "bg-white" };
+      return { score: 0, multiplicador: 0, color: "bg-white" };
     }
 
     const r = parseFloat(realizado);
     const m = parseFloat(meta);
 
+    // ✅ meta = 0 (blindado)
     if (m === 0) {
       let multiplicador = 0;
       let cor = "bg-red-200";
@@ -190,7 +196,7 @@ const OperacaoRotinas = () => {
         }
       }
 
-      return { score: pesoTotal * multiplicador, multiplicador, color: cor };
+      return { score: peso * multiplicador, multiplicador, color: cor };
     }
 
     let atingimento = 0;
@@ -217,13 +223,13 @@ const OperacaoRotinas = () => {
       cor = "bg-red-200";
     }
 
-    return { score: pesoTotal * multiplicador, multiplicador, color: cor };
+    return { score: peso * multiplicador, multiplicador, color: cor };
   };
 
   const fetchRotinasData = async () => {
     setLoading(true);
     try {
-      // 1) Definições das Rotinas (Linhas)
+      // 1) Definições das Rotinas
       const { data: defs, error: err1 } = await supabase
         .from("rotinas_indicadores")
         .select("*")
@@ -232,7 +238,7 @@ const OperacaoRotinas = () => {
 
       if (err1) throw err1;
 
-      // 2) Valores mensais (inclui mes=13 e mes=14)
+      // 2) Valores mensais
       const { data: valores, error: err2 } = await supabase
         .from("rotinas_mensais")
         .select("*")
@@ -240,21 +246,21 @@ const OperacaoRotinas = () => {
 
       if (err2) throw err2;
 
-      // 3) Cruzamento (igual Metas)
+      // 3) Cruzamento (padrão)
       const combined = (defs || []).map((r) => {
         const row = { ...r, meses: {}, _isBinary: isBinaryRotina(r) };
 
         MESES.forEach((mes) => {
           const valObj = valores?.find((v) => v.rotina_id === r.id && v.mes === mes.id);
 
-          // ✅ Realizado
+          // ✅ realizado
           let real = "";
           if (valObj && valObj.valor_realizado !== null && valObj.valor_realizado !== "") {
             const parsed = parseNumberPtBr(valObj.valor_realizado);
             real = parsed === null ? "" : parsed;
           }
 
-          // ✅ MÉDIA 25 (mes=14)
+          // ✅ mes=14 (manual): sem meta azul e sem score
           if (mes.id === 14) {
             row.meses[mes.id] = {
               alvo: null,
@@ -266,7 +272,7 @@ const OperacaoRotinas = () => {
             return;
           }
 
-          // ✅ Meta (alvo)
+          // ✅ meta/alvo
           let alvo = null;
           if (valObj && valObj.valor_meta !== null && valObj.valor_meta !== "") {
             const parsed = parseNumberPtBr(valObj.valor_meta);
@@ -306,7 +312,7 @@ const OperacaoRotinas = () => {
     if (isBinary) valorNum = boolToNum(valor);
     else valorNum = parseNumberPtBr(valor);
 
-    // Atualiza UI (igual Metas)
+    // Atualiza UI (padrão)
     setRotinas((prev) =>
       prev.map((r) => {
         if (r.id !== rotinaId) return r;
@@ -314,7 +320,7 @@ const OperacaoRotinas = () => {
         const novoMeses = { ...r.meses };
         const alvoAtual = novoMeses[mesId]?.alvo ?? null;
 
-        // ✅ mes=14 (média 25): sem score
+        // ✅ mes=14: sem score
         if (mesId === 14) {
           novoMeses[mesId] = {
             ...novoMeses[mesId],
@@ -329,30 +335,60 @@ const OperacaoRotinas = () => {
         novoMeses[mesId] = {
           ...novoMeses[mesId],
           realizado: valorNum === null ? "" : valorNum,
-          ...calculateScore(alvoAtual, valorNum, r.tipo_comparacao, Number(r.peso), r._isBinary),
+          ...calculateScore(
+            alvoAtual,
+            valorNum,
+            r.tipo_comparacao,
+            parseNumberPtBr(r.peso) ?? 0,
+            r._isBinary
+          ),
         };
 
         return { ...r, meses: novoMeses };
       })
     );
 
-    // Salva no banco (null apaga valor)
-    const { error } = await supabase.rpc("atualizar_realizado_rotina", {
-      p_rotina_id: rotinaId,
-      p_mes: mesId,
-      p_valor: valorNum,
-    });
+    // ✅✅✅ Salva no banco (UPSERT) — cria a linha se não existir (igual Moov/Manutenção ajustados)
+    try {
+      const payload = {
+        rotina_id: rotinaId,
+        ano: 2026,
+        mes: mesId,
+        valor_realizado: valorNum, // null apaga
+      };
 
-    if (error) console.error("Erro ao salvar:", error);
+      const { error } = await supabase
+        .from("rotinas_mensais")
+        .upsert(payload, { onConflict: "rotina_id,ano,mes" });
+
+      if (error) console.error("Erro ao salvar realizado:", error);
+    } catch (e) {
+      console.error("Erro inesperado ao salvar:", e);
+    }
   };
 
-  const totalPeso = useMemo(() => {
-    return rotinas.reduce((acc, r) => acc + (Number(r.peso) || 0), 0);
+  // ✅ responsáveis únicos (para filtro)
+  const responsaveisUnicos = useMemo(() => {
+    return Array.from(
+      new Set(
+        (rotinas || [])
+          .map((r) => r.responsavel)
+          .filter((r) => r && String(r).trim() !== "")
+      )
+    );
   }, [rotinas]);
+
+  const rotinasFiltradas = useMemo(() => {
+    return responsavelFiltro ? rotinas.filter((r) => r.responsavel === responsavelFiltro) : rotinas;
+  }, [rotinas, responsavelFiltro]);
+
+  const totalPeso = useMemo(() => {
+    return rotinasFiltradas.reduce((acc, r) => acc + (parseNumberPtBr(r.peso) ?? 0), 0);
+  }, [rotinasFiltradas]);
 
   const getTotalScore = (mesId) => {
     if (mesId === 14) return "-";
-    const total = rotinas.reduce((acc, r) => acc + (r.meses[mesId]?.score || 0), 0);
+    const total = rotinasFiltradas.reduce((acc, r) => acc + (r.meses[mesId]?.score || 0), 0);
     return total.toFixed(1);
   };
 
@@ -386,7 +422,7 @@ const OperacaoRotinas = () => {
 
   return (
     <div className="flex flex-col h-full bg-white rounded shadow-sm overflow-hidden font-sans">
-      {/* Cabeçalho (idêntico ao Metas) */}
+      {/* Cabeçalho (padrão) */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-gray-800">Farol de Rotinas — Operação</h2>
@@ -420,11 +456,28 @@ const OperacaoRotinas = () => {
               </div>
             )}
           </div>
+
+          {/* ✅ Filtro de Responsável (igual padrão das outras Rotinas) */}
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-xs text-gray-500 font-semibold">Responsável:</span>
+            <select
+              value={responsavelFiltro}
+              onChange={(e) => setResponsavelFiltro(e.target.value)}
+              className="text-xs bg-white border border-gray-300 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos</option>
+              {responsaveisUnicos.map((resp) => (
+                <option key={resp} value={resp}>
+                  {resp}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
           {/* Config */}
-          <div className="flex items-center gap-2 mr-4 pr-4">
+          <div className="flex items-center gap-2 mr-2">
             <button
               onClick={() => setShowConfig(true)}
               className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"
@@ -434,7 +487,7 @@ const OperacaoRotinas = () => {
             </button>
           </div>
 
-          {/* Seletor de Áreas (idêntico ao Metas) */}
+          {/* Seletor de Áreas */}
           <div className="flex space-x-2">
             {areas.map((area) => (
               <button
@@ -458,7 +511,6 @@ const OperacaoRotinas = () => {
         {loading ? (
           <div className="text-center py-10 text-gray-500 animate-pulse">Carregando dados...</div>
         ) : (
-          // ✅ AJUSTE APENAS DE LARGURA (igual Metas): colunas mais justas + padding menor
           <div className="border border-gray-300 rounded-xl shadow-sm overflow-x-auto overflow-y-hidden">
             <div ref={tableWrapRef} className="min-w-max">
               <table className="table-fixed text-[11px] border-collapse">
@@ -488,7 +540,7 @@ const OperacaoRotinas = () => {
                 </thead>
 
                 <tbody>
-                  {rotinas.map((row, idx) => (
+                  {rotinasFiltradas.map((row, idx) => (
                     <tr key={row.id || idx} className="hover:bg-gray-50 text-center">
                       <td className="px-2 py-1 border border-gray-300 w-[260px] sticky left-0 bg-white z-10 text-left font-semibold text-gray-800">
                         {row.indicador}
@@ -508,7 +560,7 @@ const OperacaoRotinas = () => {
                       </td>
 
                       <td className="px-2 py-1 border border-gray-300 w-[48px] bg-gray-50">
-                        {parseInt(row.peso)}
+                        {parseInt(parseNumberPtBr(row.peso) ?? 0, 10)}
                       </td>
 
                       <td className="px-2 py-1 border border-gray-300 w-[48px] font-mono text-gray-500">
@@ -518,7 +570,7 @@ const OperacaoRotinas = () => {
                       {MESES.map((mes) => {
                         const dados = row.meses[mes.id];
 
-                        // ✅ MÉDIA 25 (mes=14)
+                        // ✅ MÉDIA 25 (mes=14) — só realizado, sem score
                         if (mes.id === 14) {
                           const valorRealizado =
                             dados?.realizado === null ||
@@ -548,13 +600,15 @@ const OperacaoRotinas = () => {
 
                         // ✅ Binário
                         if (row._isBinary) {
-                          const alvoLabel = numToBoolLabel(dados.alvo ?? 1);
-                          const realLabel = numToBoolLabel(dados.realizado);
+                          const alvoLabel = numToBoolLabel(dados?.alvo ?? 1);
+                          const realLabel = numToBoolLabel(dados?.realizado);
 
                           return (
                             <td
                               key={mes.id}
-                              className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
+                              className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${
+                                dados?.color || "bg-white"
+                              }`}
                             >
                               <div className="flex flex-col h-full justify-between">
                                 <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
@@ -586,11 +640,13 @@ const OperacaoRotinas = () => {
                         return (
                           <td
                             key={mes.id}
-                            className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${dados.color}`}
+                            className={`border border-gray-300 p-0 relative h-10 align-middle w-[78px] ${
+                              dados?.color || "bg-white"
+                            }`}
                           >
                             <div className="flex flex-col h-full justify-between">
                               <div className="text-[10px] text-blue-700 font-semibold text-right px-1 pt-0.5 bg-white/40 leading-3">
-                                {dados.alvo !== null && dados.alvo !== undefined
+                                {dados?.alvo !== null && dados?.alvo !== undefined
                                   ? Number(dados.alvo).toFixed(2)
                                   : ""}
                               </div>
@@ -640,6 +696,7 @@ const OperacaoRotinas = () => {
 
       {showConfig && (
         <ConfiguracaoGeral
+          areasContexto={areas}
           onClose={() => {
             setShowConfig(false);
             fetchRotinasData();
