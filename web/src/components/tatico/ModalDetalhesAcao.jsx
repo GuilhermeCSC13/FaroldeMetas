@@ -65,7 +65,7 @@ function fileKindFromUrl(url) {
 }
 
 /* =========================
-   Miniaturas (ESTAVAM FALTANDO)
+   Miniaturas
 ========================= */
 function IconForKind({ kind }) {
   if (kind === "pdf") return <FileText size={16} className="text-red-600" />;
@@ -168,7 +168,6 @@ const ModalDetalhesAcao = ({
   onAfterSave,
   onAfterDelete,
 }) => {
-  // ✅ não mata o modal se abriu e acao veio null por 1 frame
   if (!aberto) return null;
 
   // ---------------------------------------------------------------------------
@@ -277,7 +276,6 @@ const ModalDetalhesAcao = ({
       try {
         setLoadingResponsaveis(true);
 
-        // ✅ não precisa trazer senha/login aqui; reduz risco e peso
         const { data, error } = await supabaseInove
           .from("usuarios_aprovadores")
           .select("id, nome, sobrenome, nome_completo, ativo, nivel")
@@ -331,10 +329,15 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const sugestoes = useMemo(() => {
     const q = String(responsavelTexto || "").trim().toLowerCase();
-    if (!q) return (listaResponsaveis || []).slice(0, 12);
+    
+    const listaFormatada = (listaResponsaveis || []).map((u) => ({ 
+      u, 
+      label: buildNomeSobrenome(u) 
+    }));
 
-    return (listaResponsaveis || [])
-      .map((u) => ({ u, label: buildNomeSobrenome(u) }))
+    if (!q) return listaFormatada.slice(0, 12);
+
+    return listaFormatada
       .filter((x) => x.label.toLowerCase().includes(q))
       .slice(0, 12);
   }, [listaResponsaveis, responsavelTexto]);
@@ -596,7 +599,6 @@ const ModalDetalhesAcao = ({
     };
   }, [previewsAcao, previewsConclusao]);
 
-  // ✅ se abriu mas ainda não recebeu acao, mostra loading (evita crash)
   if (!acao) {
     return (
       <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
@@ -617,7 +619,6 @@ const ModalDetalhesAcao = ({
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40"
       onMouseDown={(e) => {
-        // fecha clicando fora
         if (e.target === e.currentTarget) onClose?.();
       }}
     >
@@ -740,9 +741,11 @@ const ModalDetalhesAcao = ({
               </div>
 
               <div className="flex flex-col relative">
-                <span className="text-[11px] font-bold text-gray-400 uppercase mb-1">
-                  Responsável
-                </span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-gray-400 uppercase">
+                    Responsável
+                  </span>
+                </div>
                 <input
                   value={responsavelTexto}
                   onChange={(e) => {
