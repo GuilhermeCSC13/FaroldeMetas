@@ -175,6 +175,7 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const [statusLocal, setStatusLocal] = useState(status || "Aberta");
 
+  const [descricaoAcao, setDescricaoAcao] = useState("");
   const [obsAcao, setObsAcao] = useState("");
   const [resultado, setResultado] = useState("");
   const [fotosAcao, setFotosAcao] = useState([]);
@@ -235,6 +236,7 @@ const ModalDetalhesAcao = ({
     if (!acao) return;
 
     setStatusLocal(status || acao.status || "Aberta");
+    setDescricaoAcao(acao.descricao || "");
     setObsAcao(acao.observacao || "");
     setResultado(acao.resultado || "");
 
@@ -410,6 +412,7 @@ const ModalDetalhesAcao = ({
       const safeResponsavelId = isValidUUID(responsavelId) ? responsavelId : null;
 
       const payload = {
+        descricao: descricaoAcao,
         observacao: obsAcao,
         resultado,
         fotos_acao: [...fotosAcao, ...novasUrlsAcao],
@@ -678,18 +681,23 @@ const ModalDetalhesAcao = ({
         )}
 
         {/* Cabeçalho */}
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold uppercase text-gray-400">
-              Detalhes da ação
-            </div>
-            <div className="text-sm sm:text-base font-semibold text-gray-800 truncate max-w-xl">
-              {acao.descricao}
-            </div>
+        <div className="px-6 py-4 border-b border-gray-200 flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <label className="text-xs font-semibold uppercase text-gray-400 block mb-1">
+              Nome da ação
+            </label>
+            <input
+              type="text"
+              value={descricaoAcao}
+              onChange={(e) => setDescricaoAcao(e.target.value)}
+              disabled={inputsDesabilitados}
+              placeholder="Digite o nome da ação..."
+              className="w-full text-sm sm:text-base font-semibold text-gray-800 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-400 focus:outline-none transition-colors pb-1 disabled:opacity-80 disabled:hover:border-transparent"
+            />
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"
+            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 shrink-0"
           >
             <X size={18} />
           </button>
