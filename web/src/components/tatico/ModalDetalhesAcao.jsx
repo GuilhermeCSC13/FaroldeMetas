@@ -12,6 +12,9 @@ import {
   Calendar,
   ShieldAlert,
   Clipboard,
+  // ✅ ADD (para o botãozinho)
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { supabase, supabaseInove } from "../../supabaseClient";
 
@@ -195,6 +198,9 @@ const ModalDetalhesAcao = ({
   const [saving, setSaving] = useState(false);
   const [reabrindo, setReabrindo] = useState(false);
 
+  // ✅ NOVO: controle do "expandir observação"
+  const [obsExpandida, setObsExpandida] = useState(false);
+
   // Exclusão (Login/Senha)
   const [showDeleteAuth, setShowDeleteAuth] = useState(false);
   const [delLogin, setDelLogin] = useState("");
@@ -239,6 +245,9 @@ const ModalDetalhesAcao = ({
     setDescricaoAcao(acao.descricao || "");
     setObsAcao(acao.observacao || "");
     setResultado(acao.resultado || "");
+
+    // ✅ ao abrir/trocar ação, volta para o estado "compacto"
+    setObsExpandida(false);
 
     setShowDeleteAuth(false);
     setDelLogin("");
@@ -331,10 +340,10 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const sugestoes = useMemo(() => {
     const q = String(responsavelTexto || "").trim().toLowerCase();
-    
-    const listaFormatada = (listaResponsaveis || []).map((u) => ({ 
-      u, 
-      label: buildNomeSobrenome(u) 
+
+    const listaFormatada = (listaResponsaveis || []).map((u) => ({
+      u,
+      label: buildNomeSobrenome(u),
     }));
 
     if (!q) return listaFormatada.slice(0, 12);
@@ -401,7 +410,9 @@ const ModalDetalhesAcao = ({
       const novasUrlsAcao =
         novosArquivosAcao.length > 0 ? await uploadArquivos(novosArquivosAcao) : [];
       const novasUrlsConclusao =
-        novosArquivosConclusao.length > 0 ? await uploadArquivos(novosArquivosConclusao) : [];
+        novosArquivosConclusao.length > 0
+          ? await uploadArquivos(novosArquivosConclusao)
+          : [];
 
       const userResponsavel = (listaResponsaveis || []).find(
         (u) => String(u.id) === String(responsavelId)
@@ -521,7 +532,8 @@ const ModalDetalhesAcao = ({
   // ---------------------------------------------------------------------------
   const handleReabrir = async () => {
     if (!acao) return;
-    if (!window.confirm("Reabrir a ação permitirá novas alterações. Deseja continuar?")) return;
+    if (!window.confirm("Reabrir a ação permitirá novas alterações. Deseja continuar?"))
+      return;
 
     setReabrindo(true);
     try {
@@ -550,7 +562,7 @@ const ModalDetalhesAcao = ({
   const podeConcluirLocal =
     statusLocal !== "Concluída" &&
     String(resultado || "").trim().length > 0 &&
-    (fotosConclusao.length + novosArquivosConclusao.length > 0);
+    fotosConclusao.length + novosArquivosConclusao.length > 0;
 
   const handleFinalizarClick = async () => {
     if (!podeConcluirLocal) {
@@ -566,12 +578,12 @@ const ModalDetalhesAcao = ({
   // UI HELPERS
   // ---------------------------------------------------------------------------
   const dataCriacao =
-    (acao?.data_criacao || acao?.created_at)
+    acao?.data_criacao || acao?.created_at
       ? new Date(acao.data_criacao || acao.created_at).toLocaleString()
       : "-";
 
   const dataFechamento =
-    (acao?.data_fechamento || acao?.data_conclusao)
+    acao?.data_fechamento || acao?.data_conclusao
       ? new Date(acao.data_fechamento || acao.data_conclusao).toLocaleString()
       : null;
 
@@ -792,12 +804,28 @@ const ModalDetalhesAcao = ({
             </h3>
             <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3 shadow-sm">
               <div>
-                <span className="text-[11px] font-semibold text-gray-400 uppercase">
-                  Observações da Ação
-                </span>
+                {/* ✅ ajuste aqui: header com botãozinho expandir */}
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase">
+                    Observações da Ação
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setObsExpandida((v) => !v)}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100"
+                    title={obsExpandida ? "Reduzir" : "Expandir"}
+                  >
+                    {obsExpandida ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    {obsExpandida ? "Reduzir" : "Expandir"}
+                  </button>
+                </div>
+
                 <textarea
-                  className="mt-1 w-full border border-gray-300 rounded-lg text-sm p-3 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-50"
-                  rows={3}
+                  className={`mt-1 w-full border border-gray-300 rounded-lg text-sm p-3 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-gray-50 ${
+                    obsExpandida ? "min-h-[220px]" : ""
+                  }`}
+                  rows={obsExpandida ? 10 : 3}
                   value={obsAcao}
                   onChange={(e) => setObsAcao(e.target.value)}
                   disabled={inputsDesabilitados}
