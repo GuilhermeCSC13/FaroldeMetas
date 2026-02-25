@@ -25,8 +25,12 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 function secondsToMMSS(s) {
-  const mm = Math.floor(s / 60).toString().padStart(2, "0");
-  const ss = Math.floor(s % 60).toString().padStart(2, "0");
+  const mm = Math.floor((s || 0) / 60)
+    .toString()
+    .padStart(2, "0");
+  const ss = Math.floor((s || 0) % 60)
+    .toString()
+    .padStart(2, "0");
   return `${mm}:${ss}`;
 }
 
@@ -43,29 +47,82 @@ async function withRetry(fn, { retries = 3, baseDelayMs = 600 } = {}) {
   throw lastErr;
 }
 
-// --- VISUAL LOGGER ---
-const VisualLogger = ({ logs }) => {
-  if (logs.length === 0) return null;
+/* =========================
+   Toast Logger (1s)
+========================= */
+const ToastLogger = ({ message }) => {
+  if (!message) return null;
+
+  const isErr = message.includes("❌") || message.includes("⚠️");
+  const isOk = message.includes("✅") || message.includes("🎉");
+
   return (
-    <div style={{
-      position: 'fixed', bottom: 10, left: 10, width: '400px', maxHeight: '300px',
-      overflowY: 'auto', backgroundColor: 'rgba(0,0,0,0.85)', color: '#0f0',
-      fontSize: '10px', fontFamily: 'monospace', padding: '10px', zIndex: 99999,
-      pointerEvents: 'none', borderRadius: '8px', border: '1px solid #333'
-    }}>
-      <div style={{fontWeight:'bold', borderBottom:'1px solid #555', marginBottom:5}}>GRAVAÇÃO (AUTO-CONCLUDE)</div>
-      {logs.slice().reverse().map((l, i) => (
-        <div key={i} style={{marginBottom: 2, color: l.includes('❌') || l.includes('⚠️') ? '#ff5555' : l.includes('✅') ? '#55ff55' : '#ccc'}}>
-          {l}
-        </div>
-      ))}
+    <div
+      style={{
+        position: "fixed",
+        bottom: 16,
+        left: 16,
+        zIndex: 99999,
+        maxWidth: "520px",
+        padding: "10px 12px",
+        borderRadius: 12,
+        fontSize: 12,
+        fontFamily:
+          "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+        background: "rgba(15, 23, 42, 0.92)", // slate-900
+        color: isErr ? "#fecaca" : isOk ? "#bbf7d0" : "#e2e8f0", // red-200 / green-200 / slate-200
+        border: `1px solid ${
+          isErr
+            ? "rgba(239,68,68,0.35)"
+            : isOk
+            ? "rgba(34,197,94,0.35)"
+            : "rgba(148,163,184,0.25)"
+        }`,
+        backdropFilter: "blur(6px)",
+        pointerEvents: "none",
+      }}
+    >
+      {message}
     </div>
   );
 };
 
 export function RecordingProvider({ children }) {
+  // mantém histórico (opcional, não exibimos mais)
   const [logs, setLogs] = useState([]);
-  const addLog = (msg) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`].slice(-50));
+
+  // toast curto
+  const [toastMsg, setToastMsg] = useState("");
+  const toastTimerRef = useRef(null);
+
+  // ✅ ajuste: toastar só quando fizer sentido (pode ampliar/reduzir)
+  const shouldToast = (msg) => {
+    const s = String(msg || "");
+    return (
+      s.includes("✅") ||
+      s.includes("❌") ||
+      s.includes("⚠️") ||
+      s.includes("🎉")
+    );
+  };
+
+  const addLog = (msg) => {
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    setLogs((prev) => [...prev, line].slice(-50));
+
+    if (!shouldToast(msg)) return;
+
+    setToastMsg(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMsg(""), 1000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -112,50 +169,84 @@ export function RecordingProvider({ children }) {
   const cleanupMedia = () => {
     try {
       recorderRef.current = null;
-      if (displayStreamRef.current) displayStreamRef.current.getTracks().forEach((t) => t.stop());
+
+      if (displayStreamRef.current) {
+        displayStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
       displayStreamRef.current = null;
-      if (micStreamRef.current) micStreamRef.current.getTracks().forEach((t) => t.stop());
+
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
       micStreamRef.current = null;
+
       mixedStreamRef.current = null;
-      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close();
+
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+        audioCtxRef.current.close();
+      }
       audioCtxRef.current = null;
-    } catch(e) { addLog(`Cleanup: ${e.message}`); }
+    } catch (e) {
+      addLog(`⚠️ Cleanup: ${e?.message || e}`);
+    }
   };
 
   const createStopPromise = () => {
-    if (stopFinalizePromiseRef.current?.promise) return stopFinalizePromiseRef.current.promise;
+    if (stopFinalizePromiseRef.current?.promise)
+      return stopFinalizePromiseRef.current.promise;
+
     let resolve, reject;
-    const promise = new Promise((r, j) => { resolve = r; reject = j; });
+    const promise = new Promise((r, j) => {
+      resolve = r;
+      reject = j;
+    });
     stopFinalizePromiseRef.current = { promise, resolve, reject };
     return promise;
   };
-  const resolveStopPromise = () => { stopFinalizePromiseRef.current?.resolve?.(); stopFinalizePromiseRef.current = null; };
-  const rejectStopPromise = (err) => { stopFinalizePromiseRef.current?.reject?.(err); stopFinalizePromiseRef.current = null; };
 
-  // --- WORKER DE UPLOAD ---
+  const resolveStopPromise = () => {
+    stopFinalizePromiseRef.current?.resolve?.();
+    stopFinalizePromiseRef.current = null;
+  };
+
+  const rejectStopPromise = (err) => {
+    stopFinalizePromiseRef.current?.reject?.(err);
+    stopFinalizePromiseRef.current = null;
+  };
+
+  /* =========================
+     Upload Worker
+  ========================= */
   const runUploadWorker = async () => {
     if (uploadWorkerRunningRef.current) return;
     uploadWorkerRunningRef.current = true;
-    
+
     try {
       while (uploadQueueRef.current.length > 0) {
         const item = uploadQueueRef.current[0];
-        if (!item) { uploadQueueRef.current.shift(); continue; }
+        if (!item) {
+          uploadQueueRef.current.shift();
+          continue;
+        }
 
-        addLog(`📤 Enviando Parte ${item.partNumber} (${(item.blob.size/1024).toFixed(0)} KB)...`);
-        
+        // (não toastamos "enviando..." pra não poluir; só toast OK/ERRO)
         try {
           await uploadPart(item.blob, item.partNumber, item.reuniaoId, item.sessionId);
-          addLog(`✅ Parte ${item.partNumber} OK!`);
+          addLog(`✅ Parte ${item.partNumber} enviada`);
           uploadQueueRef.current.shift();
         } catch (err) {
-          addLog(`❌ Falha upload: ${err.message}`);
+          addLog(`❌ Falha upload Parte ${item.partNumber}: ${err?.message || err}`);
           uploadQueueRef.current.shift();
         }
       }
     } finally {
       uploadWorkerRunningRef.current = false;
-      if (queueDrainPromiseRef.current && uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) {
+
+      if (
+        queueDrainPromiseRef.current &&
+        uploadQueueRef.current.length === 0 &&
+        uploadsInFlightRef.current.size === 0
+      ) {
         queueDrainPromiseRef.current.resolve?.();
         queueDrainPromiseRef.current = null;
       }
@@ -169,39 +260,62 @@ export function RecordingProvider({ children }) {
   };
 
   const waitQueueDrain = async () => {
-    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0) return;
-    addLog("⏳ Finalizando uploads...");
+    if (uploadQueueRef.current.length === 0 && uploadsInFlightRef.current.size === 0)
+      return;
+
+    // (não toastamos finalizando, só deixa interno)
     if (!queueDrainPromiseRef.current) {
       let resolve;
       const p = new Promise((r) => (resolve = r));
       queueDrainPromiseRef.current = { promise: p, resolve };
     }
+
     runUploadWorker();
     await queueDrainPromiseRef.current.promise;
   };
 
   const uploadPart = async (blob, partNumber, reuniaoId, sessionId) => {
     const path = buildPartPath(reuniaoId, sessionId, partNumber);
+
     const uploadPromise = (async () => {
       await withRetry(async () => {
-        const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, { contentType: "video/webm", upsert: false });
+        const { error } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, blob, {
+            contentType: "video/webm",
+            upsert: false,
+          });
         if (error) throw error;
       });
+
       await withRetry(async () => {
-        const { error } = await supabase.from("reuniao_gravacao_partes").insert([{
-          reuniao_id: reuniaoId, session_id: sessionId, part_number: partNumber,
-          storage_bucket: STORAGE_BUCKET, storage_path: path, bytes: blob.size, status: "UPLOADED",
-        }]);
+        const { error } = await supabase.from("reuniao_gravacao_partes").insert([
+          {
+            reuniao_id: reuniaoId,
+            session_id: sessionId,
+            part_number: partNumber,
+            storage_bucket: STORAGE_BUCKET,
+            storage_path: path,
+            bytes: blob.size,
+            status: "UPLOADED",
+          },
+        ]);
         if (error) throw error;
       });
     })();
+
     uploadsInFlightRef.current.add(uploadPromise);
-    try { await uploadPromise; } finally { uploadsInFlightRef.current.delete(uploadPromise); }
+    try {
+      await uploadPromise;
+    } finally {
+      uploadsInFlightRef.current.delete(uploadPromise);
+    }
   };
 
   const createRecorder = () => {
     const stream = mixedStreamRef.current;
     if (!stream) throw new Error("Stream inválido");
+
     const mimeTypes = ["video/webm;codecs=vp8,opus", "video/webm", ""];
     let options = undefined;
     for (const type of mimeTypes) {
@@ -211,22 +325,32 @@ export function RecordingProvider({ children }) {
         break;
       }
     }
+
     return new MediaRecorder(stream, options);
   };
 
   const finalizeFailClosed = async (reuniaoId, message) => {
     addLog(`❌ Erro Fatal: ${message}`);
     try {
-      await supabase.from("reunioes").update({
-        gravacao_status: "ERRO", gravacao_erro: String(message), gravacao_fim: nowIso(), updated_at: nowIso(),
-      }).eq("id", reuniaoId);
-    } catch {}
+      await supabase
+        .from("reunioes")
+        .update({
+          gravacao_status: "ERRO",
+          gravacao_erro: String(message),
+          gravacao_fim: nowIso(),
+          updated_at: nowIso(),
+        })
+        .eq("id", reuniaoId);
+    } catch {
+      // ignore
+    }
   };
 
   const startSegment = (activeReuniaoId, activeSessionId) => {
     try {
       const rec = createRecorder();
       recorderRef.current = rec;
+
       const chunks = [];
 
       rec.ondataavailable = (e) => {
@@ -240,12 +364,17 @@ export function RecordingProvider({ children }) {
             const part = ++partNumberRef.current;
             enqueueUpload(blob, part, activeReuniaoId, activeSessionId);
           }
+
           if (!stopAllRequestedRef.current) startSegment(activeReuniaoId, activeSessionId);
-        } catch (e) { addLog(`Erro onstop: ${e.message}`); }
+        } catch (e) {
+          addLog(`⚠️ Erro onstop: ${e?.message || e}`);
+        }
       };
 
-      rec.start(TIMESLICE_MS); 
-    } catch (e) { addLog(`Erro start: ${e.message}`); }
+      rec.start(TIMESLICE_MS);
+    } catch (e) {
+      addLog(`⚠️ Erro start: ${e?.message || e}`);
+    }
   };
 
   const rotateSegment = async () => {
@@ -254,7 +383,9 @@ export function RecordingProvider({ children }) {
     try {
       const rec = recorderRef.current;
       if (rec && rec.state === "recording") rec.stop();
-    } finally { rotatingRef.current = false; }
+    } finally {
+      rotatingRef.current = false;
+    }
   };
 
   const startRecording = async ({ reuniaoId, reuniaoTitulo }) => {
@@ -264,40 +395,69 @@ export function RecordingProvider({ children }) {
     stopAllRequestedRef.current = false;
     rotatingRef.current = false;
     finalizeRunningRef.current = false;
+
     setTimer(0);
     setLogs([]);
+    setToastMsg("");
 
     const sessionId = `sess_${crypto?.randomUUID?.() || Date.now()}`;
     sessionIdRef.current = sessionId;
     reuniaoIdRef.current = reuniaoId;
     partNumberRef.current = 0;
 
-    setCurrent({ reuniaoId, reuniaoTitulo: reuniaoTitulo || `Reunião ${reuniaoId}`, sessionId, startedAtIso: nowIso() });
+    setCurrent({
+      reuniaoId,
+      reuniaoTitulo: reuniaoTitulo || `Reunião ${reuniaoId}`,
+      sessionId,
+      startedAtIso: nowIso(),
+      storageBucket: STORAGE_BUCKET,
+      storagePrefix: `reunioes/${reuniaoId}/${sessionId}/`,
+    });
 
-    await supabase.from("reunioes").update({
-      status: "Em Andamento", gravacao_status: "GRAVANDO", gravacao_session_id: sessionId,
-      gravacao_bucket: STORAGE_BUCKET, gravacao_prefix: `reunioes/${reuniaoId}/${sessionId}/`,
-      gravacao_inicio: nowIso(), updated_at: nowIso(),
-    }).eq("id", reuniaoId);
+    await supabase
+      .from("reunioes")
+      .update({
+        status: "Em Andamento",
+        gravacao_status: "GRAVANDO",
+        gravacao_session_id: sessionId,
+        gravacao_bucket: STORAGE_BUCKET,
+        gravacao_prefix: `reunioes/${reuniaoId}/${sessionId}/`,
+        gravacao_inicio: nowIso(),
+        updated_at: nowIso(),
+      })
+      .eq("id", reuniaoId);
 
     try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+
       displayStreamRef.current = displayStream;
       micStreamRef.current = micStream;
 
       const audioCtx = new AudioContext();
       audioCtxRef.current = audioCtx;
-      const dest = audioCtx.createMediaStreamDestination();
-      if (micStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(micStream).connect(dest);
-      if (displayStream.getAudioTracks().length > 0) audioCtx.createMediaStreamSource(displayStream).connect(dest);
-      mixedStreamRef.current = new MediaStream([...displayStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
 
+      const dest = audioCtx.createMediaStreamDestination();
+      if (micStream.getAudioTracks().length > 0) {
+        audioCtx.createMediaStreamSource(micStream).connect(dest);
+      }
+      if (displayStream.getAudioTracks().length > 0) {
+        audioCtx.createMediaStreamSource(displayStream).connect(dest);
+      }
+
+      mixedStreamRef.current = new MediaStream([
+        ...displayStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks(),
+      ]);
+
+      // se parar o compartilhamento de tela, encerra
       displayStream.getVideoTracks()[0].onended = () => stopRecording();
 
       startSegment(reuniaoId, sessionId);
-      
+
       clearInterval(segmentIntervalRef.current);
       segmentIntervalRef.current = setInterval(() => {
         if (!stopAllRequestedRef.current) rotateSegment();
@@ -307,7 +467,7 @@ export function RecordingProvider({ children }) {
       setIsRecording(true);
       startTimerFn();
     } catch (err) {
-      addLog(`Permissão negada: ${err.message}`);
+      addLog(`❌ Permissão negada: ${err?.message || err}`);
       setIsRecording(false);
     }
   };
@@ -315,13 +475,14 @@ export function RecordingProvider({ children }) {
   const stopRecording = async () => {
     if (stopAllRequestedRef.current) return;
     stopAllRequestedRef.current = true;
+
     const stopPromise = createStopPromise();
-    
+
     try {
       setIsRecording(false);
       stopTimerFn();
       clearInterval(segmentIntervalRef.current);
-      
+
       const rec = recorderRef.current;
       if (rec && rec.state === "recording") {
         await new Promise((resolve) => {
@@ -337,78 +498,102 @@ export function RecordingProvider({ children }) {
       await finalizeRecording();
       await stopPromise;
     } catch (e) {
-      addLog(`Erro stop: ${e.message}`);
+      addLog(`❌ Erro stop: ${e?.message || e}`);
       rejectStopPromise(e);
       await finalizeRecording();
-    } finally { resolveStopPromise(); }
+    } finally {
+      resolveStopPromise();
+    }
   };
 
   // 🔥 VERSÃO AUTO-CONCLUDE (SEM BACKEND NECESSÁRIO)
   const finalizeRecording = async () => {
     const reuniaoId = reuniaoIdRef.current;
     const sessionId = sessionIdRef.current;
-    if (!reuniaoId) { resolveStopPromise(); return; }
+
+    if (!reuniaoId) {
+      resolveStopPromise();
+      return;
+    }
     if (finalizeRunningRef.current) return;
     finalizeRunningRef.current = true;
 
     try {
       setIsProcessing(true);
+
       await waitQueueDrain();
       await Promise.allSettled(Array.from(uploadsInFlightRef.current));
 
-      const duracao = startTimeRef.current ? Math.floor((Date.now() - startTimeRef.current) / 1000) : timer;
-      
-      // ✅ ATUALIZAÇÃO MÁGICA: Define direto como CONCLUIDO e aponta para o path da parte 1
-      // Isso assume gravações curtas ou que o player consegue tocar partes (mas players normais só tocam 1 arquivo)
-      // Se tiver mais de 1 parte, este hack só vai tocar a primeira, mas pelo menos sai do "Processando..."
+      const duracao = startTimeRef.current
+        ? Math.floor((Date.now() - startTimeRef.current) / 1000)
+        : timer;
+
+      // ✅ aponta para part 1 para não travar no "Processando"
       const firstPartPath = buildPartPath(reuniaoId, sessionId, 1);
 
-      addLog("📝 Salvando como CONCLUIDO (Sem backend)...");
-      
       await withRetry(async () => {
-        await supabase.from("reunioes").update({
-          status: "Realizada",
-          duracao_segundos: duracao,
-          gravacao_fim: nowIso(),
-          // Se tiver backend real depois, mude para PRONTO_PROCESSAR
-          gravacao_status: "CONCLUIDO", 
-          gravacao_path: firstPartPath, // Aponta direto para o arquivo 1
-          gravacao_bucket: STORAGE_BUCKET,
-          updated_at: nowIso(),
-        }).eq("id", reuniaoId);
+        const { error } = await supabase
+          .from("reunioes")
+          .update({
+            status: "Realizada",
+            duracao_segundos: duracao,
+            gravacao_fim: nowIso(),
+            gravacao_status: "CONCLUIDO",
+            gravacao_path: firstPartPath,
+            gravacao_bucket: STORAGE_BUCKET,
+            updated_at: nowIso(),
+          })
+          .eq("id", reuniaoId);
+        if (error) throw error;
       });
 
       addLog("🎉 VÍDEO DISPONÍVEL!");
-
     } catch (e) {
-      await finalizeFailClosed(reuniaoId, e?.message);
+      await finalizeFailClosed(reuniaoId, e?.message || e);
     } finally {
       setIsProcessing(false);
       cleanupMedia();
+
       sessionIdRef.current = null;
       reuniaoIdRef.current = null;
       partNumberRef.current = 0;
+
       setCurrent(null);
       setTimer(0);
       finalizeRunningRef.current = false;
+
       resolveStopPromise();
     }
   };
 
   useEffect(() => {
-    const onBeforeUnload = (e) => { if (!isRecording) return; e.preventDefault(); e.returnValue = ""; };
+    const onBeforeUnload = (e) => {
+      if (!isRecording) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [isRecording]);
 
-  const value = useMemo(() => ({
-    isRecording, isProcessing, timer, timerLabel: secondsToMMSS(timer), current, startRecording, stopRecording
-  }), [isRecording, isProcessing, timer, current]);
+  const value = useMemo(
+    () => ({
+      isRecording,
+      isProcessing,
+      timer,
+      timerLabel: secondsToMMSS(timer),
+      current,
+      startRecording,
+      stopRecording,
+    }),
+    [isRecording, isProcessing, timer, current]
+  );
 
   return (
     <RecordingContext.Provider value={value}>
       {children}
-      <VisualLogger logs={logs} />
+      {/* ✅ Agora é só toast de 1s (sem painel fixo) */}
+      <ToastLogger message={toastMsg} />
     </RecordingContext.Provider>
   );
 }
